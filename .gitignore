@@ -1,6 +1,6 @@
 # 個人設定（各自の環境に依存するため除外）
-config.json
-settings.local.json
+settings/config.json
+settings/server.json
 
 # Python
 __pycache__/
