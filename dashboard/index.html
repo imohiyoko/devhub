@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>local-devhub</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #7d8590;
+  --accent:  #388bfd;
+  --green:   #3fb950;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 10px;
+  flex-shrink: 0;
+}
+header h1 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.host-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--border);
+  color: var(--muted);
+  font-family: "SF Mono", ui-monospace, monospace;
+}
+
+main {
+  flex: 1;
+  padding: 40px 24px;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.tool-card {
+  display: block;
+  text-decoration: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  transition: border-color 0.15s, background 0.15s;
+  cursor: pointer;
+}
+.tool-card:hover {
+  border-color: var(--accent);
+  background: #161b22ee;
+}
+
+.tool-icon {
+  font-size: 24px;
+  margin-bottom: 12px;
+  line-height: 1;
+}
+.tool-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.tool-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+footer {
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>local-devhub</h1>
+  <span class="host-badge">localhost:8765</span>
+</header>
+
+<main>
+  <p class="section-title">ツール</p>
+  <div class="tools-grid">
+    <a href="/diff-kun" class="tool-card">
+      <div class="tool-icon">⇄</div>
+      <div class="tool-name">diff-kun</div>
+      <div class="tool-desc">2つのテキストの差分をリアルタイム確認（ユニファイド / コンテキスト / サイドバイサイド）</div>
+    </a>
+    <a href="/workspace" class="tool-card">
+      <div class="tool-icon">📁</div>
+      <div class="tool-name">workspace</div>
+      <div class="tool-desc">リポジトリ一覧から選んで VSCode で開く</div>
+    </a>
+    <a href="/diagram" class="tool-card">
+      <div class="tool-icon">◈</div>
+      <div class="tool-name">diagram</div>
+      <div class="tool-desc">Mermaid 記法をリアルタイムプレビュー（ER 図・フロー・シーケンス等）。Draw.io XML への変換・エンコードも可能</div>
+    </a>
+  </div>
+</main>
+
+<footer>local-devhub · localhost:8765</footer>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+# 個人設定（各自の環境に依存するため除外）
+config.json
+settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# ログ
+*.log

@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>workspace — local-devhub</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #7d8590;
+  --accent:  #388bfd;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.hub-link {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.hub-link:hover { color: var(--text); background: var(--border); }
+.divider { width: 1px; height: 16px; background: var(--border); }
+header h1 { font-size: 15px; font-weight: 600; }
+.spacer { flex: 1; }
+
+.btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn-icon {
+  padding: 4px 8px;
+  font-size: 14px;
+}
+.btn-icon.active { border-color: var(--accent); color: var(--accent); }
+
+.search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-icon {
+  position: absolute;
+  left: 9px;
+  color: var(--muted);
+  pointer-events: none;
+  font-size: 13px;
+}
+#search {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 5px 10px 5px 28px;
+  outline: none;
+  width: 220px;
+}
+#search:focus { border-color: var(--accent); }
+#search::placeholder { color: var(--muted); }
+
+/* Settings panel */
+.settings-panel {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  display: none;
+  flex-shrink: 0;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.settings-panel.open { display: flex; gap: 16px; }
+.settings-col { flex: 1; min-width: 0; }
+.settings-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 8px;
+}
+.root-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.root-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+}
+.root-item span { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.root-item button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+.root-item button:hover { color: #f85149; }
+
+/* Directory browser */
+.dir-browser {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.dir-browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.dir-current {
+  flex: 1;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dir-list {
+  max-height: 210px;
+  overflow-y: auto;
+}
+.dir-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: "SF Mono", ui-monospace, monospace;
+  min-height: 34px;
+}
+.dir-entry:last-child { border-bottom: none; }
+.dir-entry.nav { cursor: pointer; }
+.dir-entry.nav:hover { background: rgba(255,255,255,0.04); }
+.dir-entry .entry-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dir-entry.nav .entry-name { color: var(--muted); }
+.dir-entry.nav .entry-arrow { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.dir-entry.repo .entry-name { color: var(--text); }
+.entry-actions { display: flex; gap: 5px; flex-shrink: 0; }
+.dir-empty { padding: 12px 10px; font-size: 12px; color: var(--muted); text-align: center; }
+.btn-sm {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+.btn-sm.add { border-color: var(--accent); color: var(--accent); }
+.btn-sm.add:hover { background: var(--accent); color: #fff; }
+
+main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 700px;
+  margin: 0 auto;
+}
+.repo-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+.repo-item:hover { border-color: var(--accent); }
+.repo-item.opening { border-color: var(--accent); opacity: 0.6; }
+.repo-icon { font-size: 15px; flex-shrink: 0; }
+.repo-name { flex: 1; font-size: 13px; font-weight: 500; }
+.repo-path { font-size: 11px; color: var(--muted); font-family: "SF Mono", ui-monospace, monospace; }
+.open-hint {
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+}
+.repo-item:hover .open-hint { opacity: 1; }
+.drag-handle {
+  color: var(--border);
+  cursor: grab;
+  font-size: 16px;
+  flex-shrink: 0;
+  padding: 0 2px;
+  user-select: none;
+  line-height: 1;
+}
+.repo-item:hover .drag-handle { color: var(--muted); }
+.repo-item.drag-over { border-color: var(--accent); border-style: dashed; }
+.hide-btn {
+  font-size: 13px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+  padding: 0 2px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.repo-item:hover .hide-btn { opacity: 1; }
+.hide-btn:hover { color: #f85149; }
+.empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 48px 0;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="hub-link">← Hub</a>
+  <div class="divider"></div>
+  <h1>workspace</h1>
+  <div class="spacer"></div>
+  <div class="search-wrap">
+    <span class="search-icon">⌕</span>
+    <input id="search" type="text" placeholder="リポジトリを絞り込む..." autocomplete="off">
+  </div>
+  <button class="btn btn-icon" id="btn-settings" title="スキャン対象の設定">⚙</button>
+</header>
+
+<div class="settings-panel" id="settings-panel">
+  <div class="settings-col">
+    <div class="settings-title">スキャン対象</div>
+    <div class="root-list" id="root-list"></div>
+  </div>
+  <div class="settings-col">
+    <div class="settings-title">未追加のリポジトリを探す</div>
+    <div class="dir-browser">
+      <div class="dir-browser-bar">
+        <button class="btn-sm" id="btn-up">↑ 上へ</button>
+        <span class="dir-current" id="dir-current"></span>
+      </div>
+      <div class="dir-list" id="dir-list"></div>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="repo-list" id="list">
+    <div class="empty">読み込み中...</div>
+  </div>
+</main>
+
+<script>
+let allRepos = [];
+let scanRoots = [];
+let excludes = [];
+let pinnedRepos = [];
+let repoOrder = [];
+let browsingPath = '~';
+let dragSrcPath = null;
+
+// ── Config ──────────────────────────────────────────
+async function loadConfig() {
+  const res = await fetch('/api/config');
+  const cfg = await res.json();
+  scanRoots = cfg.scan_roots || [];
+  excludes = cfg.excludes || [];
+  pinnedRepos = cfg.pinned_repos || [];
+  repoOrder = cfg.repo_order || [];
+  renderRootList();
+}
+
+async function saveConfig() {
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scan_roots: scanRoots, excludes, pinned_repos: pinnedRepos }),
+  });
+}
+
+// ── Scan roots ───────────────────────────────────────
+function renderRootList() {
+  const el = document.getElementById('root-list');
+  if (scanRoots.length === 0) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:4px 0;">スキャン対象がありません</div>';
+    return;
+  }
+  el.innerHTML = scanRoots.map((r, i) => `
+    <div class="root-item">
+      <span title="${r}">${r}</span>
+      <button onclick="removeRoot(${i})" title="削除">✕</button>
+    </div>
+  `).join('');
+}
+
+async function removeRoot(i) {
+  scanRoots.splice(i, 1);
+  renderRootList();
+  await saveConfig();
+  loadRepos();
+}
+
+// ── Directory browser ────────────────────────────────
+function toDisplay(absPath) {
+  return absPath.replace(/^\/Users\/[^/]+/, '~');
+}
+
+async function browseTo(path) {
+  const res = await fetch(`/api/ls?path=${encodeURIComponent(path)}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  browsingPath = data.path;
+  document.getElementById('dir-current').textContent = toDisplay(browsingPath);
+  document.getElementById('btn-up').disabled = !data.parent;
+
+  const list = document.getElementById('dir-list');
+  if (data.entries.length === 0) {
+    list.innerHTML = '<div class="dir-empty">サブディレクトリなし</div>';
+    return;
+  }
+
+  const rows = data.entries.map(e => {
+    const p = e.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const icon = e.is_git ? '<span style="color:var(--muted)">◈</span>' : '<span>📁</span>';
+    const navAttr = !e.is_git ? `onclick="browseTo('${p}')"` : '';
+    const addBtn = e.in_workspace ? '' :
+      `<button class="btn-sm add" onclick="handlePin(event,'${p}')">追加</button>`;
+    const codeBtn = `<button class="btn-sm" onclick="handleCode(event,'${p}')">code</button>`;
+    const arrow = !e.is_git ? '<span class="entry-arrow">→</span>' : '';
+    return `
+      <div class="dir-entry ${e.is_git ? 'repo' : 'nav'}" ${navAttr}>
+        ${icon}
+        <span class="entry-name" title="${e.path}">${e.name}</span>
+        <div class="entry-actions">
+          ${addBtn}${codeBtn}${arrow}
+        </div>
+      </div>`;
+  }).join('');
+
+  list.innerHTML = rows;
+}
+
+function handlePin(evt, path) {
+  evt.stopPropagation();
+  pinRepo(path);
+}
+
+function handleCode(evt, path) {
+  evt.stopPropagation();
+  openVSCode(null, path);
+}
+
+async function pinRepo(path) {
+  if (pinnedRepos.includes(path) || pinnedRepos.includes(toDisplay(path))) return;
+  pinnedRepos.push(path);
+  await saveConfig();
+  await loadRepos();
+  browseTo(browsingPath);
+}
+
+document.getElementById('btn-up').addEventListener('click', async () => {
+  const res = await fetch(`/api/ls?path=${encodeURIComponent(browsingPath)}`);
+  const data = await res.json();
+  if (data.parent) browseTo(data.parent);
+});
+
+// ── Repos ────────────────────────────────────────────
+async function loadRepos() {
+  try {
+    const res = await fetch('/api/repos');
+    const repos = await res.json();
+    // sort by saved order; unordered items go to the end
+    if (repoOrder.length > 0) {
+      repos.sort((a, b) => {
+        const ai = repoOrder.indexOf(a.path);
+        const bi = repoOrder.indexOf(b.path);
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+      });
+    }
+    allRepos = repos;
+    render(document.getElementById('search').value);
+  } catch {
+    document.getElementById('list').innerHTML = '<div class="empty">リポジトリの取得に失敗しました</div>';
+  }
+}
+
+async function saveRepoOrder() {
+  repoOrder = allRepos.map(r => r.path);
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo_order: repoOrder }),
+  });
+}
+
+function render(query) {
+  const q = query.trim().toLowerCase();
+  const visible = allRepos.filter(r =>
+    !excludes.includes(r.path) &&
+    (!q || r.name.toLowerCase().includes(q))
+  );
+  const list = document.getElementById('list');
+  if (visible.length === 0) {
+    list.innerHTML = '<div class="empty">一致するリポジトリがありません</div>';
+    return;
+  }
+  list.innerHTML = visible.map(r => {
+    const p = r.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `
+    <div class="repo-item" draggable="true"
+         ondragstart="onDragStart(event,'${p}')"
+         ondragover="onDragOver(event)"
+         ondragleave="onDragLeave(event)"
+         ondrop="onDrop(event,'${p}')"
+         onclick="openVSCode(this,'${p}')">
+      <span class="drag-handle" onclick="event.stopPropagation()">⠿</span>
+      <span class="repo-icon">📁</span>
+      <span class="repo-name">${r.name}</span>
+      <span class="repo-path">${r.path}</span>
+      <span class="open-hint">code で開く →</span>
+      <button class="hide-btn" onclick="hideRepo(event,'${p}')" title="非表示にする">✕</button>
+    </div>
+  `}).join('');
+}
+
+function onDragStart(evt, path) {
+  dragSrcPath = path;
+  evt.dataTransfer.effectAllowed = 'move';
+  evt.currentTarget.style.opacity = '0.4';
+}
+function onDragOver(evt) {
+  evt.preventDefault();
+  evt.dataTransfer.dropEffect = 'move';
+  evt.currentTarget.classList.add('drag-over');
+}
+function onDragLeave(evt) {
+  evt.currentTarget.classList.remove('drag-over');
+}
+function onDrop(evt, targetPath) {
+  evt.preventDefault();
+  evt.currentTarget.classList.remove('drag-over');
+  if (!dragSrcPath || dragSrcPath === targetPath) { dragSrcPath = null; return; }
+  const si = allRepos.findIndex(r => r.path === dragSrcPath);
+  const ti = allRepos.findIndex(r => r.path === targetPath);
+  if (si === -1 || ti === -1) { dragSrcPath = null; return; }
+  const [moved] = allRepos.splice(si, 1);
+  allRepos.splice(ti, 0, moved);
+  dragSrcPath = null;
+  saveRepoOrder();
+  render(document.getElementById('search').value);
+}
+
+async function hideRepo(e, path) {
+  e.stopPropagation();
+  if (!excludes.includes(path)) excludes.push(path);
+  await saveConfig();
+  render(document.getElementById('search').value);
+}
+
+async function openVSCode(el, path) {
+  if (el) el.classList.add('opening');
+  await fetch(`/api/open?path=${encodeURIComponent(path)}`);
+  if (el) setTimeout(() => el.classList.remove('opening'), 800);
+}
+
+// ── Settings panel toggle ────────────────────────────
+document.getElementById('btn-settings').addEventListener('click', () => {
+  const panel = document.getElementById('settings-panel');
+  const btn = document.getElementById('btn-settings');
+  const open = panel.classList.toggle('open');
+  btn.classList.toggle('active', open);
+});
+
+// ── Search ───────────────────────────────────────────
+document.getElementById('search').addEventListener('input', e => render(e.target.value));
+document.getElementById('search').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { e.target.value = ''; render(''); }
+});
+
+// dragend はdocumentで拾ってopacityをリセット
+document.addEventListener('dragend', e => {
+  if (e.target.classList.contains('repo-item')) e.target.style.opacity = '';
+});
+
+// ── Init ─────────────────────────────────────────────
+loadConfig().then(() => browseTo('~'));
+loadRepos();
+</script>
+</body>
+</html>

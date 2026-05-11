@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>diagram — local-devhub</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #7d8590;
+  --accent:  #388bfd;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.hub-link {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.hub-link:hover { color: var(--text); background: var(--border); }
+.vdivider { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+header h1 { font-size: 15px; font-weight: 600; }
+.spacer { flex: 1; }
+
+.mode-badge {
+  font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  color: var(--muted);
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.btn {
+  font-size: 12px;
+  padding: 4px 11px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.1s, color 0.1s;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.layout {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Editor pane */
+.editor-pane {
+  width: 42%;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  position: relative;
+  flex-shrink: 0;
+}
+.pane-label {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  background: var(--surface);
+  flex-shrink: 0;
+}
+#editor {
+  flex: 1;
+  resize: none;
+  background: var(--bg);
+  border: none;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 16px;
+  outline: none;
+  overflow-y: auto;
+  tab-size: 2;
+}
+#editor::placeholder { color: var(--muted); }
+
+.resize-handle {
+  width: 4px;
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.1s;
+}
+.resize-handle:hover { background: var(--accent); }
+
+/* Output pane */
+.output-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+.tab-bar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: stretch;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+.tab {
+  font-size: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  user-select: none;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+.tab-panel { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+.tab-panel.active { display: flex; }
+
+/* Preview */
+#preview-wrap {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+}
+#preview-svg { max-width: 100%; }
+#preview-svg svg { max-width: 100%; height: auto; overflow: visible; }
+.preview-status {
+  padding: 5px 12px;
+  font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-status.ok { color: var(--muted); }
+.preview-status.err { color: #f85149; }
+
+/* Converted output */
+.code-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.code-out {
+  flex: 1;
+  background: var(--bg);
+  border: none;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 14px 16px;
+  resize: none;
+  outline: none;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.action-bar {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.action-bar .hint { flex: 1; font-size: 11px; color: var(--muted); }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="hub-link">← Hub</a>
+  <div class="vdivider"></div>
+  <h1>diagram</h1>
+  <span class="mode-badge" id="mode-badge">Mermaid → XML</span>
+  <div class="spacer"></div>
+  <button class="btn" id="btn-copy-svg">SVG コピー</button>
+</header>
+
+<div class="layout">
+  <div class="editor-pane" id="editor-pane">
+    <div class="pane-label">入力 — Mermaid または XML を貼り付け</div>
+    <textarea id="editor" spellcheck="false" placeholder="Mermaid 記法 または draw.io XML を入力..."></textarea>
+    <div class="resize-handle" id="resize-handle"></div>
+  </div>
+
+  <div class="output-pane">
+    <div class="tab-bar">
+      <div class="tab active" data-tab="preview">プレビュー</div>
+      <div class="tab" data-tab="converted" id="tab-converted-label">XML</div>
+    </div>
+
+    <div class="tab-panel active" id="panel-preview">
+      <div id="preview-wrap">
+        <div id="preview-svg"></div>
+      </div>
+      <div class="preview-status ok" id="preview-status"></div>
+    </div>
+
+    <div class="tab-panel" id="panel-converted">
+      <div class="code-panel">
+        <textarea class="code-out" id="converted-out" readonly></textarea>
+        <div class="action-bar">
+          <span class="hint" id="converted-hint"></span>
+          <button class="btn" onclick="copyConverted(this)">コピー</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SAMPLE_MERMAID = `erDiagram
+    USER {
+        int id PK
+        string name
+        string email
+        datetime created_at
+    }
+    POST {
+        int id PK
+        int user_id FK
+        string title
+        text body
+        datetime created_at
+    }
+    COMMENT {
+        int id PK
+        int post_id FK
+        int user_id FK
+        text body
+    }
+    USER ||--o{ POST : "writes"
+    USER ||--o{ COMMENT : "writes"
+    POST ||--o{ COMMENT : "has"`;
+
+mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', suppressErrorRendering: true });
+
+let renderTimer = null;
+let currentSvg = '';
+
+function detectMode(text) {
+  return text.trimStart().startsWith('<') ? 'xml' : 'mermaid';
+}
+
+async function update() {
+  const input = document.getElementById('editor').value.trim();
+  if (!input) return;
+
+  const mode = detectMode(input);
+  document.getElementById('mode-badge').textContent = mode === 'mermaid' ? 'Mermaid → XML' : 'XML → Mermaid';
+  document.getElementById('tab-converted-label').textContent = mode === 'mermaid' ? 'XML' : 'Mermaid';
+
+  let mermaidCode = '';
+  let convertedOutput = '';
+
+  if (mode === 'mermaid') {
+    mermaidCode = input;
+    convertedOutput = buildDrawioXml(input);
+    document.getElementById('converted-hint').textContent = 'draw.io「Extras → Edit Diagram」に貼り付け可能';
+  } else {
+    mermaidCode = xmlToMermaid(input);
+    convertedOutput = mermaidCode;
+    document.getElementById('converted-hint').textContent = '変換された Mermaid コード';
+  }
+
+  // Render preview
+  const svgWrap = document.getElementById('preview-svg');
+  const status = document.getElementById('preview-status');
+  if (mermaidCode && !mermaidCode.startsWith('//')) {
+    try {
+      const id = 'm' + Date.now();
+      const { svg } = await mermaid.render(id, mermaidCode);
+      // mermaid may leave behind a hidden element — clean it up
+      document.getElementById(id)?.remove();
+      currentSvg = svg;
+      svgWrap.innerHTML = svg;
+      status.textContent = '';
+      status.className = 'preview-status ok';
+    } catch (e) {
+      // keep last valid SVG visible; show error only in status bar
+      const msg = (e.message || String(e)).split('\n')[0];
+      status.textContent = '⚠ ' + msg;
+      status.className = 'preview-status err';
+    }
+  } else if (mermaidCode.startsWith('//')) {
+    status.textContent = '⚠ ' + mermaidCode.replace('//', '').trim();
+    status.className = 'preview-status err';
+  }
+
+  document.getElementById('converted-out').value = convertedOutput;
+}
+
+// Mermaid → draw.io XML
+function buildDrawioXml(code) {
+  const esc = code
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '&#xa;');
+  return [
+    '<mxGraphModel>',
+    '  <root>',
+    '    <mxCell id="0"/>',
+    '    <mxCell id="1" parent="0"/>',
+    `    <mxCell id="2"`,
+    `      value="${esc}"`,
+    '      style="shape=mxgraph.mermaid.mermaid;align=left;shadow=0;dashed=0;html=1;"',
+    '      vertex="1" parent="1">',
+    '      <mxGeometry x="80" y="80" width="640" height="420" as="geometry"/>',
+    '    </mxCell>',
+    '  </root>',
+    '</mxGraphModel>',
+  ].join('\n');
+}
+
+// draw.io XML → Mermaid
+function xmlToMermaid(xmlStr) {
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlStr, 'text/xml');
+    if (doc.querySelector('parsererror')) return '// XML のパースに失敗しました';
+
+    // Mermaid ラッパー形式（自ツール生成 XML）
+    const mermaidCell = doc.querySelector('mxCell[style*="mxgraph.mermaid.mermaid"]');
+    if (mermaidCell) {
+      return unescapeXml(mermaidCell.getAttribute('value') || '');
+    }
+
+    // 汎用 mxGraph → flowchart 変換
+    return mxGraphToFlowchart(doc);
+  } catch (e) {
+    return '// 変換エラー: ' + e.message;
+  }
+}
+
+function mxGraphToFlowchart(doc) {
+  const cells = Array.from(doc.querySelectorAll('mxCell'));
+  const nodes = new Map();
+  const edges = [];
+
+  cells.forEach(cell => {
+    const id = cell.getAttribute('id');
+    if (id === '0' || id === '1') return;
+    const value = cell.getAttribute('value') || '';
+    const isVertex = cell.getAttribute('vertex') === '1';
+    const isEdge = cell.getAttribute('edge') === '1';
+    if (isVertex) nodes.set(id, value || id);
+    if (isEdge) edges.push({
+      from: cell.getAttribute('source'),
+      to: cell.getAttribute('target'),
+      label: value,
+    });
+  });
+
+  if (nodes.size === 0) return '// 変換できるノードが見つかりませんでした';
+
+  const safeId = id => 'N' + id.replace(/[^a-zA-Z0-9]/g, '_');
+
+  let out = 'flowchart TD\n';
+  nodes.forEach((label, id) => {
+    out += `    ${safeId(id)}["${label.replace(/"/g, "'")}"]\n`;
+  });
+  edges.forEach(({ from, to, label }) => {
+    if (!from || !to || !nodes.has(from) || !nodes.has(to)) return;
+    out += label
+      ? `    ${safeId(from)} -->|"${label.replace(/"/g, "'")}"| ${safeId(to)}\n`
+      : `    ${safeId(from)} --> ${safeId(to)}\n`;
+  });
+  return out;
+}
+
+function unescapeXml(str) {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#xa;/g, '\n')
+    .replace(/&#x9;/g, '\t');
+}
+
+function escHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Tabs
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const id = tab.dataset.tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + id));
+  });
+});
+
+// Editor
+document.getElementById('editor').addEventListener('input', () => {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(update, 300);
+});
+document.getElementById('editor').addEventListener('keydown', e => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const t = e.target, s = t.selectionStart;
+    t.value = t.value.slice(0, s) + '  ' + t.value.slice(t.selectionEnd);
+    t.selectionStart = t.selectionEnd = s + 2;
+  }
+});
+
+// Actions
+function copyConverted(btn) {
+  navigator.clipboard.writeText(document.getElementById('converted-out').value)
+    .then(() => flash(btn, 'コピー済み ✓'));
+}
+document.getElementById('btn-copy-svg').addEventListener('click', function () {
+  if (!currentSvg) return;
+  navigator.clipboard.writeText(currentSvg).then(() => flash(this, 'コピー済み ✓'));
+});
+function flash(btn, msg) {
+  const orig = btn.textContent;
+  btn.textContent = msg;
+  setTimeout(() => { btn.textContent = orig; }, 1500);
+}
+
+// Resize
+const resizeHandle = document.getElementById('resize-handle');
+const editorPane = document.getElementById('editor-pane');
+const layout = document.querySelector('.layout');
+let dragging = false, startX = 0, startW = 0;
+resizeHandle.addEventListener('mousedown', e => {
+  dragging = true; startX = e.clientX; startW = editorPane.offsetWidth;
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+});
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const w = Math.max(220, Math.min(startW + e.clientX - startX, layout.offsetWidth - 220));
+  editorPane.style.width = w + 'px';
+});
+document.addEventListener('mouseup', () => {
+  dragging = false;
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+});
+
+// Init
+document.getElementById('editor').value = SAMPLE_MERMAID;
+update();
+</script>
+</body>
+</html>

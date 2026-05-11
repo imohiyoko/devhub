@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>diff-kun — local-devhub</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { overscroll-behavior: none; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #7d8590;
+  --accent:  #388bfd;
+  --red:     #f85149;
+  --green:   #3fb950;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── header ─────────────────────────────────────────────────────────── */
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.hub-link {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.hub-link:hover { color: var(--text); background: var(--border); }
+
+.divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+
+header h1 { font-size: 15px; font-weight: 600; margin-right: 2px; }
+.spacer { flex: 1; }
+
+.badge {
+  font-size: 11px; padding: 2px 8px;
+  border-radius: 10px; background: var(--border); color: var(--muted);
+}
+.badge.changed { background: #388bfd22; color: var(--accent); }
+.badge.nodiff  { background: #3fb95022; color: var(--green); }
+
+.tab-group, .mode-tabs {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.tab-btn, .mode-btn {
+  border: none; background: transparent; color: var(--muted);
+  padding: 4px 12px; cursor: pointer; font-size: 12px;
+  border-right: 1px solid var(--border);
+}
+.tab-btn:last-child, .mode-btn:last-child { border-right: none; }
+.tab-btn:hover:not(.active), .mode-btn:hover:not(.active) { background: var(--border); color: var(--text); }
+.tab-btn.active, .mode-btn.active { background: var(--accent); color: #fff; }
+
+.btn {
+  font-size: 12px; padding: 5px 12px;
+  border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.btn:hover { background: var(--border); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { opacity: 0.85; }
+
+/* ── panels ──────────────────────────────────────────────────────────── */
+.panel {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── editors panel ───────────────────────────────────────────────────── */
+.editors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 1; min-height: 0;
+}
+.editor-col {
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); min-width: 0;
+}
+.editor-col:last-child { border-right: none; }
+.editor-label {
+  padding: 5px 12px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted);
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.before-dot { background: var(--red); }
+.after-dot  { background: var(--green); }
+
+.editor-body {
+  flex: 1; min-height: 0;
+  display: flex;
+}
+
+.gutter {
+  width: 44px; flex-shrink: 0;
+  padding: 10px 6px 10px 4px;
+  text-align: right; line-height: 1.6;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 13px; color: var(--muted);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  user-select: none; white-space: pre;
+  pointer-events: none;
+  overflow-y: scroll; scrollbar-width: none;
+}
+.gutter::-webkit-scrollbar { display: none; }
+
+textarea {
+  flex: 1; background: var(--bg); color: var(--text);
+  border: none; outline: none; resize: none; padding: 10px 12px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 13px; line-height: 1.6; tab-size: 2;
+  overflow: auto; white-space: pre;
+  box-sizing: border-box;
+}
+textarea::placeholder { color: var(--muted); white-space: pre-wrap; }
+
+/* ── diff panel ──────────────────────────────────────────────────────── */
+.diff-pane { flex: 1; overflow: auto; min-height: 0; }
+
+.no-diff {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  height: 100%; gap: 8px; color: var(--muted);
+}
+.no-diff svg { opacity: 0.3; }
+.no-diff p { font-size: 13px; }
+
+/* ── diff table (unified / context) ─────────────────────────────────── */
+.diff-table {
+  width: 100%; border-collapse: collapse;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12.5px; line-height: 1.5;
+}
+.diff-table td { padding: 1px 0; white-space: pre-wrap; word-break: break-all; vertical-align: top; }
+
+td.ln {
+  width: 44px; text-align: right; padding: 0 10px !important;
+  color: var(--muted); user-select: none; border-right: 1px solid var(--border);
+}
+td.mk { width: 20px; text-align: center; user-select: none; padding: 0 2px !important; }
+td.cd { padding: 0 10px !important; }
+
+tr.eq  td { color: var(--muted); }
+tr.del td { background: #f8514910; }
+tr.del td.cd, tr.del td.mk { color: #ffa198; }
+tr.del td.ln { background: #f8514920; color: #f85149aa; }
+tr.add td { background: #3fb95010; }
+tr.add td.cd, tr.add td.mk { color: #7ee787; }
+tr.add td.ln { background: #3fb95020; color: #3fb950aa; }
+
+tr.fold td { background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+tr.fold td.cd { color: var(--muted); font-style: italic; }
+
+tr.cdiv td {
+  padding: 3px 12px !important;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted); font-size: 11px;
+}
+
+/* ── split table ─────────────────────────────────────────────────────── */
+.split-table {
+  width: 100%; border-collapse: collapse; table-layout: fixed;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12.5px; line-height: 1.5;
+}
+.split-table td { padding: 1px 0; white-space: pre-wrap; word-break: break-all; vertical-align: top; }
+.split-table td.ln { text-align: right; padding: 0 8px !important; color: var(--muted); user-select: none; }
+.split-table td.mk { text-align: center; user-select: none; padding: 0 !important; }
+.split-table td.sep { border-left: 2px solid var(--border); }
+
+.split-table tr.eq  td { color: var(--muted); }
+.split-table td.del-bg { background: #f8514910; }
+.split-table td.del-bg.ln { background: #f8514920; color: #f85149aa; }
+.split-table td.del-bg.mk, .split-table td.del-bg.cd { color: #ffa198; }
+.split-table td.add-bg { background: #3fb95010; }
+.split-table td.add-bg.ln { background: #3fb95020; color: #3fb950aa; }
+.split-table td.add-bg.mk, .split-table td.add-bg.cd { color: #7ee787; }
+.split-table tr.fold td { background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); color: var(--muted); font-style: italic; }
+
+mark.wdel { background: #f8514950; color: #ff9492; border-radius: 2px; font-style: normal; }
+mark.wins { background: #3fb95050; color: #56d364; border-radius: 2px; font-style: normal; }
+
+.xbtn {
+  font-size: 11px; padding: 1px 8px; margin-left: 8px;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--muted);
+  cursor: pointer; font-style: normal; vertical-align: middle;
+}
+.xbtn:hover { background: var(--border); color: var(--text); }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="hub-link">← Hub</a>
+  <div class="divider"></div>
+  <h1>diff-kun</h1>
+  <span id="badge" class="badge">—</span>
+  <div class="spacer"></div>
+  <div class="tab-group">
+    <button id="tab-edit" class="tab-btn active" onclick="setTab('edit')">✏️ 編集</button>
+    <button id="tab-diff" class="tab-btn"        onclick="setTab('diff')">🔍 比較</button>
+  </div>
+  <div id="diff-mode-tabs" class="mode-tabs" style="display:none">
+    <button class="mode-btn active" data-mode="unified" onclick="setMode(this)">ユニファイド</button>
+    <button class="mode-btn"        data-mode="context" onclick="setMode(this)">コンテキスト</button>
+    <button class="mode-btn"        data-mode="split"   onclick="setMode(this)">サイドバイサイド</button>
+  </div>
+  <button class="btn" onclick="clearAll()">クリア</button>
+  <button class="btn primary" onclick="swapTexts()">↕ 入れ替え</button>
+</header>
+
+<!-- 編集パネル -->
+<div id="panel-edit" class="panel">
+  <div class="editors">
+    <div class="editor-col">
+      <div class="editor-label"><span class="dot before-dot"></span>Before</div>
+      <div class="editor-body">
+        <div class="gutter" id="before-gutter">1</div>
+        <textarea id="before" wrap="off" placeholder="変更前のテキストを貼り付け..."></textarea>
+      </div>
+    </div>
+    <div class="editor-col">
+      <div class="editor-label"><span class="dot after-dot"></span>After</div>
+      <div class="editor-body">
+        <div class="gutter" id="after-gutter">1</div>
+        <textarea id="after" wrap="off" placeholder="変更後のテキストを貼り付け..."></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 比較パネル -->
+<div id="panel-diff" class="panel" style="display:none">
+  <div class="diff-pane" id="pane">
+    <div class="no-diff" id="noDiff">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <p>差分なし</p>
+    </div>
+    <div id="diffOut" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+const esc = s => (s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// ── LCS ──────────────────────────────────────────────────────────────────
+function lcsOps(a, b) {
+  const m = a.length, n = b.length;
+  if (m + n > 8000) return null;
+  const dp = [];
+  for (let i = 0; i <= m; i++) dp[i] = new Int32Array(n + 1);
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]+1 : Math.max(dp[i-1][j], dp[i][j-1]);
+  const ops = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i-1] === b[j-1]) { ops.push({t:'=',v:a[i-1]}); i--; j--; }
+    else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { ops.push({t:'+',v:b[j-1]}); j--; }
+    else { ops.push({t:'-',v:a[i-1]}); i--; }
+  }
+  return ops.reverse();
+}
+
+// ── Word diff ─────────────────────────────────────────────────────────────
+function tokenize(s) {
+  return s.match(/[A-Za-z0-9_]+|[぀-鿿가-힯]+|[^\s]|\s+/g) ?? [''];
+}
+function wordDiff(a, b) {
+  if (a === b) return null;
+  const ta = tokenize(a), tb = tokenize(b);
+  if (ta.length + tb.length > 600) return null;
+  return lcsOps(ta, tb);
+}
+function htmlDel(line, wops) {
+  if (!wops) return esc(line);
+  return wops.map(o => o.t === '=' ? esc(o.v) : o.t === '-' ? `<mark class="wdel">${esc(o.v)}</mark>` : '').join('');
+}
+function htmlAdd(line, wops) {
+  if (!wops) return esc(line);
+  return wops.map(o => o.t === '=' ? esc(o.v) : o.t === '+' ? `<mark class="wins">${esc(o.v)}</mark>` : '').join('');
+}
+
+// ── Line diff ─────────────────────────────────────────────────────────────
+function groupOps(ops) {
+  const groups = [];
+  let i = 0;
+  while (i < ops.length) {
+    if (ops[i].t === '=') {
+      const g = {type:'eq', lines:[]};
+      while (i < ops.length && ops[i].t === '=') g.lines.push(ops[i++].v);
+      groups.push(g);
+    } else {
+      const g = {type:'change', dels:[], adds:[]};
+      while (i < ops.length && ops[i].t !== '=') {
+        ops[i].t === '-' ? g.dels.push(ops[i].v) : g.adds.push(ops[i].v);
+        i++;
+      }
+      groups.push(g);
+    }
+  }
+  return groups;
+}
+
+function coalesceGroups(rawGroups) {
+  const THRESHOLD = 2;
+  let groups = rawGroups, changed = true;
+  while (changed) {
+    changed = false;
+    const out = [];
+    let i = 0;
+    while (i < groups.length) {
+      const g = groups[i];
+      if (g.type === 'change' && i + 2 < groups.length &&
+          groups[i+1].type === 'eq' && groups[i+1].lines.length <= THRESHOLD &&
+          groups[i+2].type === 'change') {
+        const eq = groups[i+1].lines, nx = groups[i+2];
+        out.push({type:'change', dels:[...g.dels,...eq,...nx.dels], adds:[...g.adds,...eq,...nx.adds]});
+        i += 3; changed = true;
+      } else { out.push(groups[i]); i++; }
+    }
+    groups = out;
+  }
+  return groups;
+}
+
+function makePairs(dels, adds) {
+  const len = Math.max(dels.length, adds.length);
+  return Array.from({length: len}, (_, k) => {
+    const d = dels[k] ?? null, a = adds[k] ?? null;
+    return {del: d, add: a, wops: (d !== null && a !== null) ? wordDiff(d, a) : null};
+  });
+}
+
+// ── Fold state ────────────────────────────────────────────────────────────
+let _foldId = 0;
+const foldData = {};
+
+function makeFold(count, expandedHtml) {
+  const id = _foldId++;
+  foldData[id] = expandedHtml;
+  return `<tr class="fold"><td class="ln" colspan="2"></td><td class="mk">···</td>` +
+    `<td class="cd">${count} 行省略<button class="xbtn" onclick="expandFold(event,${id})">展開</button></td></tr>`;
+}
+function makeSplitFold(count, expandedHtml) {
+  const id = _foldId++;
+  foldData[id] = expandedHtml;
+  return `<tr class="fold">` +
+    `<td colspan="3" style="padding:2px 10px">···  ${count} 行省略<button class="xbtn" onclick="expandFold(event,${id})">展開</button></td>` +
+    `<td class="sep" colspan="3" style="padding:2px 10px">···  ${count} 行省略</td></tr>`;
+}
+function expandFold(e, id) {
+  e.stopPropagation();
+  const tr = e.target.closest('tr');
+  const tmp = document.createElement('tbody');
+  tmp.innerHTML = foldData[id];
+  delete foldData[id];
+  const parent = tr.parentNode;
+  while (tmp.firstChild) parent.insertBefore(tmp.firstChild, tr);
+  parent.removeChild(tr);
+}
+
+// ── Row builders ─────────────────────────────────────────────────────────
+const eqTr  = (a, b, l) => `<tr class="eq"><td class="ln">${a}</td><td class="ln">${b}</td><td class="mk"> </td><td class="cd">${esc(l)}</td></tr>`;
+const delTr = (a, html) => `<tr class="del"><td class="ln">${a}</td><td class="ln"></td><td class="mk">−</td><td class="cd">${html}</td></tr>`;
+const addTr = (b, html) => `<tr class="add"><td class="ln"></td><td class="ln">${b}</td><td class="mk">+</td><td class="cd">${html}</td></tr>`;
+const cdivTr = ()       => `<tr class="cdiv"><td colspan="4">──── ↑ Before  ↓ After ────────────────────────────</td></tr>`;
+
+function splitTr(aNum, aMk, aHtml, aCls, bNum, bMk, bHtml, bCls) {
+  return `<tr>` +
+    `<td class="ln ${aCls}">${aNum??''}</td><td class="mk ${aCls}">${aMk}</td><td class="cd ${aCls}">${aHtml??''}</td>` +
+    `<td class="ln ${bCls} sep">${bNum??''}</td><td class="mk ${bCls}">${bMk}</td><td class="cd ${bCls}">${bHtml??''}</td>` +
+    `</tr>`;
+}
+const splitEqTr = (a, b, l) => splitTr(a,' ',esc(l),'', b,' ',esc(l),'');
+
+function renderEqBlock(lines, startANum, startBNum, ctx, hasPrev, hasNext, rowFn) {
+  let html = '', a = startANum, b = startBNum;
+  const n = lines.length;
+  const s = hasPrev ? Math.min(ctx, n) : 0;
+  const e = hasNext ? Math.min(ctx, n) : 0;
+  if (s + e >= n) {
+    for (const l of lines) { a++; b++; html += rowFn(a, b, l); }
+  } else {
+    for (let k = 0; k < s; k++) { a++; b++; html += rowFn(a, b, lines[k]); }
+    let foldHtml = '', fa = a, fb = b;
+    for (let k = s; k < n - e; k++) { fa++; fb++; foldHtml += rowFn(fa, fb, lines[k]); }
+    const fc = n - s - e; a += fc; b += fc;
+    html += makeFold(fc, foldHtml);
+    for (let k = n - e; k < n; k++) { a++; b++; html += rowFn(a, b, lines[k]); }
+  }
+  return {html, aNum: a, bNum: b};
+}
+
+// ── Renderers ─────────────────────────────────────────────────────────────
+function renderUnified(groups) {
+  let html = '<table class="diff-table">', aNum = 0, bNum = 0;
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi];
+    if (g.type === 'eq') {
+      const r = renderEqBlock(g.lines, aNum, bNum, 3, gi > 0, gi < groups.length-1, eqTr);
+      html += r.html; aNum = r.aNum; bNum = r.bNum;
+    } else {
+      for (const {del, add, wops} of makePairs(g.dels, g.adds)) {
+        if (del !== null) { aNum++; html += delTr(aNum, htmlDel(del, wops)); }
+        if (add !== null) { bNum++; html += addTr(bNum, htmlAdd(add, wops)); }
+      }
+    }
+  }
+  return html + '</table>';
+}
+
+function renderContext(groups) {
+  let html = '<table class="diff-table">', aNum = 0, bNum = 0;
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi];
+    if (g.type === 'eq') {
+      const r = renderEqBlock(g.lines, aNum, bNum, 5, gi > 0, gi < groups.length-1, eqTr);
+      html += r.html; aNum = r.aNum; bNum = r.bNum;
+    } else {
+      const pairs = makePairs(g.dels, g.adds);
+      for (const {del, add, wops} of pairs) if (del !== null) { aNum++; html += delTr(aNum, htmlDel(del, wops)); }
+      html += cdivTr();
+      for (const {del, add, wops} of pairs) if (add !== null) { bNum++; html += addTr(bNum, htmlAdd(add, wops)); }
+    }
+  }
+  return html + '</table>';
+}
+
+function renderSplit(groups) {
+  let html = `<table class="split-table"><colgroup>` +
+    `<col style="width:44px"><col style="width:22px"><col>` +
+    `<col style="width:44px"><col style="width:22px"><col>` +
+    `</colgroup>`;
+  let aNum = 0, bNum = 0;
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi];
+    if (g.type === 'eq') {
+      const n = g.lines.length, ctx = 3;
+      const s = gi > 0 ? Math.min(ctx, n) : 0;
+      const e = gi < groups.length-1 ? Math.min(ctx, n) : 0;
+      if (s + e >= n) {
+        for (let k = 0; k < n; k++) { aNum++; bNum++; html += splitEqTr(aNum, bNum, g.lines[k]); }
+      } else {
+        for (let k = 0; k < s; k++) { aNum++; bNum++; html += splitEqTr(aNum, bNum, g.lines[k]); }
+        let foldHtml = '', fa = aNum, fb = bNum;
+        for (let k = s; k < n - e; k++) { fa++; fb++; foldHtml += splitEqTr(fa, fb, g.lines[k]); }
+        const fc = n - s - e; aNum += fc; bNum += fc;
+        html += makeSplitFold(fc, foldHtml);
+        for (let k = n - e; k < n; k++) { aNum++; bNum++; html += splitEqTr(aNum, bNum, g.lines[k]); }
+      }
+    } else {
+      for (const {del, add, wops} of makePairs(g.dels, g.adds)) {
+        const hasD = del !== null, hasA = add !== null;
+        if (hasD) aNum++;
+        if (hasA) bNum++;
+        html += splitTr(
+          hasD ? aNum : null, hasD ? '−' : ' ', hasD ? htmlDel(del, wops) : '', hasD ? 'del-bg' : '',
+          hasA ? bNum : null, hasA ? '+' : ' ',  hasA ? htmlAdd(add, wops) : '', hasA ? 'add-bg' : ''
+        );
+      }
+    }
+  }
+  return html + '</table>';
+}
+
+// ── Gutter sync ───────────────────────────────────────────────────────────
+function syncGutter(id) {
+  const ta = document.getElementById(id);
+  const gutter = document.getElementById(id + '-gutter');
+  const lines = ta.value ? ta.value.split('\n').length : 1;
+  gutter.textContent = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+  gutter.scrollTop = ta.scrollTop;
+}
+
+// ── Tab / mode switching ──────────────────────────────────────────────────
+let currentTab  = 'edit';
+let currentMode = 'unified';
+
+function setTab(tab) {
+  currentTab = tab;
+  document.getElementById('panel-edit').style.display = tab === 'edit' ? 'flex' : 'none';
+  document.getElementById('panel-diff').style.display = tab === 'diff' ? 'flex' : 'none';
+  document.getElementById('tab-edit').classList.toggle('active', tab === 'edit');
+  document.getElementById('tab-diff').classList.toggle('active', tab === 'diff');
+  document.getElementById('diff-mode-tabs').style.display = tab === 'diff' ? 'flex' : 'none';
+  if (tab === 'diff') {
+    document.getElementById('pane').scrollTop = 0;
+    renderDiff();
+  }
+}
+
+function setMode(btn) {
+  document.querySelectorAll('#diff-mode-tabs .mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentMode = btn.dataset.mode;
+  renderDiff();
+}
+
+// ── Diff rendering ────────────────────────────────────────────────────────
+function computeDiff() {
+  const before = document.getElementById('before').value;
+  const after  = document.getElementById('after').value;
+  const badge  = document.getElementById('badge');
+
+  if (before === after) {
+    badge.textContent = before ? '差分なし' : '—';
+    badge.className   = before ? 'badge nodiff' : 'badge';
+    return null;
+  }
+
+  const aLines = before ? before.split('\n') : [];
+  const bLines = after  ? after.split('\n')  : [];
+
+  if (aLines.length > 5000 || bLines.length > 5000) {
+    badge.textContent = '—'; badge.className = 'badge';
+    return 'toolarge';
+  }
+
+  const ops = lcsOps(aLines, bLines);
+  if (!ops) return null;
+
+  const groups = coalesceGroups(groupOps(ops));
+  let added = 0, removed = 0;
+  for (const g of groups) if (g.type === 'change') { added += g.adds.length; removed += g.dels.length; }
+  badge.textContent = `+${added}  −${removed}`;
+  badge.className   = 'badge changed';
+  return groups;
+}
+
+function renderDiff() {
+  _foldId = 0;
+  for (const k in foldData) delete foldData[k];
+
+  const noDiff  = document.getElementById('noDiff');
+  const diffOut = document.getElementById('diffOut');
+  const groups  = computeDiff();
+
+  if (!groups) {
+    noDiff.style.display  = 'flex';
+    diffOut.style.display = 'none';
+    return;
+  }
+  if (groups === 'toolarge') {
+    diffOut.innerHTML = '<p style="padding:16px;color:var(--muted)">テキストが大きすぎます（各 5000 行まで）</p>';
+    noDiff.style.display  = 'none';
+    diffOut.style.display = 'block';
+    return;
+  }
+
+  const render = {unified: renderUnified, context: renderContext, split: renderSplit};
+  diffOut.innerHTML     = render[currentMode](groups);
+  noDiff.style.display  = 'none';
+  diffOut.style.display = 'block';
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────
+function clearAll() {
+  document.getElementById('before').value = '';
+  document.getElementById('after').value  = '';
+  syncGutter('before'); syncGutter('after');
+  computeDiff();
+  if (currentTab === 'diff') renderDiff();
+}
+function swapTexts() {
+  const b = document.getElementById('before'), a = document.getElementById('after');
+  [b.value, a.value] = [a.value, b.value];
+  syncGutter('before'); syncGutter('after');
+  computeDiff();
+  if (currentTab === 'diff') renderDiff();
+}
+
+// ── Event listeners ───────────────────────────────────────────────────────
+const beforeTA = document.getElementById('before');
+const afterTA  = document.getElementById('after');
+
+beforeTA.addEventListener('input',  () => { syncGutter('before'); computeDiff(); });
+afterTA.addEventListener('input',   () => { syncGutter('after');  computeDiff(); });
+beforeTA.addEventListener('scroll', () => { document.getElementById('before-gutter').scrollTop = beforeTA.scrollTop; });
+afterTA.addEventListener('scroll',  () => { document.getElementById('after-gutter').scrollTop = afterTA.scrollTop; });
+
+syncGutter('before');
+syncGutter('after');
+</script>
+</body>
+</html>
