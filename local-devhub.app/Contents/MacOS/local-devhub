@@ -1,0 +1,11 @@
+#!/bin/bash
+# repo root: local-devhub.app/Contents/MacOS/ から3階層上
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEVHUB_DIR="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
+
+if ! lsof -ti:8765 > /dev/null 2>&1; then
+    python3 "$DEVHUB_DIR/server.py" --no-browser > /tmp/local-devhub.log 2>&1 &
+fi
+
+sleep 0.6
+open "http://localhost:8765"
