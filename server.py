@@ -3,17 +3,19 @@ import json, os, platform, subprocess, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE, 'config.json')
+BASE         = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_DIR = os.path.join(BASE, 'settings')
+CONFIG_PATH  = os.path.join(SETTINGS_DIR, 'config.json')
+CONFIG_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'config.example.json')
 
 
 # ── Settings (settings.json + settings.local.json) ──────────────────────────
 
 def load_settings():
     defaults = {'port': 8765, 'editor': 'code', 'open_browser_on_start': True}
-    for name in ('settings.json', 'settings.local.json'):
+    for name in ('server.example.json', 'server.json'):
         try:
-            with open(os.path.join(BASE, name)) as f:
+            with open(os.path.join(SETTINGS_DIR, name)) as f:
                 defaults.update(json.load(f))
         except FileNotFoundError:
             pass
@@ -45,7 +47,7 @@ def load_config():
             return json.load(f)
     except FileNotFoundError:
         # first run: copy from example if available
-        example = os.path.join(BASE, 'config.example.json')
+        example = CONFIG_EXAMPLE_PATH
         try:
             with open(example) as f:
                 cfg = json.load(f)
