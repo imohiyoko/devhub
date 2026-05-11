@@ -411,8 +411,18 @@ function handleCode(evt, path) {
 }
 
 async function pinRepo(path) {
-  if (pinnedRepos.includes(path) || pinnedRepos.includes(toDisplay(path))) return;
-  pinnedRepos.push(path);
+  const tildeBase = toDisplay(path);
+  const alreadyPinned = pinnedRepos.includes(path) || pinnedRepos.includes(tildeBase);
+  const isExcluded = excludes.includes(path) || excludes.includes(tildeBase);
+
+  if (alreadyPinned && !isExcluded) return;
+
+  if (isExcluded) {
+    excludes = excludes.filter(e => e !== path && e !== tildeBase);
+  }
+  if (!alreadyPinned) {
+    pinnedRepos.push(path);
+  }
   await saveConfig();
   await loadRepos();
   browseTo(browsingPath);
@@ -546,8 +556,10 @@ document.addEventListener('dragend', e => {
 });
 
 // ── Init ─────────────────────────────────────────────
-loadConfig().then(() => browseTo('~'));
-loadRepos();
+loadConfig().then(() => {
+  browseTo('~');
+  loadRepos();
+});
 </script>
 </body>
 </html>
