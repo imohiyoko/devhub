@@ -1,11 +1,24 @@
 #!/bin/bash
-# repo root: local-devhub.app/Contents/MacOS/ から3階層上
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEVHUB_DIR="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
 
-if ! lsof -ti:8765 > /dev/null 2>&1; then
+PORT=$(python3 - "$DEVHUB_DIR" << 'EOF'
+import json, os, sys
+d = sys.argv[1]
+s = {'port': 8765}
+for f in ('server.example.json', 'server.json'):
+    try:
+        with open(os.path.join(d, 'settings', f)) as fh:
+            s.update(json.load(fh))
+    except FileNotFoundError:
+        pass
+print(s['port'])
+EOF
+)
+
+if ! lsof -ti:"$PORT" > /dev/null 2>&1; then
     python3 "$DEVHUB_DIR/server.py" --no-browser > /tmp/local-devhub.log 2>&1 &
 fi
 
 sleep 0.6
-open "http://localhost:8765"
+open "http://localhost:$PORT"
