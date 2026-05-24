@@ -1,5 +1,5 @@
 #!/bin/bash
-# local-devhub をグローバルコマンドとしてインストールする
+# devhub をグローバルコマンドとしてインストールする
 set -e
 
 DEVHUB_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -7,15 +7,15 @@ BIN_DIR="$HOME/.local/bin"
 
 mkdir -p "$BIN_DIR"
 
-cat > "$BIN_DIR/local-devhub" << EOF
+cat > "$BIN_DIR/devhub" << EOF
 #!/bin/bash
 python3 "$DEVHUB_DIR/server.py" "\$@"
 EOF
 
-chmod +x "$BIN_DIR/local-devhub"
+chmod +x "$BIN_DIR/devhub"
 
 echo "✓ インストール完了"
-echo "  コマンド : $BIN_DIR/local-devhub"
+echo "  コマンド : $BIN_DIR/devhub"
 echo "  実体     : $DEVHUB_DIR/server.py"
 echo ""
 
