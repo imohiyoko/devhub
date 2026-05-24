@@ -1,4 +1,4 @@
-# local-devhub
+# devhub
 
 ローカル開発を補助するツール群を `localhost:8765` に集約するダッシュボード。  
 外部依存なし（Python 標準ライブラリのみ）。
@@ -21,8 +21,8 @@
 ### インストール
 
 ```bash
-git clone https://github.com/imohiyoko/local-devhub.git
-cd local-devhub
+git clone https://github.com/imohiyoko/devhub.git
+cd devhub
 
 # グローバルコマンドとして登録（任意）
 chmod +x install.sh && ./install.sh
@@ -32,14 +32,14 @@ chmod +x install.sh && ./install.sh
 
 ```bash
 # インストール済みの場合
-local-devhub
+devhub
 
 # スクリプトから直接
 ./start.sh          # macOS / Linux
 start.bat           # Windows
 ```
 
-macOS では `local-devhub.app` をダブルクリックしても起動できます。
+macOS では `devhub.app` をダブルクリックしても起動できます。
 
 ## 設定
 
