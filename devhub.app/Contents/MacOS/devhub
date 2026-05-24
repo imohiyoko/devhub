@@ -17,7 +17,7 @@ EOF
 )
 
 if ! lsof -ti:"$PORT" > /dev/null 2>&1; then
-    python3 "$DEVHUB_DIR/server.py" --no-browser > /tmp/local-devhub.log 2>&1 &
+    python3 "$DEVHUB_DIR/server.py" --no-browser > /tmp/devhub.log 2>&1 &
 fi
 
 sleep 0.6

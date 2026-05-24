@@ -227,7 +227,7 @@ if open_browser:
         daemon=True,
     ).start()
 
-print(f'local-devhub → http://localhost:{PORT}  (Ctrl+C to quit)')
+print(f'devhub → http://localhost:{PORT}  (Ctrl+C to quit)')
 print(f'  platform : {platform.system()}')
 print(f'  editor   : {EDITOR}')
 HTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
