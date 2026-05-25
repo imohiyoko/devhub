@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>csv-tsv — local-devhub</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #7d8590;
+  --accent:  #388bfd;
+  --green:   #3fb950;
+  --yellow:  #d29922;
+  --red:     #f85149;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── header ── */
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.hub-link {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.hub-link:hover { color: var(--text); background: var(--border); }
+.vdivider { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+header h1 { font-size: 15px; font-weight: 600; }
+.spacer { flex: 1; }
+
+/* ── toolbar ── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.direction-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.direction-toggle button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.direction-toggle button.active {
+  background: var(--accent);
+  color: #fff;
+}
+.direction-toggle button:not(.active):hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.sep-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sep-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+.sep-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.sep-select:focus { outline: 1px solid var(--accent); }
+
+.toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+.btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 5px 12px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+.btn:hover { color: var(--text); border-color: var(--accent); }
+.btn.primary { border-color: var(--accent); color: var(--accent); }
+.btn.primary:hover { background: var(--accent); color: #fff; }
+.btn.success { border-color: var(--green); color: var(--green); }
+
+.stats {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "SF Mono", ui-monospace, monospace;
+}
+
+/* ── main ── */
+.main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr auto;
+  flex: 1;
+  overflow: hidden;
+  gap: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+.pane:last-child { border-right: none; }
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.pane-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+.pane-actions { display: flex; gap: 6px; }
+
+textarea {
+  flex: 1;
+  background: var(--bg);
+  border: none;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px;
+  resize: none;
+  outline: none;
+  overflow: auto;
+}
+textarea::placeholder { color: var(--muted); }
+
+/* ── preview tab area ── */
+.preview-area {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.preview-area.collapsed { max-height: 36px; }
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 36px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+}
+.preview-header:hover { background: var(--border); }
+.preview-toggle { font-size: 10px; color: var(--muted); }
+.preview-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+.preview-meta { font-size: 11px; color: var(--muted); font-family: "SF Mono", ui-monospace, monospace; }
+
+.preview-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 12px;
+}
+
+table.preview {
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  white-space: nowrap;
+  min-width: 100%;
+}
+table.preview thead tr { background: var(--surface); }
+table.preview th, table.preview td {
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  text-align: left;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+table.preview th {
+  color: var(--accent);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+table.preview td { color: var(--text); }
+table.preview tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+table.preview tbody tr:hover { background: rgba(56,139,253,0.08); }
+
+.row-num {
+  color: var(--muted);
+  font-size: 11px;
+  border-right-color: var(--border) !important;
+  padding-right: 8px;
+  text-align: right;
+  min-width: 36px;
+}
+
+.empty-msg {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 12px 0;
+  text-align: center;
+}
+
+.error-msg {
+  color: var(--red);
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+/* ── file drop overlay ── */
+.drop-zone {
+  position: absolute;
+  inset: 0;
+  background: rgba(56,139,253,0.12);
+  border: 2px dashed var(--accent);
+  border-radius: 4px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--accent);
+  pointer-events: none;
+  z-index: 10;
+}
+.pane { position: relative; }
+.pane.dragover .drop-zone { display: flex; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="hub-link" href="/">← hub</a>
+  <div class="vdivider"></div>
+  <h1>csv-tsv</h1>
+  <span class="spacer"></span>
+</header>
+
+<div class="toolbar">
+  <div class="direction-toggle">
+    <button id="btnCsvToTsv" class="active" onclick="setMode('csv-tsv')">CSV → TSV</button>
+    <button id="btnTsvToCsv" onclick="setMode('tsv-csv')">TSV → CSV</button>
+  </div>
+
+  <div class="sep-select-wrap">
+    <span class="sep-label">入力区切り</span>
+    <select class="sep-select" id="inSepSelect" onchange="convert()">
+      <option value="auto">自動検出</option>
+      <option value=",">カンマ (,)</option>
+      <option value="	">タブ (⇥)</option>
+      <option value=";">セミコロン (;)</option>
+      <option value="|">パイプ (|)</option>
+    </select>
+  </div>
+
+  <div class="sep-select-wrap">
+    <span class="sep-label">出力区切り</span>
+    <select class="sep-select" id="outSepSelect" onchange="convert()">
+      <option value="	">タブ (⇥)</option>
+      <option value=",">カンマ (,)</option>
+      <option value=";">セミコロン (;)</option>
+      <option value="|">パイプ (|)</option>
+    </select>
+  </div>
+
+  <div class="toolbar-right">
+    <span class="stats" id="statsLabel"></span>
+    <button class="btn" onclick="clearAll()">クリア</button>
+    <label class="btn" style="cursor:pointer">
+      ファイル読込
+      <input type="file" id="fileInput" accept=".csv,.tsv,.txt" style="display:none" onchange="loadFile(event)">
+    </label>
+    <button class="btn primary" id="copyBtn" onclick="copyOutput()">コピー</button>
+  </div>
+</div>
+
+<div class="main">
+  <div class="pane" id="inputPane">
+    <div class="pane-header">
+      <span class="pane-title" id="inputLabel">INPUT (CSV)</span>
+      <div class="pane-actions">
+        <button class="btn" onclick="pasteInput()">ペースト</button>
+      </div>
+    </div>
+    <textarea id="inputArea" placeholder="ここにCSVを貼り付けるか、ファイルをドロップしてください…" oninput="convert()" spellcheck="false"></textarea>
+    <div class="drop-zone">ファイルをドロップ</div>
+  </div>
+
+  <div class="pane">
+    <div class="pane-header">
+      <span class="pane-title" id="outputLabel">OUTPUT (TSV)</span>
+      <div class="pane-actions">
+        <button class="btn" id="swapBtn" onclick="swapInputOutput()">⇄ スワップ</button>
+      </div>
+    </div>
+    <textarea id="outputArea" placeholder="変換結果がここに表示されます" readonly spellcheck="false"></textarea>
+  </div>
+
+  <div class="preview-area" id="previewArea">
+    <div class="preview-header" onclick="togglePreview()">
+      <span class="preview-toggle" id="previewToggle">▲</span>
+      <span class="preview-title">プレビュー</span>
+      <span class="preview-meta" id="previewMeta"></span>
+    </div>
+    <div class="preview-scroll" id="previewScroll">
+      <p class="empty-msg">データを入力するとテーブルプレビューが表示されます</p>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── state ──────────────────────────────────────────────────────────────────
+let mode = 'csv-tsv'; // 'csv-tsv' | 'tsv-csv'
+let previewCollapsed = false;
+
+// ── mode ───────────────────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m;
+  document.getElementById('btnCsvToTsv').classList.toggle('active', m === 'csv-tsv');
+  document.getElementById('btnTsvToCsv').classList.toggle('active', m === 'tsv-csv');
+
+  const inSep  = document.getElementById('inSepSelect');
+  const outSep = document.getElementById('outSepSelect');
+
+  if (m === 'csv-tsv') {
+    document.getElementById('inputLabel').textContent  = 'INPUT (CSV)';
+    document.getElementById('outputLabel').textContent = 'OUTPUT (TSV)';
+    document.getElementById('inputArea').placeholder   = 'ここにCSVを貼り付けるか、ファイルをドロップしてください…';
+    if (inSep.value === '\t') inSep.value = ',';
+    outSep.value = '\t';
+  } else {
+    document.getElementById('inputLabel').textContent  = 'INPUT (TSV)';
+    document.getElementById('outputLabel').textContent = 'OUTPUT (CSV)';
+    document.getElementById('inputArea').placeholder   = 'ここにTSVを貼り付けるか、ファイルをドロップしてください…';
+    inSep.value = '\t';
+    if (outSep.value === '\t') outSep.value = ',';
+  }
+  convert();
+}
+
+// ── CSV parser (RFC 4180 準拠) ─────────────────────────────────────────────
+function detectSep(text) {
+  // 先頭 5 行でカンマ・タブ・セミコロン・パイプを数えて多いものを返す
+  const sample = text.split('\n').slice(0, 5).join('\n');
+  const counts = {
+    ',': (sample.match(/,/g) || []).length,
+    '\t': (sample.match(/\t/g) || []).length,
+    ';': (sample.match(/;/g) || []).length,
+    '|': (sample.match(/\|/g) || []).length,
+  };
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+}
+
+function parseCSV(text, sep) {
+  if (sep === 'auto') sep = detectSep(text);
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuote = false;
+  let i = 0;
+  const len = text.length;
+
+  while (i < len) {
+    const ch = text[i];
+    if (inQuote) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuote = false;
+      } else {
+        field += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuote = true;
+      } else if (ch === sep) {
+        row.push(field); field = '';
+      } else if (ch === '\r') {
+        // skip
+      } else if (ch === '\n') {
+        row.push(field); field = '';
+        rows.push(row); row = [];
+      } else {
+        field += ch;
+      }
+    }
+    i++;
+  }
+  if (field !== '' || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  // 末尾の空行を除去
+  while (rows.length > 0 && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') {
+    rows.pop();
+  }
+  return rows;
+}
+
+function fieldToString(field, sep) {
+  // セパレータ・ダブルクォート・改行を含む場合はクォートする
+  if (sep === '\t') {
+    // TSV: タブ→スペースで逃がす（タブ区切りではクォートが標準でないため）
+    return field.replace(/\t/g, ' ').replace(/\r?\n/g, ' ');
+  }
+  if (field.includes(sep) || field.includes('"') || field.includes('\n') || field.includes('\r')) {
+    return '"' + field.replace(/"/g, '""') + '"';
+  }
+  return field;
+}
+
+function serializeCSV(rows, sep) {
+  return rows.map(row => row.map(f => fieldToString(f, sep)).join(sep)).join('\n');
+}
+
+// ── convert ────────────────────────────────────────────────────────────────
+function convert() {
+  const input   = document.getElementById('inputArea').value;
+  const inSep   = document.getElementById('inSepSelect').value;
+  const outSep  = document.getElementById('outSepSelect').value;
+  const stats   = document.getElementById('statsLabel');
+  const copyBtn = document.getElementById('copyBtn');
+  copyBtn.classList.remove('success');
+  copyBtn.textContent = 'コピー';
+
+  if (!input.trim()) {
+    document.getElementById('outputArea').value = '';
+    stats.textContent = '';
+    renderPreview([]);
+    return;
+  }
+
+  try {
+    const rows = parseCSV(input, inSep);
+    const output = serializeCSV(rows, outSep === 'auto' ? '\t' : outSep);
+    document.getElementById('outputArea').value = output;
+
+    const cols = rows.length > 0 ? Math.max(...rows.map(r => r.length)) : 0;
+    stats.textContent = `${rows.length} 行 × ${cols} 列`;
+
+    renderPreview(rows);
+  } catch (e) {
+    document.getElementById('outputArea').value = '';
+    stats.textContent = '';
+    renderPreview([], e.message);
+  }
+}
+
+// ── preview ────────────────────────────────────────────────────────────────
+function renderPreview(rows, error) {
+  const scroll = document.getElementById('previewScroll');
+  const meta   = document.getElementById('previewMeta');
+
+  if (error) {
+    scroll.innerHTML = `<p class="error-msg">エラー: ${escHtml(error)}</p>`;
+    meta.textContent = '';
+    return;
+  }
+  if (rows.length === 0) {
+    scroll.innerHTML = '<p class="empty-msg">データを入力するとテーブルプレビューが表示されます</p>';
+    meta.textContent = '';
+    return;
+  }
+
+  const MAX_ROWS = 200;
+  const header = rows[0];
+  const body   = rows.slice(1, MAX_ROWS + 1);
+  const truncated = rows.length - 1 > MAX_ROWS;
+
+  meta.textContent = `${rows.length} 行 × ${header.length} 列` + (truncated ? `  (先頭 ${MAX_ROWS} 行を表示)` : '');
+
+  const thCells = ['<th class="row-num">#</th>', ...header.map(h => `<th title="${escHtml(h)}">${escHtml(h)}</th>`)].join('');
+  const trRows = body.map((row, i) => {
+    const cells = row.map(c => `<td title="${escHtml(c)}">${escHtml(c)}</td>`).join('');
+    return `<tr><td class="row-num">${i + 1}</td>${cells}</tr>`;
+  }).join('');
+
+  scroll.innerHTML = `<table class="preview"><thead><tr>${thCells}</tr></thead><tbody>${trRows}</tbody></table>`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function togglePreview() {
+  previewCollapsed = !previewCollapsed;
+  document.getElementById('previewArea').classList.toggle('collapsed', previewCollapsed);
+  document.getElementById('previewToggle').textContent = previewCollapsed ? '▼' : '▲';
+}
+
+// ── actions ────────────────────────────────────────────────────────────────
+async function copyOutput() {
+  const text = document.getElementById('outputArea').value;
+  if (!text) return;
+  await navigator.clipboard.writeText(text);
+  const btn = document.getElementById('copyBtn');
+  btn.classList.add('success');
+  btn.textContent = 'コピー済み';
+  setTimeout(() => { btn.classList.remove('success'); btn.textContent = 'コピー'; }, 1500);
+}
+
+async function pasteInput() {
+  try {
+    const text = await navigator.clipboard.readText();
+    document.getElementById('inputArea').value = text;
+    convert();
+  } catch {
+    document.getElementById('inputArea').focus();
+    document.execCommand('paste');
+  }
+}
+
+function clearAll() {
+  document.getElementById('inputArea').value = '';
+  document.getElementById('outputArea').value = '';
+  document.getElementById('statsLabel').textContent = '';
+  renderPreview([]);
+}
+
+function swapInputOutput() {
+  const out = document.getElementById('outputArea').value;
+  if (!out) return;
+  document.getElementById('inputArea').value = out;
+  setMode(mode === 'csv-tsv' ? 'tsv-csv' : 'csv-tsv');
+}
+
+function loadFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('inputArea').value = e.target.result;
+    // ファイル拡張子でモードを推測
+    if (file.name.endsWith('.tsv')) setMode('tsv-csv');
+    else setMode('csv-tsv');
+    convert();
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+// ── drag & drop ───────────────────────────────────────────────────────────
+const inputPane = document.getElementById('inputPane');
+inputPane.addEventListener('dragover', e => { e.preventDefault(); inputPane.classList.add('dragover'); });
+inputPane.addEventListener('dragleave', () => inputPane.classList.remove('dragover'));
+inputPane.addEventListener('drop', e => {
+  e.preventDefault();
+  inputPane.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    document.getElementById('inputArea').value = ev.target.result;
+    if (file.name.endsWith('.tsv')) setMode('tsv-csv');
+    else setMode('csv-tsv');
+    convert();
+  };
+  reader.readAsText(file);
+});
+</script>
+</body>
+</html>
