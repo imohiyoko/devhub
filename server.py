@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, platform, subprocess, sys, threading, time, webbrowser
+import json, os, platform, shlex, subprocess, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -21,6 +21,19 @@ def load_settings():
             pass
     return defaults
 
+def save_settings(patch):
+    path = os.path.join(SETTINGS_DIR, 'server.json')
+    current = {}
+    try:
+        with open(path) as f:
+            current = json.load(f)
+    except FileNotFoundError:
+        pass
+    current.update(patch)
+    with open(path, 'w') as f:
+        json.dump(current, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+
 SETTINGS = load_settings()
 PORT     = SETTINGS['port']
 EDITOR   = SETTINGS['editor']
@@ -36,6 +49,8 @@ ROUTES = {
     '/workspace/':  os.path.join(BASE, 'tools', 'workspace', 'index.html'),
     '/diagram':     os.path.join(BASE, 'tools', 'diagram', 'index.html'),
     '/diagram/':    os.path.join(BASE, 'tools', 'diagram', 'index.html'),
+    '/csv-tsv':     os.path.join(BASE, 'tools', 'csv-tsv', 'index.html'),
+    '/csv-tsv/':    os.path.join(BASE, 'tools', 'csv-tsv', 'index.html'),
 }
 
 
@@ -112,6 +127,9 @@ def all_repos():
 def open_in_editor(path):
     if platform.system() == 'Windows':
         subprocess.Popen(f'"{EDITOR}" "{path}"', shell=True)
+    elif platform.system() == 'Darwin' and EDITOR in ('code', 'cursor', 'windsurf'):
+        _DARWIN_APP = {'code': 'Visual Studio Code', 'cursor': 'Cursor', 'windsurf': 'Windsurf'}
+        subprocess.Popen(['open', '-a', _DARWIN_APP[EDITOR], path])
     else:
         subprocess.Popen([EDITOR, path])
 
@@ -145,7 +163,11 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == '/api/settings':
-            self.send_json(SETTINGS)
+            self.send_json(load_settings())
+            return
+
+        if path == '/api/info':
+            self.send_json({'base': BASE, 'port': PORT})
             return
 
         if path == '/api/open':
@@ -210,6 +232,30 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'ok': True})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/settings':
+            try:
+                data = json.loads(self.read_body())
+                allowed = {'disabled_tools', 'tool_order', 'editor', 'open_browser_on_start'}
+                save_settings({k: v for k, v in data.items() if k in allowed})
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/restart':
+            self.send_json({'ok': True})
+            def do_restart():
+                time.sleep(0.3)
+                args = ' '.join(shlex.quote(a) for a in sys.argv)
+                cmd = (
+                    f'lsof -ti :{PORT} | xargs kill 2>/dev/null; '
+                    f'sleep 0.3; '
+                    f'exec {shlex.quote(sys.executable)} {args}'
+                )
+                subprocess.Popen(['sh', '-c', cmd], close_fds=True)
+            threading.Thread(target=do_restart, daemon=True).start()
             return
 
         self.send_json({'error': 'not found'}, 404)
