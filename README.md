@@ -10,22 +10,53 @@
 | **workspace** | `/workspace` | `~/developer` 配下のリポジトリ一覧から VSCode で開く |
 | **diff-kun** | `/diff-kun` | テキスト差分をリアルタイム確認（unified / context / side-by-side） |
 | **diagram** | `/diagram` | Mermaid 記法のリアルタイムプレビュー・Draw.io XML 変換 |
+| **csv-tsv** | `/csv-tsv` | CSV / TSV の相互変換 |
 
 ## セットアップ
 
 ### 必要環境
 
 - Python 3.8+
-- VSCode（`code` コマンドが PATH に通っていること）
+- Git
+- VSCode / Cursor / Windsurf など（workspace からエディタで開く場合）
 
-### インストール
+### クイックセットアップ
+
+macOS / Linux:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/imohiyoko/devhub/main/install.sh)"
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/imohiyoko/devhub/main/install.ps1 | iex"
+```
+
+上記は devhub を標準の場所へ clone / 更新し、`devhub` コマンドを登録します。
+
+| OS | インストール先 | コマンド配置先 |
+|---|---|---|
+| macOS / Linux | `~/.devhub` | `~/.local/bin/devhub` |
+| Windows | `%LOCALAPPDATA%\devhub` | `%USERPROFILE%\bin\devhub.cmd` |
+
+### 手動インストール
 
 ```bash
 git clone https://github.com/imohiyoko/devhub.git
 cd devhub
 
-# グローバルコマンドとして登録（任意）
+# グローバルコマンドとして登録
 chmod +x install.sh && ./install.sh
+```
+
+Windows:
+
+```powershell
+git clone https://github.com/imohiyoko/devhub.git
+cd devhub
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 ### 起動
