@@ -34,13 +34,10 @@ header {
   display: flex;
   align-items: center;
   padding: 0 24px;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
 }
-header h1 {
-  font-size: 15px;
-  font-weight: 600;
-}
+header h1 { font-size: 15px; font-weight: 600; }
 .host-badge {
   font-size: 11px;
   padding: 2px 8px;
@@ -49,6 +46,174 @@ header h1 {
   color: var(--muted);
   font-family: "SF Mono", ui-monospace, monospace;
 }
+.header-spacer { flex: 1; }
+.header-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.header-btn:hover, .header-btn.active { color: var(--text); border-color: var(--accent); }
+
+/* ── Restart split button ── */
+.restart-wrap { position: relative; display: flex; }
+.restart-split {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.restart-split:hover, .restart-split.active { border-color: var(--accent); }
+.restart-main-btn {
+  background: none;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+  font-family: inherit;
+}
+.restart-main-btn:hover:not(:disabled) { color: var(--text); background: #ffffff0a; }
+.restart-main-btn:disabled { opacity: 0.5; cursor: default; }
+.restart-arrow-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  width: 20px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.restart-arrow-btn:hover { color: var(--text); background: #ffffff0a; }
+.restart-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 220px;
+  display: none;
+  z-index: 100;
+  box-shadow: 0 8px 24px #0006;
+}
+.restart-menu.open { display: block; }
+.restart-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 8px 10px;
+  text-align: left;
+  transition: background 0.12s;
+  font-family: inherit;
+}
+.restart-menu-item:hover { background: #ffffff10; }
+.mi-icon { font-size: 15px; line-height: 1; }
+.restart-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
+
+/* ── Settings panel ── */
+.settings-panel {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 20px 24px;
+  display: none;
+}
+.settings-panel.open { display: block; }
+.settings-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+.tool-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 400px;
+}
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px;
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+.toggle-row.insert-before {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+.drag-handle {
+  color: var(--border);
+  cursor: grab;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  padding: 0 2px;
+  user-select: none;
+  transition: color 0.12s;
+}
+.drag-handle:hover { color: var(--muted); }
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  flex: 1;
+}
+.toggle-label-icon { font-size: 16px; line-height: 1; }
+
+/* ── Toggle switch ── */
+.toggle-switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.2s, background 0.2s;
+}
+.toggle-switch input:checked + .toggle-track { background: var(--accent); }
+.toggle-switch input:checked + .toggle-track::after { transform: translateX(16px); background: #fff; }
 
 main {
   flex: 1;
@@ -81,29 +246,17 @@ main {
   border-radius: 8px;
   padding: 20px;
   transition: border-color 0.15s, background 0.15s;
-  cursor: pointer;
+  cursor: grab;
 }
-.tool-card:hover {
-  border-color: var(--accent);
-  background: #161b22ee;
+.tool-card:hover { border-color: var(--accent); background: #161b22ee; }
+.tool-card.insert-before {
+  box-shadow: -4px 0 0 0 var(--accent);
 }
+.tool-icon { font-size: 24px; margin-bottom: 12px; line-height: 1; }
+.tool-name { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.tool-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
 
-.tool-icon {
-  font-size: 24px;
-  margin-bottom: 12px;
-  line-height: 1;
-}
-.tool-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 6px;
-}
-.tool-desc {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.5;
-}
+.empty-state { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
 footer {
   padding: 16px 24px;
@@ -119,30 +272,292 @@ footer {
 <header>
   <h1>local-devhub</h1>
   <span class="host-badge">localhost:8765</span>
+  <div class="header-spacer"></div>
+  <button class="header-btn" id="settingsBtn" title="設定">⚙</button>
+  <div class="restart-wrap" id="restartWrap">
+    <div class="restart-split" id="restartSplit">
+      <button class="restart-main-btn" id="restartMainBtn" title="再起動 + 自動リロード">↻</button>
+      <button class="restart-arrow-btn" id="restartArrowBtn" title="再起動オプション">▾</button>
+    </div>
+    <div class="restart-menu" id="restartMenu">
+      <button class="restart-menu-item" onclick="doRestart('auto')">
+        <span class="mi-icon">↻</span> 再起動 + 自動リロード
+      </button>
+      <button class="restart-menu-item" onclick="doRestart('only')">
+        <span class="mi-icon">↻</span> 再起動のみ
+      </button>
+      <div class="restart-menu-sep"></div>
+      <button class="restart-menu-item" id="copyMenuItem" onclick="copyCmd()">
+        <span class="mi-icon">⎘</span> コマンドをコピー
+      </button>
+    </div>
+  </div>
 </header>
+
+<div class="settings-panel" id="settingsPanel">
+  <p class="settings-panel-title">ツールの表示設定</p>
+  <div class="tool-toggles" id="toolToggles"></div>
+</div>
 
 <main>
   <p class="section-title">ツール</p>
-  <div class="tools-grid">
-    <a href="/diff-kun" class="tool-card">
-      <div class="tool-icon">⇄</div>
-      <div class="tool-name">diff-kun</div>
-      <div class="tool-desc">2つのテキストの差分をリアルタイム確認（ユニファイド / コンテキスト / サイドバイサイド）</div>
-    </a>
-    <a href="/workspace" class="tool-card">
-      <div class="tool-icon">📁</div>
-      <div class="tool-name">workspace</div>
-      <div class="tool-desc">リポジトリ一覧から選んで VSCode で開く</div>
-    </a>
-    <a href="/diagram" class="tool-card">
-      <div class="tool-icon">◈</div>
-      <div class="tool-name">diagram</div>
-      <div class="tool-desc">Mermaid 記法をリアルタイムプレビュー（ER 図・フロー・シーケンス等）。Draw.io XML への変換・エンコードも可能</div>
-    </a>
-  </div>
+  <div class="tools-grid" id="toolsGrid"></div>
 </main>
 
 <footer>local-devhub · localhost:8765</footer>
 
+<script>
+const TOOLS = [
+  {
+    id: 'diff-kun',
+    href: '/diff-kun',
+    icon: '⇄',
+    name: 'diff-kun',
+    desc: '2つのテキストの差分をリアルタイム確認（ユニファイド / コンテキスト / サイドバイサイド）',
+  },
+  {
+    id: 'workspace',
+    href: '/workspace',
+    icon: '📁',
+    name: 'workspace',
+    desc: 'リポジトリ一覧から選んで VSCode で開く',
+  },
+  {
+    id: 'diagram',
+    href: '/diagram',
+    icon: '◈',
+    name: 'diagram',
+    desc: 'Mermaid 記法をリアルタイムプレビュー（ER 図・フロー・シーケンス等）。Draw.io XML への変換・エンコードも可能',
+  },
+  {
+    id: 'csv-tsv',
+    href: '/csv-tsv',
+    icon: '⇌',
+    name: 'csv-tsv',
+    desc: 'CSV ↔ TSV をリアルタイム変換。RFC 4180 準拠パーサー、テーブルプレビュー、ファイルドロップ対応',
+  },
+];
+
+let disabledTools = [];
+let toolOrder = [];
+let restartCmdText = 'python3 server.py';
+let dragSrcId = null;
+
+function orderedTools() {
+  if (!toolOrder.length) return TOOLS;
+  const map = new Map(TOOLS.map(t => [t.id, t]));
+  const result = toolOrder.map(id => map.get(id)).filter(Boolean);
+  const inOrder = new Set(toolOrder);
+  TOOLS.forEach(t => { if (!inOrder.has(t.id)) result.push(t); });
+  return result;
+}
+
+function renderGrid() {
+  const grid = document.getElementById('toolsGrid');
+  const enabled = orderedTools().filter(t => !disabledTools.includes(t.id));
+  if (enabled.length === 0) {
+    grid.innerHTML = '<p class="empty-state">有効なツールがありません。設定からツールを有効化してください。</p>';
+    return;
+  }
+  grid.innerHTML = enabled.map(t => `
+    <a href="${t.href}" class="tool-card" draggable="true" data-id="${t.id}"
+       ondragstart="onCardDragStart(event,'${t.id}')"
+       ondragover="onCardDragOver(event)"
+       ondragleave="onCardDragLeave(event)"
+       ondrop="onCardDrop(event,'${t.id}')"
+       ondragend="onCardDragEnd(event)">
+      <div class="tool-icon">${t.icon}</div>
+      <div class="tool-name">${t.name}</div>
+      <div class="tool-desc">${t.desc}</div>
+    </a>
+  `).join('');
+}
+
+function renderToggles() {
+  const container = document.getElementById('toolToggles');
+  container.innerHTML = orderedTools().map(t => `
+    <div class="toggle-row" draggable="true" data-id="${t.id}"
+         ondragstart="onDragStart(event,'${t.id}')"
+         ondragover="onDragOver(event)"
+         ondragleave="onDragLeave(event)"
+         ondrop="onDrop(event,'${t.id}')"
+         ondragend="onDragEnd(event)">
+      <span class="drag-handle" title="ドラッグで並び替え">⠿</span>
+      <span class="toggle-label">
+        <span class="toggle-label-icon">${t.icon}</span>
+        <span>${t.name}</span>
+      </span>
+      <label class="toggle-switch">
+        <input type="checkbox" data-id="${t.id}" ${disabledTools.includes(t.id) ? '' : 'checked'}
+               onchange="onToggle(this)">
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+  `).join('');
+}
+
+/* ── Settings panel drag & drop ── */
+function onDragStart(e, id) {
+  dragSrcId = id;
+  e.dataTransfer.effectAllowed = 'move';
+  setTimeout(() => e.currentTarget.style.opacity = '0.4', 0);
+}
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('insert-before');
+}
+function onDragLeave(e) {
+  e.currentTarget.classList.remove('insert-before');
+}
+function onDragEnd(e) {
+  e.currentTarget.style.opacity = '';
+  document.querySelectorAll('.toggle-row').forEach(r => r.classList.remove('insert-before'));
+}
+function onDrop(e, dstId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('insert-before');
+  applyReorder(dragSrcId, dstId);
+}
+
+/* ── Shared reorder helper ── */
+function applyReorder(srcId, dstId) {
+  if (srcId === dstId) return;
+  const ordered = orderedTools();
+  const srcIdx = ordered.findIndex(t => t.id === srcId);
+  const dstIdx = ordered.findIndex(t => t.id === dstId);
+  const [item] = ordered.splice(srcIdx, 1);
+  ordered.splice(srcIdx < dstIdx ? dstIdx - 1 : dstIdx, 0, item);
+  toolOrder = ordered.map(t => t.id);
+  renderGrid();
+  renderToggles();
+  saveSettings();
+}
+
+/* ── Card drag & drop ── */
+function onCardDragStart(e, id) {
+  dragSrcId = id;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', id);
+  setTimeout(() => e.currentTarget.style.opacity = '0.4', 0);
+}
+function onCardDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('insert-before');
+}
+function onCardDragLeave(e) {
+  e.currentTarget.classList.remove('insert-before');
+}
+function onCardDragEnd(e) {
+  e.currentTarget.style.opacity = '';
+  document.querySelectorAll('.tool-card').forEach(c => c.classList.remove('insert-before'));
+}
+function onCardDrop(e, dstId) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('insert-before');
+  applyReorder(dragSrcId, dstId);
+}
+
+/* ── Toggle ── */
+async function onToggle(checkbox) {
+  const id = checkbox.dataset.id;
+  if (checkbox.checked) {
+    disabledTools = disabledTools.filter(x => x !== id);
+  } else {
+    if (!disabledTools.includes(id)) disabledTools.push(id);
+  }
+  renderGrid();
+  saveSettings();
+}
+
+async function saveSettings() {
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ disabled_tools: disabledTools, tool_order: toolOrder }),
+  });
+}
+
+/* ── Settings panel toggle ── */
+document.getElementById('settingsBtn').addEventListener('click', () => {
+  const panel = document.getElementById('settingsPanel');
+  const btn = document.getElementById('settingsBtn');
+  const open = panel.classList.toggle('open');
+  btn.classList.toggle('active', open);
+});
+
+/* ── Restart dropdown ── */
+document.getElementById('restartMainBtn').addEventListener('click', () => doRestart('auto'));
+
+document.getElementById('restartArrowBtn').addEventListener('click', e => {
+  e.stopPropagation();
+  const open = document.getElementById('restartMenu').classList.toggle('open');
+  document.getElementById('restartSplit').classList.toggle('active', open);
+});
+
+document.addEventListener('click', e => {
+  if (!document.getElementById('restartWrap').contains(e.target)) {
+    document.getElementById('restartMenu').classList.remove('open');
+    document.getElementById('restartSplit').classList.remove('active');
+  }
+});
+
+function closeMenu() {
+  document.getElementById('restartMenu').classList.remove('open');
+  document.getElementById('restartSplit').classList.remove('active');
+}
+
+async function doRestart(mode) {
+  closeMenu();
+  const btn = document.getElementById('restartMainBtn');
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    await fetch('/api/restart', { method: 'POST' });
+  } catch { /* 再起動でコネクションが切れるのは正常 */ }
+
+  if (mode === 'only') {
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = '↻'; btn.disabled = false; }, 2000);
+    return;
+  }
+
+  const poll = setInterval(async () => {
+    try {
+      await fetch('/api/info');
+      clearInterval(poll);
+      location.reload();
+    } catch { /* まだ起動中 */ }
+  }, 800);
+}
+
+async function copyCmd() {
+  closeMenu();
+  await navigator.clipboard.writeText(restartCmdText);
+  const item = document.getElementById('copyMenuItem');
+  const orig = item.innerHTML;
+  item.innerHTML = '<span class="mi-icon">✓</span> コピー済';
+  setTimeout(() => { item.innerHTML = orig; }, 1200);
+}
+
+/* ── Init ── */
+(async () => {
+  const settingsRes = await fetch('/api/settings');
+  const settings = await settingsRes.json();
+  disabledTools = settings.disabled_tools || [];
+  toolOrder = settings.tool_order || [];
+  renderGrid();
+  renderToggles();
+
+  try {
+    const infoRes = await fetch('/api/info');
+    const info = await infoRes.json();
+    restartCmdText = `python3 ${info.base}/server.py`;
+  } catch {
+    restartCmdText = 'python3 server.py';
+  }
+})();
+</script>
 </body>
 </html>
