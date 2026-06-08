@@ -337,14 +337,18 @@ function syncProtectedInput() {
   protectedInput.value = protectedPorts.join(', ');
 }
 
+function applyProtectedPorts() {
+  const protectedSet = new Set(protectedPorts);
+  ports.forEach(item => { item.protected = protectedSet.has(item.port); });
+  syncProtectedInput();
+}
+
 async function saveProtectedPorts(nextPorts = null) {
   const portsToSave = nextPorts === null ? parseProtectedInput() : normalizePortList(nextPorts);
   setStatus('保存中...');
   const data = await postJson('/api/ports/protected', { ports: portsToSave });
   protectedPorts = normalizePortList(data.protected_ports || portsToSave);
-  const protectedSet = new Set(protectedPorts);
-  ports.forEach(item => { item.protected = protectedSet.has(item.port); });
-  syncProtectedInput();
+  applyProtectedPorts();
   render();
   setStatus('保護ポート保存済', 'ok');
 }
@@ -358,12 +362,18 @@ async function onSaveProtectedPorts() {
 }
 
 async function toggleProtected(port, checked) {
+  const prev = protectedPorts.slice();
   const next = checked
     ? normalizePortList([...protectedPorts, port])
     : protectedPorts.filter(p => p !== port);
+  protectedPorts = next;
+  applyProtectedPorts();
+  render();
   try {
     await saveProtectedPorts(next);
   } catch (err) {
+    protectedPorts = prev;
+    applyProtectedPorts();
     setStatus(err.message, 'error');
     render();
   }
