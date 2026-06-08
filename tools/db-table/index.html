@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>db-table — devhub</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --panel:   #111820;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #7d8590;
+  --accent:  #388bfd;
+  --green:   #3fb950;
+  --yellow:  #d29922;
+  --red:     #f85149;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.hub-link {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.hub-link:hover { color: var(--text); background: var(--border); }
+.divider { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+header h1 { font-size: 15px; font-weight: 600; }
+.status {
+  margin-left: auto;
+  max-width: 420px;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status.ok { color: var(--green); }
+.status.error { color: var(--red); }
+
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+
+aside {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.side-section {
+  border-bottom: 1px solid var(--border);
+  min-height: 0;
+}
+.side-section.tables {
+  flex: 1;
+  border-bottom: none;
+  display: flex;
+  flex-direction: column;
+}
+.section-title {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+
+.connection-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+.form-row { grid-column: 1 / -1; }
+.form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.field label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.input, .select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+}
+.input:focus, .select:focus { border-color: var(--accent); }
+.input::placeholder { color: var(--muted); }
+.driver-fields { display: contents; }
+.driver-fields.hidden { display: none; }
+
+.btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 11px;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.btn.primary { border-color: var(--accent); color: var(--accent); }
+.btn.primary:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+
+.connection-list {
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+}
+.connection-item, .table-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  padding: 8px;
+  text-align: left;
+}
+.connection-item:hover, .table-item:hover { background: #ffffff0a; border-color: var(--border); }
+.connection-item.active, .table-item.active { border-color: var(--accent); background: rgba(56,139,253,0.12); }
+.connection-main, .table-name {
+  flex: 1;
+  min-width: 0;
+}
+.connection-label, .table-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.connection-meta, .table-meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connection-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  flex-shrink: 0;
+}
+.connection-item:hover .connection-actions,
+.connection-item.active .connection-actions { opacity: 1; }
+.icon-btn {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px;
+}
+.icon-btn:hover { color: var(--accent); }
+.icon-btn.danger:hover { color: var(--red); }
+.table-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+.table-kind {
+  width: 44px;
+  color: var(--accent);
+  flex-shrink: 0;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.table-count {
+  color: var(--muted);
+  flex-shrink: 0;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 11px;
+}
+.empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 18px 12px;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.toolbar {
+  height: 38px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+}
+.toolbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.toolbar-meta {
+  color: var(--muted);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.grid-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.data-table th, .data-table td {
+  border: 1px solid var(--border);
+  padding: 5px 8px;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  color: var(--accent);
+}
+.data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.data-table tbody tr:hover { background: rgba(56,139,253,0.08); }
+.key-col, .action-col {
+  width: 1%;
+  color: var(--muted);
+  background: var(--surface);
+}
+.cell-editable { cursor: text; min-width: 80px; }
+.cell-editable:focus {
+  outline: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--text);
+}
+.cell-saving { color: var(--yellow); }
+.cell-saved { color: var(--green); }
+.cell-error { color: var(--red); }
+.null-value { color: var(--muted); font-style: italic; }
+.delete-btn {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+}
+.delete-btn:hover { color: var(--red); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="hub-link">← Hub</a>
+  <div class="divider"></div>
+  <h1>db-table</h1>
+  <div class="status" id="status"></div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="side-section">
+      <div class="section-title">Connection</div>
+      <form class="connection-form" id="connectionForm">
+        <div class="field form-row">
+          <label for="driver">Type</label>
+          <select class="select" id="driver">
+            <option value="mysql">MySQL / MariaDB</option>
+            <option value="sqlite">SQLite</option>
+          </select>
+        </div>
+        <div class="field form-row">
+          <label for="label">Label</label>
+          <input class="input" id="label" type="text" autocomplete="off" placeholder="local mysql">
+        </div>
+        <div class="driver-fields" id="mysqlFields">
+          <div class="field">
+            <label for="host">Host</label>
+            <input class="input" id="host" type="text" autocomplete="off" spellcheck="false" placeholder="127.0.0.1">
+          </div>
+          <div class="field">
+            <label for="port">Port</label>
+            <input class="input" id="port" type="number" min="1" max="65535" placeholder="3306">
+          </div>
+          <div class="field">
+            <label for="database">Database</label>
+            <input class="input" id="database" type="text" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="user">User</label>
+            <input class="input" id="user" type="text" autocomplete="username" spellcheck="false">
+          </div>
+          <div class="field form-row">
+            <label for="password">Password</label>
+            <input class="input" id="password" type="password" autocomplete="current-password">
+          </div>
+        </div>
+        <div class="driver-fields hidden" id="sqliteFields">
+          <div class="field form-row">
+            <label for="path">Path</label>
+            <input class="input" id="path" type="text" autocomplete="off" spellcheck="false" placeholder="~/app.sqlite">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn primary" type="submit">接続</button>
+          <button class="btn" type="button" id="newBtn">新規</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="side-section">
+      <div class="section-title">Databases</div>
+      <div class="connection-list" id="connectionList">
+        <div class="empty">未登録</div>
+      </div>
+    </div>
+
+    <div class="side-section tables">
+      <div class="section-title">Tables</div>
+      <div class="table-list" id="tableList">
+        <div class="empty">未接続</div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="toolbar">
+      <div class="toolbar-title" id="currentTable">テーブル未選択</div>
+      <div class="toolbar-meta" id="tableMeta"></div>
+      <div class="toolbar-actions">
+        <button class="btn" id="prevBtn" disabled>前へ</button>
+        <button class="btn" id="nextBtn" disabled>次へ</button>
+        <button class="btn" id="reloadBtn" disabled>再読込</button>
+        <button class="btn primary" id="addBtn" disabled>行追加</button>
+      </div>
+    </div>
+    <div class="grid-wrap" id="gridWrap">
+      <div class="empty">DBへ接続してください</div>
+    </div>
+  </main>
+</div>
+
+<script>
+const LIMIT = 100;
+const activeKey = 'devhub.dbTable.active';
+let dbConnections = [];
+let activeConnection = null;
+let tables = [];
+let currentTable = '';
+let columns = [];
+let rows = [];
+let editable = false;
+let offset = 0;
+let total = 0;
+let editingConnectionId = null;
+
+const statusEl = document.getElementById('status');
+const driverEl = document.getElementById('driver');
+const labelEl = document.getElementById('label');
+const hostEl = document.getElementById('host');
+const portEl = document.getElementById('port');
+const databaseEl = document.getElementById('database');
+const userEl = document.getElementById('user');
+const passwordEl = document.getElementById('password');
+const pathEl = document.getElementById('path');
+const mysqlFields = document.getElementById('mysqlFields');
+const sqliteFields = document.getElementById('sqliteFields');
+const connectionList = document.getElementById('connectionList');
+const tableList = document.getElementById('tableList');
+const gridWrap = document.getElementById('gridWrap');
+const currentTableEl = document.getElementById('currentTable');
+const tableMetaEl = document.getElementById('tableMeta');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const reloadBtn = document.getElementById('reloadBtn');
+const addBtn = document.getElementById('addBtn');
+
+function setStatus(text, type = '') {
+  statusEl.textContent = text;
+  statusEl.className = `status ${type}`.trim();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function encodeJs(value) {
+  return escapeHtml(JSON.stringify(value));
+}
+
+function encodeData(value) {
+  return escapeHtml(encodeURIComponent(JSON.stringify(value)));
+}
+
+function decodeData(value) {
+  return JSON.parse(decodeURIComponent(value));
+}
+
+function defaultLabel(profile) {
+  if (profile.driver === 'sqlite') {
+    const parts = String(profile.path || '').split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || 'sqlite';
+  }
+  return profile.database || `${profile.host || '127.0.0.1'}:${profile.port || 3306}`;
+}
+
+function connectionId(profile) {
+  if (profile.id) return profile.id;
+  if (profile.driver === 'sqlite') return `sqlite:${profile.path || ''}`;
+  return `mysql:${profile.host || '127.0.0.1'}:${profile.port || 3306}:${profile.database || ''}:${profile.user || ''}`;
+}
+
+function profileSummary(profile) {
+  if (profile.driver === 'sqlite') return profile.path || '';
+  return `${profile.user || ''}@${profile.host || '127.0.0.1'}:${profile.port || 3306}/${profile.database || ''}`;
+}
+
+function normalizeProfile(profile) {
+  const driver = profile.driver || 'mysql';
+  const normalized = { ...profile, driver };
+  normalized.id = connectionId(normalized);
+  normalized.label = normalized.label || defaultLabel(normalized);
+  if (driver === 'mysql') {
+    normalized.host = normalized.host || '127.0.0.1';
+    normalized.port = Number(normalized.port || 3306);
+    normalized.database = normalized.database || '';
+    normalized.user = normalized.user || '';
+    normalized.password = normalized.password || '';
+  } else {
+    normalized.path = normalized.path || '';
+  }
+  return normalized;
+}
+
+function storageProfile(profile) {
+  const normalized = normalizeProfile(profile);
+  const { password, ...stored } = normalized;
+  return stored;
+}
+
+async function apiJson(url, options = {}) {
+  const res = await fetch(url, options);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'request failed');
+  return data;
+}
+
+async function postJson(url, body) {
+  return apiJson(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function formProfile() {
+  const driver = driverEl.value;
+  if (driver === 'sqlite') {
+    return normalizeProfile({
+      driver,
+      label: labelEl.value.trim(),
+      path: pathEl.value.trim(),
+    });
+  }
+  return normalizeProfile({
+    driver,
+    label: labelEl.value.trim(),
+    host: hostEl.value.trim(),
+    port: Number(portEl.value || 3306),
+    database: databaseEl.value.trim(),
+    user: userEl.value.trim(),
+    password: passwordEl.value,
+  });
+}
+
+function fillForm(profile) {
+  const p = normalizeProfile(profile || { driver: 'mysql' });
+  driverEl.value = p.driver;
+  labelEl.value = p.label || '';
+  hostEl.value = p.host || '127.0.0.1';
+  portEl.value = p.port || 3306;
+  databaseEl.value = p.database || '';
+  userEl.value = p.user || '';
+  passwordEl.value = p.password || '';
+  pathEl.value = p.path || '';
+  renderDriverFields();
+}
+
+function renderDriverFields() {
+  const isMysql = driverEl.value === 'mysql';
+  mysqlFields.classList.toggle('hidden', !isMysql);
+  sqliteFields.classList.toggle('hidden', isMysql);
+}
+
+async function loadSettings() {
+  try {
+    const settings = await apiJson('/api/settings');
+    dbConnections = Array.isArray(settings.db_connections)
+      ? settings.db_connections.map(normalizeProfile)
+      : [];
+  } catch {
+    dbConnections = [];
+  }
+  renderConnections();
+}
+
+async function saveConnections() {
+  await postJson('/api/settings', { db_connections: dbConnections.map(storageProfile) });
+}
+
+function renderConnections() {
+  if (!dbConnections.length) {
+    connectionList.innerHTML = '<div class="empty">未登録</div>';
+    return;
+  }
+  connectionList.innerHTML = dbConnections.map(c => `
+    <div class="connection-item ${activeConnection?.id === c.id ? 'active' : ''}" role="button" tabindex="0"
+         onclick="activateConnection(${encodeJs(c.id)})"
+         onkeydown="if(event.key==='Enter') activateConnection(${encodeJs(c.id)})">
+      <div class="connection-main">
+        <div class="connection-label" title="${escapeHtml(c.label)}">${escapeHtml(c.label)}</div>
+        <div class="connection-meta" title="${escapeHtml(profileSummary(c))}">${escapeHtml(profileSummary(c))}</div>
+      </div>
+      <div class="connection-actions">
+        <button class="icon-btn" onclick="editConnection(event, ${encodeJs(c.id)})" title="編集">✎</button>
+        <button class="icon-btn danger" onclick="removeConnection(event, ${encodeJs(c.id)})" title="削除">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function rememberConnection(profile) {
+  const normalized = normalizeProfile(profile);
+  const lookupId = editingConnectionId || normalized.id;
+  const i = dbConnections.findIndex(c => c.id === lookupId);
+  const stored = storageProfile(normalized);
+  if (i === -1) {
+    dbConnections.unshift(stored);
+  } else {
+    dbConnections[i] = stored;
+  }
+  activeConnection = normalized;
+  localStorage.setItem(activeKey, normalized.id);
+  editingConnectionId = null;
+  await saveConnections();
+  renderConnections();
+}
+
+async function activateConnection(id) {
+  const profile = dbConnections.find(c => c.id === id);
+  if (!profile) return;
+  editingConnectionId = null;
+  fillForm(profile);
+  await connect(profile, false);
+}
+
+function editConnection(event, id) {
+  event.stopPropagation();
+  const profile = dbConnections.find(c => c.id === id);
+  if (profile) {
+    editingConnectionId = id;
+    fillForm(profile);
+  }
+}
+
+async function removeConnection(event, id) {
+  event.stopPropagation();
+  dbConnections = dbConnections.filter(c => c.id !== id);
+  if (activeConnection?.id === id) {
+    activeConnection = null;
+    resetTables('未接続');
+    resetGrid('DBへ接続してください');
+  }
+  await saveConnections();
+  renderConnections();
+}
+
+async function connect(profile = formProfile(), save = true) {
+  setStatus('接続中...');
+  try {
+    const data = await postJson('/api/db/tables', { connection: profile });
+    activeConnection = normalizeProfile(profile.driver === 'sqlite'
+      ? { ...profile, path: data.connection?.path || profile.path }
+      : profile);
+    tables = data.tables;
+    currentTable = tables[0]?.name || '';
+    offset = 0;
+    if (save) await rememberConnection(activeConnection);
+    renderConnections();
+    renderTables();
+    if (currentTable) {
+      await loadRows();
+    } else {
+      resetGrid('テーブルがありません');
+    }
+    setStatus('接続済', 'ok');
+  } catch (err) {
+    resetTables('接続できません');
+    resetGrid('接続できません');
+    setStatus(err.message, 'error');
+  }
+}
+
+function resetTables(text) {
+  tables = [];
+  currentTable = '';
+  tableList.innerHTML = `<div class="empty">${escapeHtml(text)}</div>`;
+}
+
+function renderTables() {
+  if (!tables.length) {
+    tableList.innerHTML = '<div class="empty">テーブルがありません</div>';
+    return;
+  }
+  tableList.innerHTML = tables.map(t => `
+    <button class="table-item ${t.name === currentTable ? 'active' : ''}" onclick="selectTable(${encodeJs(t.name)})">
+      <span class="table-kind">${escapeHtml(t.type)}</span>
+      <div class="table-name" title="${escapeHtml(t.name)}">
+        ${escapeHtml(t.name)}
+        <div class="table-meta">${escapeHtml(activeConnection?.label || '')}</div>
+      </div>
+      <span class="table-count">${escapeHtml(t.count)}</span>
+    </button>
+  `).join('');
+}
+
+async function selectTable(name) {
+  currentTable = name;
+  offset = 0;
+  renderTables();
+  await loadRows();
+}
+
+async function loadRows() {
+  if (!activeConnection || !currentTable) return;
+  setStatus('読込中...');
+  try {
+    const data = await postJson('/api/db/rows', {
+      connection: activeConnection,
+      table: currentTable,
+      limit: LIMIT,
+      offset,
+    });
+    columns = data.columns;
+    rows = data.rows;
+    editable = data.editable;
+    total = data.total;
+    renderGrid(data.keyColumns || []);
+    setStatus('読込完了', 'ok');
+  } catch (err) {
+    resetGrid('読み込めません');
+    setStatus(err.message, 'error');
+  }
+}
+
+function resetGrid(text) {
+  columns = [];
+  rows = [];
+  editable = false;
+  total = 0;
+  currentTableEl.textContent = currentTable || 'テーブル未選択';
+  tableMetaEl.textContent = '';
+  gridWrap.innerHTML = `<div class="empty">${escapeHtml(text)}</div>`;
+  prevBtn.disabled = true;
+  nextBtn.disabled = true;
+  reloadBtn.disabled = !activeConnection;
+  addBtn.disabled = true;
+}
+
+function formatValue(value) {
+  if (value === null || value === undefined) return '<span class="null-value">NULL</span>';
+  return escapeHtml(value);
+}
+
+function displayValue(value) {
+  if (value === null || value === undefined) return 'NULL';
+  return String(value);
+}
+
+function keySummary(key) {
+  const entries = Object.entries(key || {});
+  if (!entries.length) return '';
+  return entries.map(([k, v]) => `${k}=${v}`).join(', ');
+}
+
+function renderGrid(keyColumns) {
+  currentTableEl.textContent = currentTable;
+  const rangeStart = total === 0 ? 0 : offset + 1;
+  tableMetaEl.textContent = `${rangeStart}-${Math.min(offset + rows.length, total)} / ${total}${editable ? '' : ' · read only'}`;
+  prevBtn.disabled = offset === 0;
+  nextBtn.disabled = offset + LIMIT >= total;
+  reloadBtn.disabled = false;
+  addBtn.disabled = !editable;
+
+  if (!rows.length) {
+    gridWrap.innerHTML = '<div class="empty">行がありません</div>';
+    return;
+  }
+
+  const header = `
+    <thead>
+      <tr>
+        <th class="key-col">${escapeHtml(keyColumns.join(', ') || 'key')}</th>
+        ${columns.map(c => `<th title="${escapeHtml(c.type || '')}">${escapeHtml(c.name)}${c.pk ? ' PK' : ''}</th>`).join('')}
+        <th class="action-col"></th>
+      </tr>
+    </thead>`;
+
+  const body = rows.map(row => {
+    const key = row.__devhub_key__ || {};
+    const keyText = keySummary(key);
+    const cells = columns.map(col => {
+      const value = row[col.name];
+      const cellEditable = editable && !col.pk;
+      const classes = cellEditable ? 'cell-editable' : '';
+      const attrs = cellEditable
+        ? `contenteditable="true" data-key="${encodeData(key)}" data-column="${escapeHtml(col.name)}" data-original="${encodeData(value)}" onfocus="rememberCell(this)" onkeydown="handleCellKey(event)" onblur="saveCell(this)"`
+        : '';
+      return `<td class="${classes}" ${attrs}>${formatValue(value)}</td>`;
+    }).join('');
+    const deleteButton = editable
+      ? `<button class="delete-btn" data-row-key="${encodeData(key)}" title="削除">✕</button>`
+      : '';
+    return `
+      <tr>
+        <td class="key-col" title="${escapeHtml(keyText)}">${escapeHtml(keyText)}</td>
+        ${cells}
+        <td class="action-col">${deleteButton}</td>
+      </tr>`;
+  }).join('');
+
+  gridWrap.innerHTML = `<table class="data-table">${header}<tbody>${body}</tbody></table>`;
+}
+
+function rememberCell(cell) {
+  const original = decodeData(cell.dataset.original);
+  cell.dataset.beforeText = displayValue(original);
+  cell.dataset.nullState = original === null || original === undefined ? '1' : '0';
+  cell.dataset.originalNullState = cell.dataset.nullState;
+}
+
+function handleCellKey(event) {
+  const cell = event.currentTarget;
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    cell.blur();
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    const value = decodeData(cell.dataset.original);
+    cell.dataset.nullState = cell.dataset.originalNullState;
+    cell.innerHTML = formatValue(value);
+    cell.blur();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Backspace') {
+    event.preventDefault();
+    cell.dataset.nullState = '1';
+    cell.innerHTML = formatValue(null);
+    return;
+  }
+  if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
+    cell.dataset.nullState = '0';
+  }
+}
+
+async function saveCell(cell) {
+  const original = decodeData(cell.dataset.original);
+  const raw = cell.textContent;
+  const isNull = cell.dataset.nullState === '1';
+  const unchanged = original === null || original === undefined
+    ? isNull
+    : !isNull && raw === String(original);
+  const value = isNull ? null : raw;
+  if (unchanged) {
+    cell.innerHTML = formatValue(original);
+    return;
+  }
+  cell.classList.add('cell-saving');
+  setStatus('保存中...');
+  try {
+    await postJson('/api/db/update', {
+      connection: activeConnection,
+      table: currentTable,
+      key: decodeData(cell.dataset.key),
+      column: cell.dataset.column,
+      value,
+    });
+    cell.dataset.original = encodeURIComponent(JSON.stringify(value));
+    cell.dataset.nullState = value === null ? '1' : '0';
+    cell.dataset.originalNullState = cell.dataset.nullState;
+    cell.innerHTML = formatValue(value);
+    cell.classList.remove('cell-saving', 'cell-error');
+    cell.classList.add('cell-saved');
+    setStatus('保存済', 'ok');
+    setTimeout(() => cell.classList.remove('cell-saved'), 700);
+  } catch (err) {
+    cell.classList.remove('cell-saving');
+    cell.classList.add('cell-error');
+    setStatus(err.message, 'error');
+  }
+}
+
+async function addRow() {
+  if (!editable) return;
+  setStatus('追加中...');
+  try {
+    await postJson('/api/db/insert', { connection: activeConnection, table: currentTable });
+    await refreshTables(false);
+    offset = Math.max(0, Math.floor(total / LIMIT) * LIMIT);
+    await loadRows();
+    setStatus('追加済', 'ok');
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+async function deleteRow(key) {
+  if (!confirm(`${keySummary(key)} を削除しますか？`)) return;
+  setStatus('削除中...');
+  try {
+    await postJson('/api/db/delete', { connection: activeConnection, table: currentTable, key });
+    await refreshTables(false);
+    total = Math.max(0, total - 1);
+    if (offset >= total && offset > 0) offset = Math.max(0, offset - LIMIT);
+    await loadRows();
+    setStatus('削除済', 'ok');
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+async function refreshTables(loadCurrent = true) {
+  const data = await postJson('/api/db/tables', { connection: activeConnection });
+  tables = data.tables;
+  renderTables();
+  if (loadCurrent) await loadRows();
+}
+
+document.getElementById('connectionForm').addEventListener('submit', event => {
+  event.preventDefault();
+  connect(formProfile(), true);
+});
+document.getElementById('newBtn').addEventListener('click', () => {
+  editingConnectionId = null;
+  fillForm({ driver: 'mysql' });
+});
+driverEl.addEventListener('change', renderDriverFields);
+prevBtn.addEventListener('click', () => {
+  offset = Math.max(0, offset - LIMIT);
+  loadRows();
+});
+nextBtn.addEventListener('click', () => {
+  offset += LIMIT;
+  loadRows();
+});
+reloadBtn.addEventListener('click', () => refreshTables(true));
+addBtn.addEventListener('click', addRow);
+gridWrap.addEventListener('click', event => {
+  const button = event.target.closest('.delete-btn');
+  if (!button) return;
+  deleteRow(decodeData(button.dataset.rowKey));
+});
+
+(async () => {
+  fillForm({ driver: 'mysql' });
+  await loadSettings();
+  const activeId = localStorage.getItem(activeKey);
+  const profile = dbConnections.find(c => c.id === activeId) || dbConnections[0];
+  if (profile) {
+    fillForm(profile);
+    connect(profile, false);
+  }
+})();
+</script>
+</body>
+</html>
