@@ -444,6 +444,7 @@ let rows = [];
 let editable = false;
 let offset = 0;
 let total = 0;
+let editingConnectionId = null;
 
 const statusEl = document.getElementById('status');
 const driverEl = document.getElementById('driver');
@@ -528,6 +529,12 @@ function normalizeProfile(profile) {
   return normalized;
 }
 
+function storageProfile(profile) {
+  const normalized = normalizeProfile(profile);
+  const { password, ...stored } = normalized;
+  return stored;
+}
+
 async function apiJson(url, options = {}) {
   const res = await fetch(url, options);
   const data = await res.json();
@@ -595,7 +602,7 @@ async function loadSettings() {
 }
 
 async function saveConnections() {
-  await postJson('/api/settings', { db_connections: dbConnections });
+  await postJson('/api/settings', { db_connections: dbConnections.map(storageProfile) });
 }
 
 function renderConnections() {
@@ -621,14 +628,17 @@ function renderConnections() {
 
 async function rememberConnection(profile) {
   const normalized = normalizeProfile(profile);
-  const i = dbConnections.findIndex(c => c.id === normalized.id);
+  const lookupId = editingConnectionId || normalized.id;
+  const i = dbConnections.findIndex(c => c.id === lookupId);
+  const stored = storageProfile(normalized);
   if (i === -1) {
-    dbConnections.unshift(normalized);
+    dbConnections.unshift(stored);
   } else {
-    dbConnections[i] = normalized;
+    dbConnections[i] = stored;
   }
   activeConnection = normalized;
   localStorage.setItem(activeKey, normalized.id);
+  editingConnectionId = null;
   await saveConnections();
   renderConnections();
 }
@@ -636,6 +646,7 @@ async function rememberConnection(profile) {
 async function activateConnection(id) {
   const profile = dbConnections.find(c => c.id === id);
   if (!profile) return;
+  editingConnectionId = null;
   fillForm(profile);
   await connect(profile, false);
 }
@@ -643,7 +654,10 @@ async function activateConnection(id) {
 function editConnection(event, id) {
   event.stopPropagation();
   const profile = dbConnections.find(c => c.id === id);
-  if (profile) fillForm(profile);
+  if (profile) {
+    editingConnectionId = id;
+    fillForm(profile);
+  }
 }
 
 async function removeConnection(event, id) {
@@ -794,14 +808,15 @@ function renderGrid(keyColumns) {
     const keyText = keySummary(key);
     const cells = columns.map(col => {
       const value = row[col.name];
-      const classes = editable ? 'cell-editable' : '';
-      const attrs = editable
+      const cellEditable = editable && !col.pk;
+      const classes = cellEditable ? 'cell-editable' : '';
+      const attrs = cellEditable
         ? `contenteditable="true" data-key="${encodeData(key)}" data-column="${escapeHtml(col.name)}" data-original="${encodeData(value)}" onfocus="rememberCell(this)" onkeydown="handleCellKey(event)" onblur="saveCell(this)"`
         : '';
       return `<td class="${classes}" ${attrs}>${formatValue(value)}</td>`;
     }).join('');
     const deleteButton = editable
-      ? `<button class="delete-btn" onclick="deleteRow('${encodeURIComponent(JSON.stringify(key))}')" title="削除">✕</button>`
+      ? `<button class="delete-btn" data-row-key="${encodeData(key)}" title="削除">✕</button>`
       : '';
     return `
       <tr>
@@ -817,30 +832,44 @@ function renderGrid(keyColumns) {
 function rememberCell(cell) {
   const original = decodeData(cell.dataset.original);
   cell.dataset.beforeText = displayValue(original);
-  if (cell.textContent === 'NULL') cell.textContent = '';
+  cell.dataset.nullState = original === null || original === undefined ? '1' : '0';
+  cell.dataset.originalNullState = cell.dataset.nullState;
 }
 
 function handleCellKey(event) {
+  const cell = event.currentTarget;
   if (event.key === 'Enter') {
     event.preventDefault();
-    event.currentTarget.blur();
+    cell.blur();
+    return;
   }
   if (event.key === 'Escape') {
     event.preventDefault();
-    const cell = event.currentTarget;
     const value = decodeData(cell.dataset.original);
+    cell.dataset.nullState = cell.dataset.originalNullState;
     cell.innerHTML = formatValue(value);
     cell.blur();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Backspace') {
+    event.preventDefault();
+    cell.dataset.nullState = '1';
+    cell.innerHTML = formatValue(null);
+    return;
+  }
+  if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
+    cell.dataset.nullState = '0';
   }
 }
 
 async function saveCell(cell) {
   const original = decodeData(cell.dataset.original);
   const raw = cell.textContent;
+  const isNull = cell.dataset.nullState === '1';
   const unchanged = original === null || original === undefined
-    ? raw === '' || raw === 'NULL'
-    : raw === String(original);
-  const value = raw === 'NULL' || (original === null && raw === '') ? null : raw;
+    ? isNull
+    : !isNull && raw === String(original);
+  const value = isNull ? null : raw;
   if (unchanged) {
     cell.innerHTML = formatValue(original);
     return;
@@ -856,6 +885,8 @@ async function saveCell(cell) {
       value,
     });
     cell.dataset.original = encodeURIComponent(JSON.stringify(value));
+    cell.dataset.nullState = value === null ? '1' : '0';
+    cell.dataset.originalNullState = cell.dataset.nullState;
     cell.innerHTML = formatValue(value);
     cell.classList.remove('cell-saving', 'cell-error');
     cell.classList.add('cell-saved');
@@ -882,8 +913,7 @@ async function addRow() {
   }
 }
 
-async function deleteRow(encodedKey) {
-  const key = JSON.parse(decodeURIComponent(encodedKey));
+async function deleteRow(key) {
   if (!confirm(`${keySummary(key)} を削除しますか？`)) return;
   setStatus('削除中...');
   try {
@@ -909,7 +939,10 @@ document.getElementById('connectionForm').addEventListener('submit', event => {
   event.preventDefault();
   connect(formProfile(), true);
 });
-document.getElementById('newBtn').addEventListener('click', () => fillForm({ driver: 'mysql' }));
+document.getElementById('newBtn').addEventListener('click', () => {
+  editingConnectionId = null;
+  fillForm({ driver: 'mysql' });
+});
 driverEl.addEventListener('change', renderDriverFields);
 prevBtn.addEventListener('click', () => {
   offset = Math.max(0, offset - LIMIT);
@@ -921,6 +954,11 @@ nextBtn.addEventListener('click', () => {
 });
 reloadBtn.addEventListener('click', () => refreshTables(true));
 addBtn.addEventListener('click', addRow);
+gridWrap.addEventListener('click', event => {
+  const button = event.target.closest('.delete-btn');
+  if (!button) return;
+  deleteRow(decodeData(button.dataset.rowKey));
+});
 
 (async () => {
   fillForm({ driver: 'mysql' });

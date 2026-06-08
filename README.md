@@ -12,6 +12,9 @@
 | **diagram** | `/diagram` | Mermaid 記法のリアルタイムプレビュー・Draw.io XML 変換 |
 | **csv-tsv** | `/csv-tsv` | CSV / TSV の相互変換 |
 | **db-table** | `/db-table` | SQLite / MySQL / MariaDB の接続管理、テーブル表示、セル編集、行追加・削除 |
+| **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、LISTEN プロセスの kill |
+
+`db-table` の MySQL / MariaDB パスワードは保存されません。接続時に必要に応じて入力してください。
 
 ## セットアップ
 

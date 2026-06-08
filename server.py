@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, platform, shlex, shutil, sqlite3, subprocess, sys, threading, time, webbrowser
+import json, os, platform, re, shlex, shutil, signal, sqlite3, subprocess, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 import xml.etree.ElementTree as ET
@@ -35,6 +35,25 @@ def save_settings(patch):
         json.dump(current, f, indent=2, ensure_ascii=False)
         f.write('\n')
 
+SECRET_KEYS = {'password', 'secret', 'apiKey', 'api_key', 'token'}
+
+
+def sanitize_db_connection(profile):
+    if not isinstance(profile, dict):
+        return profile
+    return {k: v for k, v in profile.items() if k not in SECRET_KEYS}
+
+
+def sanitize_settings(settings):
+    sanitized = dict(settings)
+    if isinstance(sanitized.get('db_connections'), list):
+        sanitized['db_connections'] = [
+            sanitize_db_connection(profile)
+            for profile in sanitized['db_connections']
+            if isinstance(profile, dict)
+        ]
+    return sanitized
+
 SETTINGS = load_settings()
 PORT     = SETTINGS['port']
 EDITOR   = SETTINGS['editor']
@@ -54,6 +73,8 @@ ROUTES = {
     '/csv-tsv/':    os.path.join(BASE, 'tools', 'csv-tsv', 'index.html'),
     '/db-table':    os.path.join(BASE, 'tools', 'db-table', 'index.html'),
     '/db-table/':   os.path.join(BASE, 'tools', 'db-table', 'index.html'),
+    '/ports':       os.path.join(BASE, 'tools', 'ports', 'index.html'),
+    '/ports/':      os.path.join(BASE, 'tools', 'ports', 'index.html'),
 }
 
 
@@ -214,9 +235,7 @@ def connection_from_payload(data):
 
 
 def public_connection(profile):
-    public = dict(profile)
-    public.pop('password', None)
-    return public
+    return sanitize_db_connection(profile)
 
 
 def sql_literal(value):
@@ -402,8 +421,13 @@ def db_update(profile, table, column, key, value):
             meta = sqlite_table_meta(conn, table)
             if meta['type'] != 'table':
                 raise ValueError('only tables can be edited')
-            if column not in sqlite_writable_columns(conn, table):
+            columns = sqlite_columns(conn, table)
+            column_names = {c['name'] for c in columns}
+            pk_columns = {c['name'] for c in columns if c['pk']}
+            if column not in column_names:
                 raise ValueError('column was not found')
+            if column in pk_columns:
+                raise ValueError('primary key columns cannot be edited')
             rowid = key.get('rowid') if isinstance(key, dict) else key
             sql = f'UPDATE {quote_identifier(table)} SET {quote_identifier(column)} = ? WHERE rowid = ?'
             cur = conn.execute(sql, (value, rowid))
@@ -418,6 +442,8 @@ def db_update(profile, table, column, key, value):
         raise ValueError('column was not found')
     if not pk_columns:
         raise ValueError('table has no primary key')
+    if column in pk_columns:
+        raise ValueError('primary key columns cannot be edited')
     where = ' AND '.join(f'{mysql_identifier(c)} = {sql_literal(key.get(c))}' for c in pk_columns)
     mysql_run(profile, (
         f'UPDATE {mysql_identifier(table)} SET {mysql_identifier(column)} = {sql_literal(value)} '
@@ -461,6 +487,120 @@ def db_delete(profile, table, key):
     mysql_run(profile, f'DELETE FROM {mysql_identifier(table)} WHERE {where}')
 
 
+# ── Port manager ──────────────────────────────────────────────────────────────
+
+def port_labels():
+    labels = load_settings().get('port_labels', {})
+    return labels if isinstance(labels, dict) else {}
+
+
+def parse_port_name(name):
+    match = re.search(r'(?:TCP\s+)?(.+):(\d+)\s+\(LISTEN\)$', name)
+    if not match:
+        return None
+    host = match.group(1)
+    return {'host': host, 'port': int(match.group(2))}
+
+
+def list_ports_unix():
+    proc = subprocess.run(
+        ['lsof', '-nP', '-iTCP', '-sTCP:LISTEN'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode not in (0, 1):
+        raise ValueError(proc.stderr.strip() or 'failed to list ports')
+
+    ports = []
+    for line in proc.stdout.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 9:
+            continue
+        parsed = parse_port_name(' '.join(parts[7:]))
+        if not parsed:
+            continue
+        ports.append({
+            'command': parts[0].replace('\\x20', ' '),
+            'pid': int(parts[1]),
+            'user': parts[2],
+            'host': parsed['host'],
+            'port': parsed['port'],
+        })
+    return ports
+
+
+def list_ports_windows():
+    proc = subprocess.run(
+        ['netstat', '-ano', '-p', 'tcp'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise ValueError(proc.stderr.strip() or 'failed to list ports')
+
+    ports = []
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[0].upper() != 'TCP' or parts[3].upper() != 'LISTENING':
+            continue
+        address = parts[1]
+        if ':' not in address:
+            continue
+        host, port = address.rsplit(':', 1)
+        try:
+            pid = int(parts[4])
+            port_num = int(port)
+        except ValueError:
+            continue
+        ports.append({
+            'command': '',
+            'pid': pid,
+            'user': '',
+            'host': host,
+            'port': port_num,
+        })
+    return ports
+
+
+def list_open_ports():
+    ports = list_ports_windows() if platform.system() == 'Windows' else list_ports_unix()
+    labels = port_labels()
+    for item in ports:
+        item['label'] = labels.get(str(item['port']), '')
+        item['self'] = item['pid'] == os.getpid()
+    ports.sort(key=lambda item: (item['port'], item['pid']))
+    return ports
+
+
+def save_port_label(port, label):
+    labels = port_labels()
+    port_key = str(int(port))
+    label = str(label or '').strip()
+    if label:
+        labels[port_key] = label
+    else:
+        labels.pop(port_key, None)
+    save_settings({'port_labels': labels})
+
+
+def kill_port_process(port, pid):
+    port = int(port)
+    pid = int(pid)
+    if pid == os.getpid():
+        raise ValueError('devhub itself cannot be killed from this tool')
+    matches = [p for p in list_open_ports() if p['port'] == port and p['pid'] == pid]
+    if not matches:
+        raise ValueError('port process was not found')
+    if platform.system() == 'Windows':
+        proc = subprocess.run(['taskkill', '/PID', str(pid), '/F'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode != 0:
+            raise ValueError(proc.stderr.strip() or proc.stdout.strip() or 'taskkill failed')
+    else:
+        os.kill(pid, signal.SIGTERM)
+
+
 # ── HTTP Handler ──────────────────────────────────────────────────────────────
 
 class Handler(BaseHTTPRequestHandler):
@@ -490,7 +630,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == '/api/settings':
-            self.send_json(load_settings())
+            self.send_json(sanitize_settings(load_settings()))
             return
 
         if path == '/api/info':
@@ -514,6 +654,13 @@ class Handler(BaseHTTPRequestHandler):
                 data = db_rows(profile, table, limit, offset)
                 data['connection'] = public_connection(profile)
                 self.send_json(data)
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/ports':
+            try:
+                self.send_json({'ports': list_open_ports()})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
             return
@@ -585,8 +732,33 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/settings':
             try:
                 data = json.loads(self.read_body())
-                allowed = {'disabled_tools', 'tool_order', 'editor', 'open_browser_on_start', 'db_connections'}
-                save_settings({k: v for k, v in data.items() if k in allowed})
+                allowed = {'disabled_tools', 'tool_order', 'editor', 'open_browser_on_start', 'db_connections', 'port_labels'}
+                patch = {k: v for k, v in data.items() if k in allowed}
+                if isinstance(patch.get('db_connections'), list):
+                    patch['db_connections'] = [
+                        sanitize_db_connection(profile)
+                        for profile in patch['db_connections']
+                        if isinstance(profile, dict)
+                    ]
+                save_settings(patch)
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/ports/label':
+            try:
+                data = json.loads(self.read_body())
+                save_port_label(data.get('port'), data.get('label', ''))
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/ports/kill':
+            try:
+                data = json.loads(self.read_body())
+                kill_port_process(data.get('port'), data.get('pid'))
                 self.send_json({'ok': True})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
