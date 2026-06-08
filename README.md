@@ -11,6 +11,7 @@
 | **diff-kun** | `/diff-kun` | テキスト差分をリアルタイム確認（unified / context / side-by-side） |
 | **diagram** | `/diagram` | Mermaid 記法のリアルタイムプレビュー・Draw.io XML 変換 |
 | **csv-tsv** | `/csv-tsv` | CSV / TSV の相互変換 |
+| **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、LISTEN プロセスの kill |
 
 ## セットアップ
 
