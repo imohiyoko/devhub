@@ -3,5 +3,6 @@
   "editor": "code",
   "open_browser_on_start": true,
   "db_connections": [],
-  "port_labels": {}
+  "port_labels": {},
+  "protected_ports": []
 }

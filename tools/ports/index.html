@@ -77,6 +77,37 @@ header h1 { font-size: 15px; font-weight: 600; }
 .status.ok { color: var(--green); }
 .status.error { color: var(--red); }
 
+.protected-bar {
+  min-height: 46px;
+  background: rgba(22, 27, 34, 0.72);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  flex-shrink: 0;
+}
+.protected-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.protected-input {
+  flex: 0 1 420px;
+  min-width: 120px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  padding: 6px 9px;
+  outline: none;
+}
+.protected-input:focus { border-color: var(--accent); }
+.protected-input::placeholder { color: var(--muted); }
+
 .btn {
   background: none;
   border: 1px solid var(--border);
@@ -152,11 +183,33 @@ main {
   padding: 1px 6px;
   margin-left: 6px;
 }
+.protected-badge {
+  border-color: var(--green);
+  color: var(--green);
+}
+.protect-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+.protect-toggle input {
+  accent-color: var(--accent);
+  cursor: pointer;
+  height: 16px;
+  width: 16px;
+}
 .empty {
   color: var(--muted);
   font-size: 13px;
   padding: 36px 0;
   text-align: center;
+}
+@media (max-width: 640px) {
+  .protected-bar { flex-wrap: wrap; }
+  .protected-title { width: 100%; }
+  .protected-input { flex: 1 1 160px; }
 }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
@@ -174,16 +227,24 @@ main {
   <div class="status" id="status"></div>
 </header>
 
+<div class="protected-bar">
+  <span class="protected-title">保護ポート</span>
+  <input class="protected-input" id="protectedPortsInput" type="text" autocomplete="off" placeholder="3000, 3306">
+  <button class="btn" id="saveProtectedBtn">保存</button>
+</div>
+
 <main id="main">
   <div class="empty">読み込み中...</div>
 </main>
 
 <script>
 let ports = [];
+let protectedPorts = [];
 
 const main = document.getElementById('main');
 const statusEl = document.getElementById('status');
 const searchEl = document.getElementById('search');
+const protectedInput = document.getElementById('protectedPortsInput');
 
 function setStatus(text, type = '') {
   statusEl.textContent = text;
@@ -219,6 +280,8 @@ async function loadPorts() {
   try {
     const data = await apiJson('/api/ports');
     ports = data.ports || [];
+    protectedPorts = normalizePortList(data.protected_ports || []);
+    syncProtectedInput();
     render();
     setStatus(`${ports.length} ports`, 'ok');
   } catch (err) {
@@ -240,6 +303,82 @@ function matches(item, query) {
   return target.includes(query);
 }
 
+function normalizePortList(values) {
+  const result = [];
+  const seen = new Set();
+  values.forEach(value => {
+    const port = Number(value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || seen.has(port)) return;
+    seen.add(port);
+    result.push(port);
+  });
+  return result.sort((a, b) => a - b);
+}
+
+function parseProtectedInput() {
+  const text = protectedInput.value.trim();
+  if (!text) return [];
+  const ports = [];
+  const seen = new Set();
+  for (const token of text.split(/[,\s]+/).filter(Boolean)) {
+    if (!/^\d+$/.test(token)) throw new Error('保護ポートは 1-65535 の数値で入力してください');
+    const port = Number(token);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error('保護ポートは 1-65535 の数値で入力してください');
+    }
+    if (seen.has(port)) continue;
+    seen.add(port);
+    ports.push(port);
+  }
+  return ports.sort((a, b) => a - b);
+}
+
+function syncProtectedInput() {
+  protectedInput.value = protectedPorts.join(', ');
+}
+
+function applyProtectedPorts() {
+  const protectedSet = new Set(protectedPorts);
+  ports.forEach(item => { item.protected = protectedSet.has(item.port); });
+  syncProtectedInput();
+}
+
+async function saveProtectedPorts(nextPorts = null) {
+  const portsToSave = nextPorts === null ? parseProtectedInput() : normalizePortList(nextPorts);
+  setStatus('保存中...');
+  const data = await postJson('/api/ports/protected', { ports: portsToSave });
+  protectedPorts = normalizePortList(data.protected_ports || portsToSave);
+  applyProtectedPorts();
+  render();
+  setStatus('保護ポート保存済', 'ok');
+}
+
+async function onSaveProtectedPorts() {
+  try {
+    await saveProtectedPorts();
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+async function toggleProtected(port, checked) {
+  const prev = protectedPorts.slice();
+  const next = checked
+    ? normalizePortList([...protectedPorts, port])
+    : protectedPorts.filter(p => p !== port);
+  protectedPorts = next;
+  applyProtectedPorts();
+  render();
+  try {
+    await saveProtectedPorts(next);
+  } catch (err) {
+    protectedPorts = prev;
+    applyProtectedPorts();
+    setStatus(err.message, 'error');
+    render();
+  }
+}
+
 function render() {
   const q = searchEl.value.trim().toLowerCase();
   const visible = ports.filter(p => matches(p, q));
@@ -258,6 +397,7 @@ function render() {
           <th>Process</th>
           <th>PID</th>
           <th>User</th>
+          <th>Protect</th>
           <th></th>
         </tr>
       </thead>
@@ -268,9 +408,14 @@ function render() {
 }
 
 function rowHtml(item) {
+  const killDisabled = item.self || item.protected;
+  const killTitle = item.self ? 'devhub process' : item.protected ? 'protected port' : 'kill process';
   return `
     <tr>
-      <td class="mono port-cell">${escapeHtml(item.port)}</td>
+      <td class="mono port-cell">
+        ${escapeHtml(item.port)}
+        ${item.protected ? '<span class="self-badge protected-badge">protected</span>' : ''}
+      </td>
       <td>
         <input class="label-input" value="${escapeHtml(item.label)}" placeholder="label"
                data-port="${escapeHtml(item.port)}"
@@ -285,7 +430,13 @@ function rowHtml(item) {
       <td class="mono">${escapeHtml(item.pid)}</td>
       <td>${escapeHtml(item.user || '-')}</td>
       <td>
-        <button class="btn danger" ${item.self ? 'disabled' : ''}
+        <label class="protect-toggle" title="protect port">
+          <input type="checkbox" ${item.protected ? 'checked' : ''}
+                 onchange="toggleProtected(${escapeHtml(item.port)}, this.checked)">
+        </label>
+      </td>
+      <td>
+        <button class="btn danger" ${killDisabled ? 'disabled' : ''} title="${escapeHtml(killTitle)}"
                 onclick="killPort(${escapeHtml(item.port)}, ${escapeHtml(item.pid)})">kill</button>
       </td>
     </tr>`;
@@ -318,6 +469,10 @@ async function killPort(port, pid) {
 }
 
 document.getElementById('refreshBtn').addEventListener('click', loadPorts);
+document.getElementById('saveProtectedBtn').addEventListener('click', onSaveProtectedPorts);
+protectedInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter') onSaveProtectedPorts();
+});
 searchEl.addEventListener('input', render);
 searchEl.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
