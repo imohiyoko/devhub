@@ -13,7 +13,7 @@ CONFIG_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'config.example.json')
 # ── Settings (settings.json + settings.local.json) ──────────────────────────
 
 def load_settings():
-    defaults = {'port': 8765, 'editor': 'code', 'open_browser_on_start': True}
+    defaults = {'port': 8765, 'editor': 'code', 'open_browser_on_start': True, 'protected_ports': []}
     for name in ('server.example.json', 'server.json'):
         try:
             with open(os.path.join(SETTINGS_DIR, name)) as f:
@@ -494,6 +494,42 @@ def port_labels():
     return labels if isinstance(labels, dict) else {}
 
 
+def normalize_port_list(value, strict=False):
+    if not isinstance(value, list):
+        if strict:
+            raise ValueError('ports must be a list')
+        return []
+    ports = []
+    seen = set()
+    for item in value:
+        if isinstance(item, bool):
+            port = None
+        else:
+            try:
+                port = int(str(item).strip())
+            except (TypeError, ValueError):
+                port = None
+        if port is None or port < 1 or port > 65535:
+            if strict:
+                raise ValueError('ports must be integers from 1 to 65535')
+            continue
+        if port in seen:
+            continue
+        seen.add(port)
+        ports.append(port)
+    return sorted(ports)
+
+
+def protected_ports():
+    return normalize_port_list(load_settings().get('protected_ports', []))
+
+
+def save_protected_ports(ports):
+    normalized = normalize_port_list(ports, strict=True)
+    save_settings({'protected_ports': normalized})
+    return normalized
+
+
 def parse_port_name(name):
     match = re.search(r'(?:TCP\s+)?(.+):(\d+)\s+\(LISTEN\)$', name)
     if not match:
@@ -567,9 +603,11 @@ def list_ports_windows():
 def list_open_ports():
     ports = list_ports_windows() if platform.system() == 'Windows' else list_ports_unix()
     labels = port_labels()
+    protected = set(protected_ports())
     for item in ports:
         item['label'] = labels.get(str(item['port']), '')
         item['self'] = item['pid'] == os.getpid()
+        item['protected'] = item['port'] in protected
     ports.sort(key=lambda item: (item['port'], item['pid']))
     return ports
 
@@ -588,6 +626,8 @@ def save_port_label(port, label):
 def kill_port_process(port, pid):
     port = int(port)
     pid = int(pid)
+    if port in set(protected_ports()):
+        raise ValueError(f'port {port} is protected')
     if pid == os.getpid():
         raise ValueError('devhub itself cannot be killed from this tool')
     matches = [p for p in list_open_ports() if p['port'] == port and p['pid'] == pid]
@@ -660,7 +700,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == '/api/ports':
             try:
-                self.send_json({'ports': list_open_ports()})
+                self.send_json({'ports': list_open_ports(), 'protected_ports': protected_ports()})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
             return
@@ -732,7 +772,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/settings':
             try:
                 data = json.loads(self.read_body())
-                allowed = {'disabled_tools', 'tool_order', 'editor', 'open_browser_on_start', 'db_connections', 'port_labels'}
+                allowed = {'disabled_tools', 'tool_order', 'editor', 'open_browser_on_start', 'db_connections', 'port_labels', 'protected_ports'}
                 patch = {k: v for k, v in data.items() if k in allowed}
                 if isinstance(patch.get('db_connections'), list):
                     patch['db_connections'] = [
@@ -740,6 +780,8 @@ class Handler(BaseHTTPRequestHandler):
                         for profile in patch['db_connections']
                         if isinstance(profile, dict)
                     ]
+                if 'protected_ports' in patch:
+                    patch['protected_ports'] = normalize_port_list(patch['protected_ports'], strict=True)
                 save_settings(patch)
                 self.send_json({'ok': True})
             except Exception as e:
@@ -751,6 +793,15 @@ class Handler(BaseHTTPRequestHandler):
                 data = json.loads(self.read_body())
                 save_port_label(data.get('port'), data.get('label', ''))
                 self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/ports/protected':
+            try:
+                data = json.loads(self.read_body())
+                ports = save_protected_ports(data.get('ports', []))
+                self.send_json({'ok': True, 'protected_ports': ports})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
             return

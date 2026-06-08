@@ -12,7 +12,7 @@
 | **diagram** | `/diagram` | Mermaid 記法のリアルタイムプレビュー・Draw.io XML 変換 |
 | **csv-tsv** | `/csv-tsv` | CSV / TSV の相互変換 |
 | **db-table** | `/db-table` | SQLite / MySQL / MariaDB の接続管理、テーブル表示、セル編集、行追加・削除 |
-| **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、LISTEN プロセスの kill |
+| **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、保護対象設定、LISTEN プロセスの kill |
 
 `db-table` の MySQL / MariaDB パスワードは保存されません。接続時に必要に応じて入力してください。
 
@@ -93,6 +93,7 @@ cp settings/server.example.json settings/server.json
 | `port` | `8765` | サーバーのポート番号 |
 | `editor` | `"code"` | エディタコマンド（`cursor`、`zed` 等も可） |
 | `open_browser_on_start` | `true` | 起動時にブラウザを自動で開くか |
+| `protected_ports` | `[]` | ports ツールで kill できないよう保護するポート番号の配列 |
 
 ### ワークスペース設定 (`settings/config.json`)
 
