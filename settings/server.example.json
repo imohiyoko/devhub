@@ -1,5 +1,6 @@
 {
   "port": 8765,
   "editor": "code",
-  "open_browser_on_start": true
+  "open_browser_on_start": true,
+  "db_connections": []
 }
