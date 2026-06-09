@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>diagram — devhub</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -286,7 +285,9 @@ const SAMPLE_MERMAID = `erDiagram
     USER ||--o{ COMMENT : "writes"
     POST ||--o{ COMMENT : "has"`;
 
-mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', suppressErrorRendering: true });
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', suppressErrorRendering: true });
+}
 
 let renderTimer = null;
 let currentSvg = '';
@@ -320,6 +321,12 @@ async function update() {
   const svgWrap = document.getElementById('preview-svg');
   const status = document.getElementById('preview-status');
   if (mermaidCode && !mermaidCode.startsWith('//')) {
+    if (!window.mermaid) {
+      currentSvg = '';
+      svgWrap.innerHTML = '';
+      status.textContent = 'オフラインのため Mermaid プレビューは無効です';
+      status.className = 'preview-status err';
+    } else {
     try {
       const id = 'm' + Date.now();
       const { svg } = await mermaid.render(id, mermaidCode);
@@ -334,6 +341,7 @@ async function update() {
       const msg = (e.message || String(e)).split('\n')[0];
       status.textContent = '⚠ ' + msg;
       status.className = 'preview-status err';
+    }
     }
   } else if (mermaidCode.startsWith('//')) {
     status.textContent = '⚠ ' + mermaidCode.replace('//', '').trim();
