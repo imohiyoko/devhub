@@ -281,7 +281,39 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
+.format-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.format-toggle button {
+  background: none;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  cursor: pointer;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 5px 10px;
+  transition: background 0.15s, color 0.15s;
+}
+.format-toggle button:last-child { border-right: none; }
+.format-toggle button:hover { color: var(--text); background: #ffffff0a; }
+.format-toggle button.active { color: #fff; background: var(--accent); }
+.header-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  user-select: none;
+}
+.header-toggle input { accent-color: var(--accent); }
 .grid-wrap {
   flex: 1;
   min-height: 0;
@@ -308,6 +340,42 @@ main {
   z-index: 1;
   background: var(--surface);
   color: var(--accent);
+}
+.th-content {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.th-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.copy-col-btn {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.45;
+  padding: 1px;
+  flex-shrink: 0;
+}
+.data-table th:hover .copy-col-btn,
+.copy-col-btn:focus { opacity: 1; }
+.copy-col-btn:hover { color: var(--green); }
+.column-select {
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+}
+.data-table th.column-selected,
+.data-table td.column-selected {
+  background: rgba(56,139,253,0.12);
 }
 .data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
 .data-table tbody tr:hover { background: rgba(56,139,253,0.08); }
@@ -420,6 +488,15 @@ main {
       <div class="toolbar-title" id="currentTable">テーブル未選択</div>
       <div class="toolbar-meta" id="tableMeta"></div>
       <div class="toolbar-actions">
+        <div class="format-toggle" aria-label="コピー形式">
+          <button id="copyTsvBtn" type="button" class="active">TSV</button>
+          <button id="copyCsvBtn" type="button">CSV</button>
+        </div>
+        <label class="header-toggle" title="コピーにヘッダー行を含める">
+          <input type="checkbox" id="includeHeaderToggle" checked>
+          ヘッダー
+        </label>
+        <button class="btn" id="copyViewBtn" disabled>全列コピー</button>
         <button class="btn" id="prevBtn" disabled>前へ</button>
         <button class="btn" id="nextBtn" disabled>次へ</button>
         <button class="btn" id="reloadBtn" disabled>再読込</button>
@@ -442,6 +519,10 @@ let currentTable = '';
 let columns = [];
 let rows = [];
 let editable = false;
+let keyColumns = [];
+let copyFormat = 'tsv';
+let includeHeader = true;
+let selectedColumns = new Set();
 let offset = 0;
 let total = 0;
 let editingConnectionId = null;
@@ -462,6 +543,10 @@ const tableList = document.getElementById('tableList');
 const gridWrap = document.getElementById('gridWrap');
 const currentTableEl = document.getElementById('currentTable');
 const tableMetaEl = document.getElementById('tableMeta');
+const copyTsvBtn = document.getElementById('copyTsvBtn');
+const copyCsvBtn = document.getElementById('copyCsvBtn');
+const includeHeaderToggle = document.getElementById('includeHeaderToggle');
+const copyViewBtn = document.getElementById('copyViewBtn');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const reloadBtn = document.getElementById('reloadBtn');
@@ -724,6 +809,7 @@ function renderTables() {
 async function selectTable(name) {
   currentTable = name;
   offset = 0;
+  selectedColumns.clear();
   renderTables();
   await loadRows();
 }
@@ -741,8 +827,11 @@ async function loadRows() {
     columns = data.columns;
     rows = data.rows;
     editable = data.editable;
+    keyColumns = data.keyColumns || [];
+    const available = new Set(columns.map(c => c.name));
+    selectedColumns = new Set([...selectedColumns].filter(name => available.has(name)));
     total = data.total;
-    renderGrid(data.keyColumns || []);
+    renderGrid();
     setStatus('読込完了', 'ok');
   } catch (err) {
     resetGrid('読み込めません');
@@ -754,10 +843,13 @@ function resetGrid(text) {
   columns = [];
   rows = [];
   editable = false;
+  keyColumns = [];
+  selectedColumns.clear();
   total = 0;
   currentTableEl.textContent = currentTable || 'テーブル未選択';
   tableMetaEl.textContent = '';
   gridWrap.innerHTML = `<div class="empty">${escapeHtml(text)}</div>`;
+  syncViewControls();
   prevBtn.disabled = true;
   nextBtn.disabled = true;
   reloadBtn.disabled = !activeConnection;
@@ -780,7 +872,117 @@ function keySummary(key) {
   return entries.map(([k, v]) => `${k}=${v}`).join(', ');
 }
 
-function renderGrid(keyColumns) {
+function keyHeaderLabel() {
+  return keyColumns.join(', ') || 'key';
+}
+
+function exportValue(value) {
+  if (value === null || value === undefined) return 'NULL';
+  return String(value);
+}
+
+function exportDelimiter(format = copyFormat) {
+  return format === 'csv' ? ',' : '\t';
+}
+
+function escapeDelimitedField(value, delimiter) {
+  const text = exportValue(value);
+  if (delimiter === '\t') {
+    return text.replace(/\t/g, ' ').replace(/\r?\n/g, ' ');
+  }
+  if (text.includes(delimiter) || text.includes('"') || text.includes('\n') || text.includes('\r')) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function serializeDelimited(matrix, delimiter) {
+  return matrix
+    .map(row => row.map(value => escapeDelimitedField(value, delimiter)).join(delimiter))
+    .join('\n');
+}
+
+function selectedExportColumns() {
+  const selected = columns.filter(col => selectedColumns.has(col.name));
+  return selected.length ? selected : columns;
+}
+
+function exportMatrix(exportColumns = selectedExportColumns()) {
+  const matrix = rows.map(row => exportColumns.map(col => exportValue(row[col.name])));
+  if (includeHeader) {
+    matrix.unshift(exportColumns.map(col => col.name));
+  }
+  return matrix;
+}
+
+function exportText(format = copyFormat, exportColumns = selectedExportColumns()) {
+  return serializeDelimited(exportMatrix(exportColumns), exportDelimiter(format));
+}
+
+function hasExportData() {
+  return columns.length > 0 && (rows.length > 0 || includeHeader);
+}
+
+function syncViewControls() {
+  copyTsvBtn.classList.toggle('active', copyFormat === 'tsv');
+  copyCsvBtn.classList.toggle('active', copyFormat === 'csv');
+  includeHeaderToggle.checked = includeHeader;
+  copyViewBtn.textContent = selectedColumns.size ? `選択コピー(${selectedColumns.size})` : '全列コピー';
+  copyViewBtn.disabled = !hasExportData();
+}
+
+function setCopyFormat(format) {
+  copyFormat = format;
+  syncViewControls();
+}
+
+async function copyText(text, message) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus(message, 'ok');
+    copyViewBtn.classList.add('primary');
+    setTimeout(() => copyViewBtn.classList.remove('primary'), 700);
+  } catch (err) {
+    setStatus(err.message || 'コピーできません', 'error');
+  }
+}
+
+async function copyCurrentView() {
+  await copyText(exportText(copyFormat), `${copyFormat.toUpperCase()}コピー済`);
+}
+
+async function copyColumn(columnName) {
+  if (!rows.length && !includeHeader) return;
+  const col = columns.find(c => c.name === columnName);
+  if (!col) return;
+  await copyText(
+    exportText(copyFormat, [col]),
+    `${columnName} コピー済`
+  );
+}
+
+async function copyKeyColumn() {
+  if (!rows.length && !includeHeader) return;
+  const values = rows.map(row => keySummary(row.__devhub_key__ || {}));
+  if (includeHeader) values.unshift(keyHeaderLabel());
+  const matrix = values.map(value => [value]);
+  await copyText(
+    serializeDelimited(matrix, exportDelimiter(copyFormat)),
+    `${keyHeaderLabel()} コピー済`
+  );
+}
+
+function toggleColumnSelection(columnName, checked) {
+  if (checked) {
+    selectedColumns.add(columnName);
+  } else {
+    selectedColumns.delete(columnName);
+  }
+  renderGrid();
+}
+
+function renderGrid() {
   currentTableEl.textContent = currentTable;
   const rangeStart = total === 0 ? 0 : offset + 1;
   tableMetaEl.textContent = `${rangeStart}-${Math.min(offset + rows.length, total)} / ${total}${editable ? '' : ' · read only'}`;
@@ -788,6 +990,7 @@ function renderGrid(keyColumns) {
   nextBtn.disabled = offset + LIMIT >= total;
   reloadBtn.disabled = false;
   addBtn.disabled = !editable;
+  syncViewControls();
 
   if (!rows.length) {
     gridWrap.innerHTML = '<div class="empty">行がありません</div>';
@@ -797,8 +1000,24 @@ function renderGrid(keyColumns) {
   const header = `
     <thead>
       <tr>
-        <th class="key-col">${escapeHtml(keyColumns.join(', ') || 'key')}</th>
-        ${columns.map(c => `<th title="${escapeHtml(c.type || '')}">${escapeHtml(c.name)}${c.pk ? ' PK' : ''}</th>`).join('')}
+        <th class="key-col" title="${escapeHtml(keyHeaderLabel())}">
+          <div class="th-content">
+            <span class="th-label">${escapeHtml(keyHeaderLabel())}</span>
+            <button class="copy-col-btn" type="button" onclick="event.stopPropagation(); copyKeyColumn()" title="列コピー">⧉</button>
+          </div>
+        </th>
+        ${columns.map(c => `
+          <th class="${selectedColumns.has(c.name) ? 'column-selected' : ''}" title="${escapeHtml(c.type || '')}">
+            <div class="th-content">
+              <input class="column-select" type="checkbox" ${selectedColumns.has(c.name) ? 'checked' : ''}
+                     onclick="event.stopPropagation()"
+                     onchange="toggleColumnSelection(${encodeJs(c.name)}, this.checked)"
+                     title="この列を選択">
+              <span class="th-label">${escapeHtml(c.name)}${c.pk ? ' PK' : ''}</span>
+              <button class="copy-col-btn" type="button" onclick="event.stopPropagation(); copyColumn(${encodeJs(c.name)})" title="列コピー">⧉</button>
+            </div>
+          </th>
+        `).join('')}
         <th class="action-col"></th>
       </tr>
     </thead>`;
@@ -809,7 +1028,10 @@ function renderGrid(keyColumns) {
     const cells = columns.map(col => {
       const value = row[col.name];
       const cellEditable = editable && !col.pk;
-      const classes = cellEditable ? 'cell-editable' : '';
+      const classes = [
+        cellEditable ? 'cell-editable' : '',
+        selectedColumns.has(col.name) ? 'column-selected' : '',
+      ].filter(Boolean).join(' ');
       const attrs = cellEditable
         ? `contenteditable="true" data-key="${encodeData(key)}" data-column="${escapeHtml(col.name)}" data-original="${encodeData(value)}" onfocus="rememberCell(this)" onkeydown="handleCellKey(event)" onblur="saveCell(this)"`
         : '';
@@ -954,6 +1176,13 @@ nextBtn.addEventListener('click', () => {
 });
 reloadBtn.addEventListener('click', () => refreshTables(true));
 addBtn.addEventListener('click', addRow);
+copyTsvBtn.addEventListener('click', () => setCopyFormat('tsv'));
+copyCsvBtn.addEventListener('click', () => setCopyFormat('csv'));
+includeHeaderToggle.addEventListener('change', () => {
+  includeHeader = includeHeaderToggle.checked;
+  syncViewControls();
+});
+copyViewBtn.addEventListener('click', copyCurrentView);
 gridWrap.addEventListener('click', event => {
   const button = event.target.closest('.delete-btn');
   if (!button) return;

@@ -9,12 +9,13 @@
 |---|---|---|
 | **workspace** | `/workspace` | `~/developer` 配下のリポジトリ一覧から VSCode で開く |
 | **diff-kun** | `/diff-kun` | テキスト差分をリアルタイム確認（unified / context / side-by-side） |
-| **diagram** | `/diagram` | Mermaid 記法のリアルタイムプレビュー・Draw.io XML 変換 |
+| **diagram** | `/diagram` | Mermaid 記法と Draw.io XML の相互変換（外部CDNは読み込まない） |
 | **csv-tsv** | `/csv-tsv` | CSV / TSV の相互変換 |
-| **db-table** | `/db-table` | SQLite / MySQL / MariaDB の接続管理、テーブル表示、セル編集、行追加・削除 |
+| **db-table** | `/db-table` | SQLite / MySQL / MariaDB の接続管理、表表示、TSV/CSVコピー、列コピー、セル編集 |
 | **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、保護対象設定、LISTEN プロセスの kill |
 
-`db-table` の MySQL / MariaDB パスワードは保存されません。接続時に必要に応じて入力してください。
+`db-table` の MySQL / MariaDB パスワードは保存されません。接続時に必要に応じて入力してください。  
+デフォルトでは外部DBホストへの接続は禁止され、`localhost` / `127.0.0.1` / `::1` のみ接続できます。
 
 ## セットアップ
 
@@ -93,6 +94,7 @@ cp settings/server.example.json settings/server.json
 | `port` | `8765` | サーバーのポート番号 |
 | `editor` | `"code"` | エディタコマンド（`cursor`、`zed` 等も可） |
 | `open_browser_on_start` | `true` | 起動時にブラウザを自動で開くか |
+| `db_local_only` | `true` | db-table の MySQL / MariaDB 接続をローカルホストのみに制限 |
 | `protected_ports` | `[]` | ports ツールで kill できないよう保護するポート番号の配列 |
 
 ### ワークスペース設定 (`settings/config.json`)
