@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, platform, re, shlex, shutil, signal, sqlite3, subprocess, sys, threading, time, webbrowser
+import ipaddress, json, os, platform, re, shlex, shutil, signal, sqlite3, subprocess, sys, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 import xml.etree.ElementTree as ET
@@ -13,7 +13,7 @@ CONFIG_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'config.example.json')
 # ── Settings (settings.json + settings.local.json) ──────────────────────────
 
 def load_settings():
-    defaults = {'port': 8765, 'editor': 'code', 'open_browser_on_start': True, 'protected_ports': []}
+    defaults = {'port': 8765, 'editor': 'code', 'open_browser_on_start': True, 'protected_ports': [], 'db_local_only': True}
     for name in ('server.example.json', 'server.json'):
         try:
             with open(os.path.join(SETTINGS_DIR, name)) as f:
@@ -57,6 +57,7 @@ def sanitize_settings(settings):
 SETTINGS = load_settings()
 PORT     = SETTINGS['port']
 EDITOR   = SETTINGS['editor']
+DB_LOCAL_ONLY = SETTINGS.get('db_local_only', True)
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -169,6 +170,21 @@ def sqlite_db_path(raw_path):
     return path
 
 
+def is_local_db_host(host):
+    normalized = str(host or '').strip().lower()
+    if normalized in ('localhost', 'localhost.localdomain'):
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def ensure_local_db_host(host):
+    if DB_LOCAL_ONLY and not is_local_db_host(host):
+        raise ValueError('external database hosts are disabled; use localhost, 127.0.0.1, or ::1')
+
+
 def quote_identifier(name):
     if not isinstance(name, str) or not name or '\x00' in name:
         raise ValueError('invalid identifier')
@@ -225,6 +241,7 @@ def connection_from_payload(data):
         normalized['path'] = sqlite_db_path(normalized.get('path'))
     else:
         normalized['host'] = normalized.get('host') or '127.0.0.1'
+        ensure_local_db_host(normalized['host'])
         normalized['port'] = int(normalized.get('port') or 3306)
         normalized['user'] = normalized.get('user') or ''
         normalized['password'] = normalized.get('password') or ''
