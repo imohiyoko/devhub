@@ -590,6 +590,7 @@ let elementSearchText = '';
 let elementSearchTimer = null;
 let globalSearchTimer = null;
 let globalSearchRequestId = 0;
+let rowLoadRequestId = 0;
 let globalSearchLoading = false;
 let globalSearchAutoOpenElement = false;
 let globalSearchResults = {
@@ -870,6 +871,7 @@ async function connect(profile = formProfile(), save = true) {
 }
 
 function resetTables(text) {
+  rowLoadRequestId += 1;
   tables = [];
   currentTable = '';
   tableSearchText = '';
@@ -997,15 +999,28 @@ async function selectTable(name) {
 
 async function loadRows() {
   if (!activeConnection || !currentTable) return;
+  const requestId = ++rowLoadRequestId;
+  const connectionId = activeConnection.id;
+  const tableName = currentTable;
+  const requestOffset = offset;
+  const searchText = normalizeSearchText(elementSearchText);
   setStatus('読込中...');
   try {
     const data = await postJson('/api/db/rows', {
       connection: activeConnection,
-      table: currentTable,
+      table: tableName,
       limit: LIMIT,
-      offset,
-      search: normalizeSearchText(elementSearchText),
+      offset: requestOffset,
+      search: searchText,
     });
+    if (
+      requestId !== rowLoadRequestId ||
+      !activeConnection ||
+      activeConnection.id !== connectionId ||
+      currentTable !== tableName ||
+      offset !== requestOffset ||
+      normalizeSearchText(elementSearchText) !== searchText
+    ) return;
     columns = data.columns;
     rows = data.rows;
     editable = data.editable;
@@ -1016,12 +1031,14 @@ async function loadRows() {
     renderGrid();
     setStatus('読込完了', 'ok');
   } catch (err) {
+    if (requestId !== rowLoadRequestId) return;
     resetGrid('読み込めません');
     setStatus(err.message, 'error');
   }
 }
 
 function resetGrid(text) {
+  rowLoadRequestId += 1;
   columns = [];
   rows = [];
   editable = false;

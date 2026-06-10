@@ -454,6 +454,26 @@ def db_tables(profile):
     return [{'name': r['name'], 'type': r['type'].lower(), 'count': int(r.get('count') or 0)} for r in rows]
 
 
+def db_table_names_types(profile):
+    if profile['driver'] == 'sqlite':
+        with sqlite3.connect(profile['path']) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT name, type FROM sqlite_master "
+                "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+                "ORDER BY name"
+            ).fetchall()
+            return [{'name': row['name'], 'type': row['type']} for row in rows]
+
+    rows = mysql_run(profile, (
+        "SELECT TABLE_NAME AS name, TABLE_TYPE AS type "
+        "FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() "
+        "ORDER BY TABLE_NAME"
+    ))
+    return [{'name': r['name'], 'type': r['type'].lower()} for r in rows]
+
+
 def db_search(profile, column_search='', element_search=''):
     column_search = normalize_search(column_search)
     element_search = normalize_search(element_search)
@@ -461,23 +481,28 @@ def db_search(profile, column_search='', element_search=''):
     if not column_search and not element_search:
         return result
 
-    tables = db_tables(profile)
+    tables = db_table_names_types(profile)
     if profile['driver'] == 'sqlite':
         with sqlite3.connect(profile['path']) as conn:
             conn.row_factory = sqlite3.Row
             for table in tables:
                 try:
                     columns = sqlite_columns(conn, table['name'])
+                except (sqlite3.DatabaseError, ValueError):
+                    continue
+
+                if column_search:
+                    cols = matched_columns(columns, column_search)
+                    if cols:
+                        result['columnMatches'].append({
+                            'table': table['name'],
+                            'type': table['type'],
+                            'columns': cols,
+                        })
+
+                if element_search:
                     table_sql = quote_identifier(table['name'])
-                    if column_search:
-                        cols = matched_columns(columns, column_search)
-                        if cols:
-                            result['columnMatches'].append({
-                                'table': table['name'],
-                                'type': table['type'],
-                                'columns': cols,
-                            })
-                    if element_search:
+                    try:
                         where_sql, params = sqlite_search_condition(columns, element_search)
                         count = conn.execute(
                             f'SELECT COUNT(*) AS c FROM {table_sql}{where_sql}',
@@ -494,22 +519,27 @@ def db_search(profile, column_search='', element_search=''):
                                 'count': count,
                                 'sample': row_search_sample(columns, dict(row) if row else {}, element_search),
                             })
-                except Exception:
-                    continue
+                    except (sqlite3.DatabaseError, ValueError):
+                        continue
         return result
 
     for table in tables:
         try:
             columns = mysql_columns(profile, table['name'])
-            if column_search:
-                cols = matched_columns(columns, column_search)
-                if cols:
-                    result['columnMatches'].append({
-                        'table': table['name'],
-                        'type': table['type'],
-                        'columns': cols,
-                    })
-            if element_search:
+        except ValueError:
+            continue
+
+        if column_search:
+            cols = matched_columns(columns, column_search)
+            if cols:
+                result['columnMatches'].append({
+                    'table': table['name'],
+                    'type': table['type'],
+                    'columns': cols,
+                })
+
+        if element_search:
+            try:
                 table_sql = mysql_identifier(table['name'])
                 where_sql = mysql_search_condition(columns, element_search)
                 count_rows = mysql_run(profile, f'SELECT COUNT(*) AS c FROM {table_sql}{where_sql}')
@@ -522,8 +552,8 @@ def db_search(profile, column_search='', element_search=''):
                         'count': count,
                         'sample': row_search_sample(columns, rows[0] if rows else {}, element_search),
                     })
-        except Exception:
-            continue
+            except ValueError:
+                continue
     return result
 
 
