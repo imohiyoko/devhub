@@ -103,6 +103,14 @@ aside {
   text-transform: uppercase;
   border-bottom: 1px solid var(--border);
 }
+.side-search {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.side-search .input {
+  font-size: 11px;
+  padding: 5px 8px;
+}
 
 .connection-form {
   display: grid;
@@ -276,12 +284,51 @@ main {
   font-size: 11px;
   flex-shrink: 0;
 }
+.search-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 180px;
+  width: min(220px, 24vw);
+  flex-shrink: 1;
+}
+.search-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-input::placeholder { color: var(--muted); }
+.search-input::-webkit-search-cancel-button { display: none; }
+.search-clear {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.search-clear:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.search-clear:disabled { opacity: 0.4; cursor: default; }
 .toolbar-actions {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
+  min-width: 0;
+  overflow-x: auto;
+  flex-shrink: 1;
 }
 .format-toggle {
   display: flex;
@@ -477,6 +524,9 @@ main {
 
     <div class="side-section tables">
       <div class="section-title">Tables</div>
+      <div class="side-search">
+        <input class="input" id="tableSearchInput" type="search" autocomplete="off" spellcheck="false" placeholder="テーブル検索" disabled>
+      </div>
       <div class="table-list" id="tableList">
         <div class="empty">未接続</div>
       </div>
@@ -488,6 +538,14 @@ main {
       <div class="toolbar-title" id="currentTable">テーブル未選択</div>
       <div class="toolbar-meta" id="tableMeta"></div>
       <div class="toolbar-actions">
+        <form class="search-form" id="columnSearchForm" role="search">
+          <input class="search-input" id="columnSearchInput" type="search" autocomplete="off" spellcheck="false" placeholder="カラム検索" disabled>
+          <button class="search-clear" id="clearColumnSearchBtn" type="button" title="カラム検索クリア" disabled>✕</button>
+        </form>
+        <form class="search-form" id="elementSearchForm" role="search">
+          <input class="search-input" id="elementSearchInput" type="search" autocomplete="off" spellcheck="false" placeholder="要素検索" disabled>
+          <button class="search-clear" id="clearElementSearchBtn" type="button" title="要素検索クリア" disabled>✕</button>
+        </form>
         <div class="format-toggle" aria-label="コピー形式">
           <button id="copyTsvBtn" type="button" class="active">TSV</button>
           <button id="copyCsvBtn" type="button">CSV</button>
@@ -526,6 +584,21 @@ let selectedColumns = new Set();
 let offset = 0;
 let total = 0;
 let editingConnectionId = null;
+let tableSearchText = '';
+let columnSearchText = '';
+let elementSearchText = '';
+let elementSearchTimer = null;
+let globalSearchTimer = null;
+let globalSearchRequestId = 0;
+let rowLoadRequestId = 0;
+let globalSearchLoading = false;
+let globalSearchAutoOpenElement = false;
+let globalSearchResults = {
+  columnSearch: '',
+  elementSearch: '',
+  columnMatches: [],
+  elementMatches: [],
+};
 
 const statusEl = document.getElementById('status');
 const driverEl = document.getElementById('driver');
@@ -543,6 +616,13 @@ const tableList = document.getElementById('tableList');
 const gridWrap = document.getElementById('gridWrap');
 const currentTableEl = document.getElementById('currentTable');
 const tableMetaEl = document.getElementById('tableMeta');
+const tableSearchInput = document.getElementById('tableSearchInput');
+const columnSearchForm = document.getElementById('columnSearchForm');
+const columnSearchInput = document.getElementById('columnSearchInput');
+const clearColumnSearchBtn = document.getElementById('clearColumnSearchBtn');
+const elementSearchForm = document.getElementById('elementSearchForm');
+const elementSearchInput = document.getElementById('elementSearchInput');
+const clearElementSearchBtn = document.getElementById('clearElementSearchBtn');
 const copyTsvBtn = document.getElementById('copyTsvBtn');
 const copyCsvBtn = document.getElementById('copyCsvBtn');
 const includeHeaderToggle = document.getElementById('includeHeaderToggle');
@@ -767,6 +847,13 @@ async function connect(profile = formProfile(), save = true) {
     tables = data.tables;
     currentTable = tables[0]?.name || '';
     offset = 0;
+    tableSearchText = '';
+    columnSearchText = '';
+    elementSearchText = '';
+    tableSearchInput.value = '';
+    columnSearchInput.value = '';
+    elementSearchInput.value = '';
+    resetGlobalSearchResults();
     if (save) await rememberConnection(activeConnection);
     renderConnections();
     renderTables();
@@ -784,24 +871,120 @@ async function connect(profile = formProfile(), save = true) {
 }
 
 function resetTables(text) {
+  rowLoadRequestId += 1;
   tables = [];
   currentTable = '';
+  tableSearchText = '';
+  tableSearchInput.value = '';
+  resetGlobalSearchResults();
   tableList.innerHTML = `<div class="empty">${escapeHtml(text)}</div>`;
 }
 
+function normalizeSearchText(value) {
+  return String(value ?? '').trim();
+}
+
+function hasSearchText(value) {
+  return normalizeSearchText(value).length > 0;
+}
+
+function matchesSearch(value, search) {
+  const needle = normalizeSearchText(search).toLowerCase();
+  if (!needle) return false;
+  return String(value ?? '').toLowerCase().includes(needle);
+}
+
+function visibleColumns() {
+  if (!hasSearchText(columnSearchText)) return columns;
+  const matched = columns.filter(c => matchesSearch(c.name, columnSearchText) || matchesSearch(c.type, columnSearchText));
+  if (!matched.length && hasSearchText(elementSearchText) && rows.length) return columns;
+  return matched;
+}
+
+function resetGlobalSearchResults() {
+  globalSearchRequestId += 1;
+  globalSearchLoading = false;
+  globalSearchAutoOpenElement = false;
+  globalSearchResults = {
+    columnSearch: '',
+    elementSearch: '',
+    columnMatches: [],
+    elementMatches: [],
+  };
+}
+
+function columnMatchMap() {
+  return new Map((globalSearchResults.columnMatches || []).map(match => [match.table, match]));
+}
+
+function elementMatchMap() {
+  return new Map((globalSearchResults.elementMatches || []).map(match => [match.table, match]));
+}
+
+function globalSearchIsFresh() {
+  return globalSearchResults.columnSearch === normalizeSearchText(columnSearchText)
+    && globalSearchResults.elementSearch === normalizeSearchText(elementSearchText);
+}
+
+function sampleSummary(sample = []) {
+  return sample
+    .map(item => `${item.column}=${displayValue(item.value)}`)
+    .join(', ');
+}
+
+function tableMatchSummary(table, colMatches, elemMatches) {
+  const parts = [];
+  const colMatch = colMatches.get(table.name);
+  const elemMatch = elemMatches.get(table.name);
+  if (hasSearchText(columnSearchText) && colMatch) {
+    parts.push(`cols: ${colMatch.columns.map(c => c.name).join(', ')}`);
+  }
+  if (hasSearchText(elementSearchText) && elemMatch) {
+    const sample = sampleSummary(elemMatch.sample || []);
+    parts.push(sample ? `rows: ${elemMatch.count} (${sample})` : `rows: ${elemMatch.count}`);
+  }
+  return parts.length ? parts.join(' · ') : (activeConnection?.label || '');
+}
+
+function tableCountText(table, elemMatches) {
+  const elemMatch = hasSearchText(elementSearchText) ? elemMatches.get(table.name) : null;
+  return elemMatch ? elemMatch.count : table.count;
+}
+
 function renderTables() {
+  syncViewControls();
   if (!tables.length) {
     tableList.innerHTML = '<div class="empty">テーブルがありません</div>';
     return;
   }
-  tableList.innerHTML = tables.map(t => `
+  if ((hasSearchText(columnSearchText) || hasSearchText(elementSearchText)) && (globalSearchLoading || !globalSearchIsFresh())) {
+    tableList.innerHTML = '<div class="empty">横断検索中...</div>';
+    return;
+  }
+  const colMatches = columnMatchMap();
+  const elemMatches = elementMatchMap();
+  let visibleTables = tableSearchText
+    ? tables.filter(t => matchesSearch(t.name, tableSearchText) || matchesSearch(t.type, tableSearchText))
+    : tables;
+  if (hasSearchText(columnSearchText) || hasSearchText(elementSearchText)) {
+    visibleTables = visibleTables.filter(t => {
+      const columnMatched = hasSearchText(columnSearchText) && colMatches.has(t.name);
+      const elementMatched = hasSearchText(elementSearchText) && elemMatches.has(t.name);
+      return columnMatched || elementMatched;
+    });
+  }
+  if (!visibleTables.length) {
+    tableList.innerHTML = '<div class="empty">該当するテーブルがありません</div>';
+    return;
+  }
+  tableList.innerHTML = visibleTables.map(t => `
     <button class="table-item ${t.name === currentTable ? 'active' : ''}" onclick="selectTable(${encodeJs(t.name)})">
       <span class="table-kind">${escapeHtml(t.type)}</span>
       <div class="table-name" title="${escapeHtml(t.name)}">
         ${escapeHtml(t.name)}
-        <div class="table-meta">${escapeHtml(activeConnection?.label || '')}</div>
+        <div class="table-meta" title="${escapeHtml(tableMatchSummary(t, colMatches, elemMatches))}">${escapeHtml(tableMatchSummary(t, colMatches, elemMatches))}</div>
       </div>
-      <span class="table-count">${escapeHtml(t.count)}</span>
+      <span class="table-count">${escapeHtml(tableCountText(t, elemMatches))}</span>
     </button>
   `).join('');
 }
@@ -816,14 +999,28 @@ async function selectTable(name) {
 
 async function loadRows() {
   if (!activeConnection || !currentTable) return;
+  const requestId = ++rowLoadRequestId;
+  const connectionId = activeConnection.id;
+  const tableName = currentTable;
+  const requestOffset = offset;
+  const searchText = normalizeSearchText(elementSearchText);
   setStatus('読込中...');
   try {
     const data = await postJson('/api/db/rows', {
       connection: activeConnection,
-      table: currentTable,
+      table: tableName,
       limit: LIMIT,
-      offset,
+      offset: requestOffset,
+      search: searchText,
     });
+    if (
+      requestId !== rowLoadRequestId ||
+      !activeConnection ||
+      activeConnection.id !== connectionId ||
+      currentTable !== tableName ||
+      offset !== requestOffset ||
+      normalizeSearchText(elementSearchText) !== searchText
+    ) return;
     columns = data.columns;
     rows = data.rows;
     editable = data.editable;
@@ -834,18 +1031,25 @@ async function loadRows() {
     renderGrid();
     setStatus('読込完了', 'ok');
   } catch (err) {
+    if (requestId !== rowLoadRequestId) return;
     resetGrid('読み込めません');
     setStatus(err.message, 'error');
   }
 }
 
 function resetGrid(text) {
+  rowLoadRequestId += 1;
   columns = [];
   rows = [];
   editable = false;
   keyColumns = [];
   selectedColumns.clear();
   total = 0;
+  columnSearchText = '';
+  elementSearchText = '';
+  columnSearchInput.value = '';
+  elementSearchInput.value = '';
+  resetGlobalSearchResults();
   currentTableEl.textContent = currentTable || 'テーブル未選択';
   tableMetaEl.textContent = '';
   gridWrap.innerHTML = `<div class="empty">${escapeHtml(text)}</div>`;
@@ -903,8 +1107,9 @@ function serializeDelimited(matrix, delimiter) {
 }
 
 function selectedExportColumns() {
-  const selected = columns.filter(col => selectedColumns.has(col.name));
-  return selected.length ? selected : columns;
+  const displayColumns = visibleColumns();
+  const selected = displayColumns.filter(col => selectedColumns.has(col.name));
+  return selected.length ? selected : displayColumns;
 }
 
 function exportMatrix(exportColumns = selectedExportColumns()) {
@@ -920,14 +1125,21 @@ function exportText(format = copyFormat, exportColumns = selectedExportColumns()
 }
 
 function hasExportData() {
-  return columns.length > 0 && (rows.length > 0 || includeHeader);
+  return visibleColumns().length > 0 && (rows.length > 0 || includeHeader);
 }
 
 function syncViewControls() {
+  const displayColumns = visibleColumns();
+  const selectedVisibleCount = displayColumns.filter(col => selectedColumns.has(col.name)).length;
+  tableSearchInput.disabled = !activeConnection || !tables.length;
+  columnSearchInput.disabled = !activeConnection || !currentTable || !columns.length;
+  elementSearchInput.disabled = !activeConnection || !currentTable;
+  clearColumnSearchBtn.disabled = !hasSearchText(columnSearchInput.value);
+  clearElementSearchBtn.disabled = !hasSearchText(elementSearchInput.value);
   copyTsvBtn.classList.toggle('active', copyFormat === 'tsv');
   copyCsvBtn.classList.toggle('active', copyFormat === 'csv');
   includeHeaderToggle.checked = includeHeader;
-  copyViewBtn.textContent = selectedColumns.size ? `選択コピー(${selectedColumns.size})` : '全列コピー';
+  copyViewBtn.textContent = selectedVisibleCount ? `選択コピー(${selectedVisibleCount})` : '全列コピー';
   copyViewBtn.disabled = !hasExportData();
 }
 
@@ -984,8 +1196,10 @@ function toggleColumnSelection(columnName, checked) {
 
 function renderGrid() {
   currentTableEl.textContent = currentTable;
+  const displayColumns = visibleColumns();
   const rangeStart = total === 0 ? 0 : offset + 1;
-  tableMetaEl.textContent = `${rangeStart}-${Math.min(offset + rows.length, total)} / ${total}${editable ? '' : ' · read only'}`;
+  const columnMeta = hasSearchText(columnSearchText) ? ` · columns ${displayColumns.length}/${columns.length}` : '';
+  tableMetaEl.textContent = `${rangeStart}-${Math.min(offset + rows.length, total)} / ${total}${hasSearchText(elementSearchText) ? ' · filtered' : ''}${columnMeta}${editable ? '' : ' · read only'}`;
   prevBtn.disabled = offset === 0;
   nextBtn.disabled = offset + LIMIT >= total;
   reloadBtn.disabled = false;
@@ -993,7 +1207,12 @@ function renderGrid() {
   syncViewControls();
 
   if (!rows.length) {
-    gridWrap.innerHTML = '<div class="empty">行がありません</div>';
+    gridWrap.innerHTML = `<div class="empty">${hasSearchText(elementSearchText) ? '該当する行がありません' : '行がありません'}</div>`;
+    return;
+  }
+
+  if (!displayColumns.length) {
+    gridWrap.innerHTML = '<div class="empty">該当するカラムがありません</div>';
     return;
   }
 
@@ -1006,7 +1225,7 @@ function renderGrid() {
             <button class="copy-col-btn" type="button" onclick="event.stopPropagation(); copyKeyColumn()" title="列コピー">⧉</button>
           </div>
         </th>
-        ${columns.map(c => `
+        ${displayColumns.map(c => `
           <th class="${selectedColumns.has(c.name) ? 'column-selected' : ''}" title="${escapeHtml(c.type || '')}">
             <div class="th-content">
               <input class="column-select" type="checkbox" ${selectedColumns.has(c.name) ? 'checked' : ''}
@@ -1025,7 +1244,7 @@ function renderGrid() {
   const body = rows.map(row => {
     const key = row.__devhub_key__ || {};
     const keyText = keySummary(key);
-    const cells = columns.map(col => {
+    const cells = displayColumns.map(col => {
       const value = row[col.name];
       const cellEditable = editable && !col.pk;
       const classes = [
@@ -1127,7 +1346,7 @@ async function addRow() {
   try {
     await postJson('/api/db/insert', { connection: activeConnection, table: currentTable });
     await refreshTables(false);
-    offset = Math.max(0, Math.floor(total / LIMIT) * LIMIT);
+    offset = hasSearchText(elementSearchText) ? 0 : Math.max(0, Math.floor(total / LIMIT) * LIMIT);
     await loadRows();
     setStatus('追加済', 'ok');
   } catch (err) {
@@ -1150,10 +1369,116 @@ async function deleteRow(key) {
   }
 }
 
+function scheduleGlobalSearch(delay = 250) {
+  clearTimeout(globalSearchTimer);
+  if (!activeConnection || !tables.length || (!hasSearchText(columnSearchText) && !hasSearchText(elementSearchText))) {
+    resetGlobalSearchResults();
+    renderTables();
+    return;
+  }
+  globalSearchLoading = true;
+  renderTables();
+  globalSearchTimer = setTimeout(runGlobalSearch, delay);
+}
+
+async function runGlobalSearch() {
+  if (!activeConnection || (!hasSearchText(columnSearchText) && !hasSearchText(elementSearchText))) {
+    resetGlobalSearchResults();
+    renderTables();
+    return;
+  }
+  const requestId = ++globalSearchRequestId;
+  const columnSearch = normalizeSearchText(columnSearchText);
+  const elementSearch = normalizeSearchText(elementSearchText);
+  try {
+    const data = await postJson('/api/db/search', {
+      connection: activeConnection,
+      columnSearch,
+      elementSearch,
+    });
+    if (requestId !== globalSearchRequestId) return;
+    globalSearchLoading = false;
+    globalSearchResults = {
+      columnSearch,
+      elementSearch,
+      columnMatches: data.columnMatches || [],
+      elementMatches: data.elementMatches || [],
+    };
+    if (globalSearchAutoOpenElement && elementSearch) {
+      globalSearchAutoOpenElement = false;
+      const currentMatch = globalSearchResults.elementMatches.some(match => match.table === currentTable);
+      const firstMatch = globalSearchResults.elementMatches[0];
+      if (!currentMatch && firstMatch) {
+        await selectTable(firstMatch.table);
+        return;
+      }
+    }
+    globalSearchAutoOpenElement = false;
+    renderTables();
+  } catch (err) {
+    if (requestId !== globalSearchRequestId) return;
+    globalSearchLoading = false;
+    setStatus(err.message, 'error');
+    renderTables();
+  }
+}
+
+function applyTableSearch() {
+  tableSearchText = normalizeSearchText(tableSearchInput.value);
+  renderTables();
+}
+
+function applyColumnSearch() {
+  const nextSearch = normalizeSearchText(columnSearchInput.value);
+  if (nextSearch === columnSearchText) {
+    syncViewControls();
+    return;
+  }
+  columnSearchText = nextSearch;
+  renderGrid();
+  scheduleGlobalSearch();
+}
+
+function applyElementSearch() {
+  const nextSearch = normalizeSearchText(elementSearchInput.value);
+  if (nextSearch === elementSearchText) {
+    syncViewControls();
+    return;
+  }
+  elementSearchText = nextSearch;
+  offset = 0;
+  globalSearchAutoOpenElement = hasSearchText(elementSearchText);
+  scheduleGlobalSearch();
+  loadRows();
+}
+
+function scheduleElementSearch() {
+  clearElementSearchBtn.disabled = !hasSearchText(elementSearchInput.value);
+  clearTimeout(elementSearchTimer);
+  elementSearchTimer = setTimeout(applyElementSearch, 300);
+}
+
+function clearColumnSearch() {
+  if (!hasSearchText(columnSearchInput.value) && !hasSearchText(columnSearchText)) return;
+  columnSearchInput.value = '';
+  applyColumnSearch();
+}
+
+function clearElementSearch() {
+  if (!hasSearchText(elementSearchInput.value) && !hasSearchText(elementSearchText)) return;
+  clearTimeout(elementSearchTimer);
+  elementSearchInput.value = '';
+  applyElementSearch();
+}
+
 async function refreshTables(loadCurrent = true) {
   const data = await postJson('/api/db/tables', { connection: activeConnection });
   tables = data.tables;
-  renderTables();
+  if (hasSearchText(columnSearchText) || hasSearchText(elementSearchText)) {
+    scheduleGlobalSearch(0);
+  } else {
+    renderTables();
+  }
   if (loadCurrent) await loadRows();
 }
 
@@ -1183,6 +1508,20 @@ includeHeaderToggle.addEventListener('change', () => {
   syncViewControls();
 });
 copyViewBtn.addEventListener('click', copyCurrentView);
+tableSearchInput.addEventListener('input', applyTableSearch);
+columnSearchForm.addEventListener('submit', event => {
+  event.preventDefault();
+  applyColumnSearch();
+});
+columnSearchInput.addEventListener('input', applyColumnSearch);
+clearColumnSearchBtn.addEventListener('click', clearColumnSearch);
+elementSearchForm.addEventListener('submit', event => {
+  event.preventDefault();
+  clearTimeout(elementSearchTimer);
+  applyElementSearch();
+});
+elementSearchInput.addEventListener('input', scheduleElementSearch);
+clearElementSearchBtn.addEventListener('click', clearElementSearch);
 gridWrap.addEventListener('click', event => {
   const button = event.target.closest('.delete-btn');
   if (!button) return;
