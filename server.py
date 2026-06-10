@@ -348,6 +348,87 @@ def table_key_for_row(row, pk_columns):
     return {name: row.get(name) for name in pk_columns}
 
 
+def normalize_search(value):
+    if value is None:
+        return ''
+    return str(value).strip()[:200]
+
+
+def escape_like_pattern(value):
+    return str(value).replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+
+
+def sqlite_search_condition(columns, search):
+    search = normalize_search(search)
+    if not search:
+        return '', []
+    if not columns:
+        return ' WHERE 0', []
+    pattern = f'%{escape_like_pattern(search)}%'
+    clauses = [
+        f'CAST({quote_identifier(c["name"])} AS TEXT) LIKE ? ESCAPE \'\\\''
+        for c in columns
+    ]
+    return ' WHERE (' + ' OR '.join(clauses) + ')', [pattern] * len(columns)
+
+
+def mysql_search_condition(columns, search):
+    search = normalize_search(search)
+    if not search:
+        return ''
+    columns = searchable_columns(columns)
+    if not columns:
+        return ' WHERE 0'
+    pattern = sql_literal(f'%{escape_like_pattern(search)}%')
+    escape_sql = sql_literal('\\')
+    clauses = [
+        f'CAST({mysql_identifier(c["name"])} AS CHAR) LIKE {pattern} ESCAPE {escape_sql}'
+        for c in columns
+    ]
+    return ' WHERE (' + ' OR '.join(clauses) + ')'
+
+
+def searchable_columns(columns):
+    skipped_types = {
+        'binary', 'varbinary', 'blob', 'tinyblob', 'mediumblob', 'longblob',
+        'geometry', 'point', 'linestring', 'polygon', 'multipoint',
+        'multilinestring', 'multipolygon', 'geometrycollection',
+    }
+    return [
+        c for c in columns
+        if str(c.get('type') or '').lower() not in skipped_types
+    ]
+
+
+def matched_columns(columns, search):
+    search = normalize_search(search).lower()
+    if not search:
+        return []
+    return [
+        c for c in columns
+        if search in str(c.get('name') or '').lower()
+        or search in str(c.get('type') or '').lower()
+    ]
+
+
+def row_search_sample(columns, row, search, limit=3):
+    search = normalize_search(search).lower()
+    if not search or not row:
+        return []
+    sample = []
+    for col in columns:
+        name = col['name']
+        value = row.get(name)
+        if value is None:
+            continue
+        normalized = normalize_sqlite_value(value)
+        if search in str(normalized).lower():
+            sample.append({'column': name, 'value': normalized})
+            if len(sample) >= limit:
+                break
+    return sample
+
+
 def db_tables(profile):
     if profile['driver'] == 'sqlite':
         with sqlite3.connect(profile['path']) as conn:
@@ -373,21 +454,131 @@ def db_tables(profile):
     return [{'name': r['name'], 'type': r['type'].lower(), 'count': int(r.get('count') or 0)} for r in rows]
 
 
-def db_rows(profile, table, limit, offset):
+def db_table_names_types(profile):
+    if profile['driver'] == 'sqlite':
+        with sqlite3.connect(profile['path']) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT name, type FROM sqlite_master "
+                "WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' "
+                "ORDER BY name"
+            ).fetchall()
+            return [{'name': row['name'], 'type': row['type']} for row in rows]
+
+    rows = mysql_run(profile, (
+        "SELECT TABLE_NAME AS name, TABLE_TYPE AS type "
+        "FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() "
+        "ORDER BY TABLE_NAME"
+    ))
+    return [{'name': r['name'], 'type': r['type'].lower()} for r in rows]
+
+
+def db_search(profile, column_search='', element_search=''):
+    column_search = normalize_search(column_search)
+    element_search = normalize_search(element_search)
+    result = {'columnMatches': [], 'elementMatches': []}
+    if not column_search and not element_search:
+        return result
+
+    tables = db_table_names_types(profile)
+    if profile['driver'] == 'sqlite':
+        with sqlite3.connect(profile['path']) as conn:
+            conn.row_factory = sqlite3.Row
+            for table in tables:
+                try:
+                    columns = sqlite_columns(conn, table['name'])
+                except (sqlite3.DatabaseError, ValueError):
+                    continue
+
+                if column_search:
+                    cols = matched_columns(columns, column_search)
+                    if cols:
+                        result['columnMatches'].append({
+                            'table': table['name'],
+                            'type': table['type'],
+                            'columns': cols,
+                        })
+
+                if element_search:
+                    table_sql = quote_identifier(table['name'])
+                    try:
+                        where_sql, params = sqlite_search_condition(columns, element_search)
+                        count = conn.execute(
+                            f'SELECT COUNT(*) AS c FROM {table_sql}{where_sql}',
+                            params,
+                        ).fetchone()['c']
+                        if count:
+                            row = conn.execute(
+                                f'SELECT * FROM {table_sql}{where_sql} LIMIT 1',
+                                params,
+                            ).fetchone()
+                            result['elementMatches'].append({
+                                'table': table['name'],
+                                'type': table['type'],
+                                'count': count,
+                                'sample': row_search_sample(columns, dict(row) if row else {}, element_search),
+                            })
+                    except (sqlite3.DatabaseError, ValueError):
+                        continue
+        return result
+
+    for table in tables:
+        try:
+            columns = mysql_columns(profile, table['name'])
+        except ValueError:
+            continue
+
+        if column_search:
+            cols = matched_columns(columns, column_search)
+            if cols:
+                result['columnMatches'].append({
+                    'table': table['name'],
+                    'type': table['type'],
+                    'columns': cols,
+                })
+
+        if element_search:
+            try:
+                table_sql = mysql_identifier(table['name'])
+                where_sql = mysql_search_condition(columns, element_search)
+                count_rows = mysql_run(profile, f'SELECT COUNT(*) AS c FROM {table_sql}{where_sql}')
+                count = int(count_rows[0]['c']) if count_rows else 0
+                if count:
+                    rows = mysql_run(profile, f'SELECT * FROM {table_sql}{where_sql} LIMIT 1')
+                    result['elementMatches'].append({
+                        'table': table['name'],
+                        'type': table['type'],
+                        'count': count,
+                        'sample': row_search_sample(columns, rows[0] if rows else {}, element_search),
+                    })
+            except ValueError:
+                continue
+    return result
+
+
+def db_rows(profile, table, limit, offset, search=''):
     if profile['driver'] == 'sqlite':
         with sqlite3.connect(profile['path']) as conn:
             conn.row_factory = sqlite3.Row
             meta = sqlite_table_meta(conn, table)
             columns = sqlite_columns(conn, table)
             table_sql = quote_identifier(table)
-            total = conn.execute(f'SELECT COUNT(*) AS c FROM {table_sql}').fetchone()['c']
+            where_sql, search_params = sqlite_search_condition(columns, search)
+            total = conn.execute(
+                f'SELECT COUNT(*) AS c FROM {table_sql}{where_sql}',
+                search_params,
+            ).fetchone()['c']
             rowid_available = True
             try:
-                query = f'SELECT rowid AS __devhub_rowid__, * FROM {table_sql} LIMIT ? OFFSET ?'
-                fetched = conn.execute(query, (limit, offset)).fetchall()
+                query = f'SELECT rowid AS __devhub_rowid__, * FROM {table_sql}{where_sql} LIMIT ? OFFSET ?'
+                fetched = conn.execute(query, search_params + [limit, offset]).fetchall()
             except sqlite3.OperationalError:
                 rowid_available = False
-                fetched = conn.execute(f'SELECT * FROM {table_sql} LIMIT ? OFFSET ?', (limit, offset)).fetchall()
+                fetched = conn.execute(
+                    f'SELECT * FROM {table_sql}{where_sql} LIMIT ? OFFSET ?',
+                    search_params + [limit, offset],
+                ).fetchall()
             rows = []
             for row in fetched:
                 item = {key: normalize_sqlite_value(row[key]) for key in row.keys()}
@@ -408,12 +599,13 @@ def db_rows(profile, table, limit, offset):
     columns = mysql_columns(profile, table)
     pk_columns = [c['name'] for c in columns if c['pk']]
     table_sql = mysql_identifier(table)
-    total_rows = mysql_run(profile, f'SELECT COUNT(*) AS c FROM {table_sql}')
+    where_sql = mysql_search_condition(columns, search)
+    total_rows = mysql_run(profile, f'SELECT COUNT(*) AS c FROM {table_sql}{where_sql}')
     total = int(total_rows[0]['c']) if total_rows else 0
     order_sql = ''
     if pk_columns:
         order_sql = ' ORDER BY ' + ', '.join(mysql_identifier(c) for c in pk_columns)
-    fetched = mysql_run(profile, f'SELECT * FROM {table_sql}{order_sql} LIMIT {limit} OFFSET {offset}')
+    fetched = mysql_run(profile, f'SELECT * FROM {table_sql}{where_sql}{order_sql} LIMIT {limit} OFFSET {offset}')
     rows = []
     for row in fetched:
         item = dict(row)
@@ -708,7 +900,8 @@ class Handler(BaseHTTPRequestHandler):
                 table = params.get('table', [None])[0]
                 limit = min(max(int(params.get('limit', [100])[0]), 1), 500)
                 offset = max(int(params.get('offset', [0])[0]), 0)
-                data = db_rows(profile, table, limit, offset)
+                search = params.get('search', [''])[0]
+                data = db_rows(profile, table, limit, offset, search)
                 data['connection'] = public_connection(profile)
                 self.send_json(data)
             except Exception as e:
@@ -862,7 +1055,18 @@ class Handler(BaseHTTPRequestHandler):
                 table = data.get('table')
                 limit = min(max(int(data.get('limit', 100)), 1), 500)
                 offset = max(int(data.get('offset', 0)), 0)
-                result = db_rows(profile, table, limit, offset)
+                result = db_rows(profile, table, limit, offset, data.get('search', ''))
+                result['connection'] = public_connection(profile)
+                self.send_json(result)
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/db/search':
+            try:
+                data = json.loads(self.read_body())
+                profile = connection_from_payload(data)
+                result = db_search(profile, data.get('columnSearch', ''), data.get('elementSearch', ''))
                 result['connection'] = public_connection(profile)
                 self.send_json(result)
             except Exception as e:
