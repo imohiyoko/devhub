@@ -36,6 +36,9 @@ function Find-PythonCommand {
         }
     }
 
+    Write-Error "エラー: Python 3.8 以上が見つかりません。"
+    Write-Error "Windowsの場合は以下を実行してインストールしてください:"
+    Write-Error "  winget install Python.Python.3"
     throw "Python 3.8 or newer was not found."
 }
 
@@ -107,6 +110,9 @@ if (-not $BinDir) {
 
 if ($managedInstall) {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Error "エラー: git が見つかりません。"
+        Write-Error "Windowsの場合は以下を実行してインストールしてください:"
+        Write-Error "  winget install Git.Git"
         throw "git was not found."
     }
 
