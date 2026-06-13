@@ -167,8 +167,8 @@ def open_in_terminal(cwd, command):
     shell = term_cfg.get('shell')
     shell_args = term_cfg.get('shell_args', [])
 
-    if not emulator:
-        # Fallback if emulator is not configured
+    if not emulator or (emulator not in ('Terminal.app', 'iTerm', 'wt') and not shutil.which(emulator)):
+        # Fallback if emulator is not configured or not found
         subprocess.Popen(command, cwd=cwd, shell=True)
         return
 
@@ -177,16 +177,18 @@ def open_in_terminal(cwd, command):
             cmd = ['ghostty', f'--working-directory={cwd}', '-e', shell] + shell_args + ['-c', command]
             subprocess.Popen(cmd)
         elif emulator == 'Terminal.app':
-            safe_command = command.replace('\\', '\\\\').replace('"', '\\"')
-            script = f'tell application "Terminal" to do script "cd {shlex.quote(cwd)} && {safe_command}"'
+            sh_cmd = f"cd {shlex.quote(cwd)} && {command}"
+            safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
+            script = f'tell application "Terminal" to do script "{safe_sh_cmd}"'
             subprocess.Popen(['osascript', '-e', script])
         elif emulator == 'iTerm':
-            safe_command = command.replace('\\', '\\\\').replace('"', '\\"')
+            sh_cmd = f"cd {shlex.quote(cwd)} && {command}"
+            safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
             script = f'''
             tell application "iTerm"
                 create window with default profile
                 tell current session of current window
-                    write text "cd {shlex.quote(cwd)} && {safe_command}"
+                    write text "{safe_sh_cmd}"
                 end tell
             end tell
             '''
