@@ -36,6 +36,9 @@ function Find-PythonCommand {
         }
     }
 
+    Write-Host "エラー: Python 3.8 以上が見つかりません。" -ForegroundColor Red
+    Write-Host "Windowsの場合は以下を実行してインストールしてください:" -ForegroundColor Red
+    Write-Host "  winget install Python.Python.3" -ForegroundColor Red
     throw "Python 3.8 or newer was not found."
 }
 
@@ -107,6 +110,9 @@ if (-not $BinDir) {
 
 if ($managedInstall) {
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Host "エラー: git が見つかりません。" -ForegroundColor Red
+        Write-Host "Windowsの場合は以下を実行してインストールしてください:" -ForegroundColor Red
+        Write-Host "  winget install Git.Git" -ForegroundColor Red
         throw "git was not found."
     }
 
