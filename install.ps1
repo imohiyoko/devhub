@@ -137,13 +137,16 @@ if (-not (Test-Path $serverPath)) {
 
 Set-DefaultEditorIfNeeded $InstallDir
 
-$pythonCommand = Find-PythonCommand
+$pythonCommand = (Find-PythonCommand).Replace('"', '')
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 $commandPath = Join-Path $BinDir "devhub.cmd"
 $commandBody = @"
 @echo off
+if not "%1"=="--no-browser" (
+    explorer "http://localhost:8765"
+)
 $pythonCommand "$serverPath" %*
 "@
 Set-Content -Path $commandPath -Value $commandBody -Encoding ASCII
@@ -175,3 +178,5 @@ Write-Host "  Server : $serverPath"
 Write-Host ""
 Write-Host "Start:"
 Write-Host "  devhub"
+Write-Host ""
+Write-Host "[Notice] 環境変数を反映させるため、現在のターミナルを一度閉じて再起動するか、新しいウィンドウを開いてから devhub コマンドを実行してください。"
