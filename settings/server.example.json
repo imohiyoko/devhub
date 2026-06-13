@@ -5,5 +5,22 @@
   "db_local_only": true,
   "db_connections": [],
   "port_labels": {},
-  "protected_ports": []
+  "protected_ports": [],
+  "terminal": {
+    "Darwin": {
+      "emulator": "ghostty",
+      "shell": "zsh",
+      "shell_args": ["--login"]
+    },
+    "Windows": {
+      "emulator": "wt",
+      "shell": "powershell",
+      "shell_args": []
+    },
+    "Linux": {
+      "emulator": "gnome-terminal",
+      "shell": "bash",
+      "shell_args": ["--login"]
+    }
+  }
 }

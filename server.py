@@ -13,7 +13,7 @@ CONFIG_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'config.example.json')
 # ── Settings (settings.json + settings.local.json) ──────────────────────────
 
 def load_settings():
-    defaults = {'port': 8765, 'editor': 'code', 'open_browser_on_start': True, 'protected_ports': [], 'db_local_only': True}
+    defaults = {'port': 8765, 'editor': 'code', 'open_browser_on_start': True, 'protected_ports': [], 'db_local_only': True, 'terminal': {}}
     for name in ('server.example.json', 'server.json'):
         try:
             with open(os.path.join(SETTINGS_DIR, name)) as f:
@@ -57,6 +57,7 @@ def sanitize_settings(settings):
 SETTINGS = load_settings()
 PORT     = SETTINGS['port']
 EDITOR   = SETTINGS['editor']
+TERMINAL = SETTINGS.get('terminal', {})
 DB_LOCAL_ONLY = SETTINGS.get('db_local_only', True)
 
 
@@ -157,6 +158,63 @@ def open_in_editor(path):
         subprocess.Popen(['open', '-a', _DARWIN_APP[EDITOR], path])
     else:
         subprocess.Popen([EDITOR, path])
+
+
+def open_in_terminal(cwd, command):
+    sys_name = platform.system()
+    term_cfg = TERMINAL.get(sys_name, {})
+    emulator = term_cfg.get('emulator')
+    shell = term_cfg.get('shell')
+    shell_args = term_cfg.get('shell_args', [])
+
+    if not emulator or (emulator not in ('Terminal.app', 'iTerm', 'wt') and not shutil.which(emulator)):
+        # Fallback if emulator is not configured or not found
+        subprocess.Popen(command, cwd=cwd, shell=True)
+        return
+
+    if sys_name == 'Darwin':
+        if emulator == 'ghostty':
+            cmd = ['ghostty', f'--working-directory={cwd}', '-e', shell] + shell_args + ['-c', command]
+            subprocess.Popen(cmd)
+        elif emulator == 'Terminal.app':
+            sh_cmd = f"cd {shlex.quote(cwd)} && {command}"
+            safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
+            script = f'tell application "Terminal" to do script "{safe_sh_cmd}"'
+            subprocess.Popen(['osascript', '-e', script])
+        elif emulator == 'iTerm':
+            sh_cmd = f"cd {shlex.quote(cwd)} && {command}"
+            safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
+            script = f'''
+            tell application "iTerm"
+                create window with default profile
+                tell current session of current window
+                    write text "{safe_sh_cmd}"
+                end tell
+            end tell
+            '''
+            subprocess.Popen(['osascript', '-e', script])
+        else:
+            subprocess.Popen(command, cwd=cwd, shell=True)
+
+    elif sys_name == 'Windows':
+        if emulator == 'wt':
+            flag = '-Command' if shell and ('powershell' in shell.lower() or 'pwsh' in shell.lower()) else '/c'
+            cmd = ['wt', 'new-tab', '--startingDirectory', cwd, shell] + shell_args + [flag, command]
+            subprocess.Popen(cmd)
+        else:
+            subprocess.Popen(command, cwd=cwd, shell=True)
+
+    elif sys_name == 'Linux':
+        if emulator == 'gnome-terminal':
+            cmd = ['gnome-terminal', f'--working-directory={cwd}', '--', shell] + shell_args + ['-c', command]
+            subprocess.Popen(cmd)
+        elif emulator == 'xterm':
+            cmd = ['xterm', '-e', shell] + shell_args + ['-c', command]
+            subprocess.Popen(cmd, cwd=cwd)
+        else:
+            subprocess.Popen(command, cwd=cwd, shell=True)
+    else:
+        subprocess.Popen(command, cwd=cwd, shell=True)
 
 
 # ── SQLite table editor ───────────────────────────────────────────────────────
@@ -982,7 +1040,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/settings':
             try:
                 data = json.loads(self.read_body())
-                allowed = {'disabled_tools', 'tool_order', 'editor', 'open_browser_on_start', 'db_connections', 'port_labels', 'protected_ports'}
+                allowed = {'disabled_tools', 'tool_order', 'editor', 'open_browser_on_start', 'db_connections', 'port_labels', 'protected_ports', 'terminal'}
                 patch = {k: v for k, v in data.items() if k in allowed}
                 if isinstance(patch.get('db_connections'), list):
                     patch['db_connections'] = [
@@ -1123,4 +1181,7 @@ if open_browser:
 print(f'devhub → http://localhost:{PORT}  (Ctrl+C to quit)')
 print(f'  platform : {platform.system()}')
 print(f'  editor   : {EDITOR}')
+sys_terminal = TERMINAL.get(platform.system(), {})
+if sys_terminal:
+    print(f'  terminal : {sys_terminal.get("emulator", "?")} / {sys_terminal.get("shell", "?")}')
 HTTPServer(('127.0.0.1', PORT), Handler).serve_forever()
