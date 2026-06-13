@@ -144,7 +144,10 @@ New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 $commandPath = Join-Path $BinDir "devhub.cmd"
 $commandBody = @"
 @echo off
-$pythonCommand "$serverPath" %*
+if not "%1"=="--no-browser" (
+    explorer "http://localhost:8765"
+)
+call $pythonCommand "$serverPath" %*
 "@
 Set-Content -Path $commandPath -Value $commandBody -Encoding ASCII
 
@@ -175,3 +178,5 @@ Write-Host "  Server : $serverPath"
 Write-Host ""
 Write-Host "Start:"
 Write-Host "  devhub"
+Write-Host ""
+Write-Host "[Notice] 環境変数を反映させるため、現在のターミナルを一度閉じて再起動するか、新しいウィンドウを開いてから devhub コマンドを実行してください。"
