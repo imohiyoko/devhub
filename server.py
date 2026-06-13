@@ -196,7 +196,7 @@ def open_in_terminal(cwd, command):
 
     elif sys_name == 'Windows':
         if emulator == 'wt':
-            flag = '-Command' if 'powershell' in shell.lower() or 'pwsh' in shell.lower() else '/c'
+            flag = '-Command' if shell and ('powershell' in shell.lower() or 'pwsh' in shell.lower()) else '/c'
             cmd = ['wt', 'new-tab', '--startingDirectory', cwd, shell] + shell_args + [flag, command]
             subprocess.Popen(cmd)
         else:
