@@ -21,6 +21,16 @@ fi
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "エラー: $1 が見つかりません。" >&2
+    if [ "$1" = "git" ]; then
+      if [ "$(uname)" = "Darwin" ]; then
+        echo "macOSの場合は以下を実行してインストールしてください:" >&2
+        echo "  brew install git" >&2
+      else
+        echo "Linuxの場合は以下を実行してインストールしてください:" >&2
+        echo "  sudo apt install git (Ubuntu/Debian)" >&2
+        echo "  sudo dnf install git (Fedora/RHEL)" >&2
+      fi
+    fi
     exit 1
   fi
 }
@@ -39,6 +49,14 @@ PY
   done
 
   echo "エラー: Python 3.8 以上が見つかりません。" >&2
+  if [ "$(uname)" = "Darwin" ]; then
+    echo "macOSの場合は以下を実行してインストールしてください:" >&2
+    echo "  brew install python3" >&2
+  else
+    echo "Linuxの場合は以下を実行してインストールしてください:" >&2
+    echo "  sudo apt install python3 (Ubuntu/Debian)" >&2
+    echo "  sudo dnf install python3 (Fedora/RHEL)" >&2
+  fi
   exit 1
 }
 
