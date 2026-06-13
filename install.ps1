@@ -137,7 +137,7 @@ if (-not (Test-Path $serverPath)) {
 
 Set-DefaultEditorIfNeeded $InstallDir
 
-$pythonCommand = (Find-PythonCommand).Replace('"', '')
+$pythonCommand = Find-PythonCommand
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
@@ -147,7 +147,7 @@ $commandBody = @"
 if not "%1"=="--no-browser" (
     explorer "http://localhost:8765"
 )
-$pythonCommand "$serverPath" %*
+call $pythonCommand "$serverPath" %*
 "@
 Set-Content -Path $commandPath -Value $commandBody -Encoding ASCII
 
