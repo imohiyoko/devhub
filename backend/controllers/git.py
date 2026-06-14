@@ -91,7 +91,30 @@ def handle_get(handler, path, params):
     if path == '/api/git/status':
         try:
             res = subprocess.run(['git', 'status', '--porcelain=v1', '-u'], cwd=repo_path, capture_output=True, text=True, check=True)
-            handler.send_json({'output': res.stdout})
+            
+            # Dynamic poll interval calculation based on commits in the last hour
+            dynamic_interval = 600
+            try:
+                log_res = subprocess.run(
+                    ['git', 'log', '--since="1 hour ago"', '--format=%ct'],
+                    cwd=repo_path, capture_output=True, text=True
+                )
+                timestamps = [int(t) for t in log_res.stdout.splitlines() if t.strip().isdigit()]
+                if len(timestamps) >= 2:
+                    intervals = [timestamps[i] - timestamps[i+1] for i in range(len(timestamps)-1)]
+                    avg_interval = sum(intervals) / len(intervals)
+                    dynamic_interval = max(10, min(600, int(avg_interval / 4)))
+                else:
+                    # 0 or 1 commits -> treat as 1 commit -> 1 hour interval -> 1/4 is 15 mins (900s) -> capped at 10 mins (600s)
+                    dynamic_interval = 600
+            except Exception:
+                pass
+
+            handler.send_json({
+                'output': res.stdout,
+                'suggested_local_interval': dynamic_interval,
+                'suggested_remote_interval': dynamic_interval * 3
+            })
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
