@@ -50,12 +50,16 @@ def parse_port_name(name):
     return {'host': host, 'port': int(match.group(2))}
 
 def list_ports_unix():
-    proc = subprocess.run(
-        ['lsof', '-nP', '-iTCP', '-sTCP:LISTEN'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            ['lsof', '-nP', '-iTCP', '-sTCP:LISTEN'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        raise ValueError('lsof command was not found. Please install lsof (e.g. `sudo apt install lsof`).')
+
     if proc.returncode not in (0, 1):
         raise ValueError(proc.stderr.strip() or 'failed to list ports')
 
