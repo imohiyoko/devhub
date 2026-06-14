@@ -1,0 +1,18 @@
+{
+  "default_repo": "",
+  "layout": {
+    "left_width": 280,
+    "show_log": true,
+    "log_height": 180
+  },
+  "log_limit": 100,
+  "keybindings": {
+    "stage": " ",
+    "commit": "c",
+    "push": "P",
+    "pull": "p",
+    "new_branch": "n",
+    "refresh": "r"
+  },
+  "commit_template": ""
+}
