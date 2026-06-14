@@ -454,11 +454,13 @@ select {
     </div>
     <div class="setting-row">
       <label>Local Poll (sec):</label>
-      <input type="number" id="setting-local-poll" style="width: 80px;" min="0">
+      <input type="number" id="setting-local-poll" style="width: 80px;" min="1">
+      <label style="margin-left: 8px;"><input type="checkbox" id="setting-local-poll-auto"> Auto</label>
     </div>
     <div class="setting-row">
       <label>Remote Poll (sec):</label>
-      <input type="number" id="setting-remote-poll" style="width: 80px;" min="0">
+      <input type="number" id="setting-remote-poll" style="width: 80px;" min="1">
+      <label style="margin-left: 8px;"><input type="checkbox" id="setting-remote-poll-auto"> Auto</label>
     </div>
     <div class="setting-row">
       <label><input type="checkbox" id="setting-show-log"> Show Log Panel</label>
@@ -513,8 +515,8 @@ const DEFAULT_CONFIG = {
   log_limit: 100,
   keybindings: { stage: ' ', commit: 'c', push: 'P', pull: 'p', new_branch: 'n', refresh: 'r' },
   commit_template: '',
-  local_poll_interval: 10,
-  remote_poll_interval: 30,
+  local_poll_interval: 'auto',
+  remote_poll_interval: 'auto',
 };
 
 let gitConfig = structuredClone(DEFAULT_CONFIG);
@@ -699,6 +701,15 @@ async function refreshData() {
         gitData.branches = branches.output || '';
         gitData.stash = stash.output || '';
         gitData.worktrees = worktrees.worktrees || [];
+
+        // Dynamic polling adjustment
+        if (gitConfig.local_poll_interval === 'auto' || gitConfig.remote_poll_interval === 'auto') {
+            const suggestedLocal = status.suggested_local_interval || 600;
+            const suggestedRemote = status.suggested_remote_interval || 1800;
+            adjustDynamicPolling(suggestedLocal, suggestedRemote);
+        } else {
+            adjustDynamicPolling(gitConfig.local_poll_interval, gitConfig.remote_poll_interval);
+        }
 
         renderLog();
         lastFetchedDiff = null;
@@ -953,8 +964,16 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
         closeAddRepoPanel();
         document.getElementById('setting-default-repo').value = gitConfig.default_repo;
         document.getElementById('setting-log-limit').value = gitConfig.log_limit;
-        document.getElementById('setting-local-poll').value = gitConfig.local_poll_interval !== undefined ? gitConfig.local_poll_interval : 10;
-        document.getElementById('setting-remote-poll').value = gitConfig.remote_poll_interval !== undefined ? gitConfig.remote_poll_interval : 30;
+        const localAuto = gitConfig.local_poll_interval === 'auto';
+        document.getElementById('setting-local-poll-auto').checked = localAuto;
+        document.getElementById('setting-local-poll').value = localAuto ? 10 : gitConfig.local_poll_interval;
+        document.getElementById('setting-local-poll').disabled = localAuto;
+
+        const remoteAuto = gitConfig.remote_poll_interval === 'auto';
+        document.getElementById('setting-remote-poll-auto').checked = remoteAuto;
+        document.getElementById('setting-remote-poll').value = remoteAuto ? 30 : gitConfig.remote_poll_interval;
+        document.getElementById('setting-remote-poll').disabled = remoteAuto;
+
         document.getElementById('setting-show-log').checked = gitConfig.layout.show_log;
         document.getElementById('setting-commit-template').value = gitConfig.commit_template;
 
@@ -974,8 +993,13 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
 document.getElementById('btn-save-settings').addEventListener('click', () => {
     gitConfig.default_repo = document.getElementById('setting-default-repo').value;
     gitConfig.log_limit = parseInt(document.getElementById('setting-log-limit').value) || 100;
-    gitConfig.local_poll_interval = parseInt(document.getElementById('setting-local-poll').value) || 0;
-    gitConfig.remote_poll_interval = parseInt(document.getElementById('setting-remote-poll').value) || 0;
+    
+    const localAuto = document.getElementById('setting-local-poll-auto').checked;
+    gitConfig.local_poll_interval = localAuto ? 'auto' : (parseInt(document.getElementById('setting-local-poll').value) || 0);
+
+    const remoteAuto = document.getElementById('setting-remote-poll-auto').checked;
+    gitConfig.remote_poll_interval = remoteAuto ? 'auto' : (parseInt(document.getElementById('setting-remote-poll').value) || 0);
+    
     gitConfig.layout.show_log = document.getElementById('setting-show-log').checked;
     gitConfig.commit_template = document.getElementById('setting-commit-template').value;
     saveSettings();
@@ -1323,31 +1347,42 @@ document.getElementById('btn-remove-repo').addEventListener('click', async () =>
 // Polling & Worktree helper functions
 let localPollTimer = null;
 let remotePollTimer = null;
+let currentRunningLocalInterval = null;
+let currentRunningRemoteInterval = null;
 
 function startPolling() {
-    stopPolling();
-    const localSec = gitConfig.local_poll_interval !== undefined ? gitConfig.local_poll_interval : 10;
-    const remoteSec = gitConfig.remote_poll_interval !== undefined ? gitConfig.remote_poll_interval : 30;
+    const localSec = gitConfig.local_poll_interval === 'auto' ? 10 : gitConfig.local_poll_interval;
+    const remoteSec = gitConfig.remote_poll_interval === 'auto' ? 30 : gitConfig.remote_poll_interval;
+    adjustDynamicPolling(localSec, remoteSec);
+}
 
-    if (localSec > 0) {
-        localPollTimer = setInterval(() => {
-            if (currentRepo) refreshData();
-        }, localSec * 1000);
-    }
-
-    if (remoteSec > 0) {
-        remotePollTimer = setInterval(() => {
-            if (currentRepo) {
-                fetch('/api/git/fetch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: currentRepo })
-                }).then(r => r.json())
-                  .then(data => {
-                      if (data.ok) refreshData();
-                  }).catch(e => console.error("Origin poll failed:", e));
-            }
-        }, remoteSec * 1000);
+function adjustDynamicPolling(targetLocal, targetRemote) {
+    if (targetLocal !== currentRunningLocalInterval || targetRemote !== currentRunningRemoteInterval) {
+        currentRunningLocalInterval = targetLocal;
+        currentRunningRemoteInterval = targetRemote;
+        
+        stopPolling();
+        
+        if (targetLocal > 0) {
+            localPollTimer = setInterval(() => {
+                if (currentRepo) refreshData();
+            }, targetLocal * 1000);
+        }
+        
+        if (targetRemote > 0) {
+            remotePollTimer = setInterval(() => {
+                if (currentRepo) {
+                    fetch('/api/git/fetch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: currentRepo })
+                    }).then(r => r.json())
+                      .then(data => {
+                          if (data.ok) refreshData();
+                      }).catch(e => console.error("Origin poll failed:", e));
+                }
+            }, targetRemote * 1000);
+        }
     }
 }
 
@@ -1356,7 +1391,17 @@ function stopPolling() {
     if (remotePollTimer) clearInterval(remotePollTimer);
     localPollTimer = null;
     remotePollTimer = null;
+    currentRunningLocalInterval = null;
+    currentRunningRemoteInterval = null;
 }
+
+// Global UI listeners for polling auto checkboxes
+document.getElementById('setting-local-poll-auto').addEventListener('change', (e) => {
+    document.getElementById('setting-local-poll').disabled = e.target.checked;
+});
+document.getElementById('setting-remote-poll-auto').addEventListener('change', (e) => {
+    document.getElementById('setting-remote-poll').disabled = e.target.checked;
+});
 
 function getLocalBranches() {
     if (!gitData.branches) return [];
