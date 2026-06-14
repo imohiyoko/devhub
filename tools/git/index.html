@@ -612,6 +612,10 @@ function renderEmptyState() {
   if (existing) existing.remove();
 
   if (allRepos.length === 0) {
+    document.getElementById('left-pane').style.display = 'none';
+    document.getElementById('right-pane').style.display = 'none';
+    document.getElementById('log-panel').style.display = 'none';
+
     const el = document.createElement('div');
     el.id = 'empty-state';
     el.className = 'empty-state';
@@ -626,6 +630,10 @@ function renderEmptyState() {
     `;
     mainContent.style.position = 'relative';
     mainContent.appendChild(el);
+  } else {
+    document.getElementById('left-pane').style.display = 'flex';
+    document.getElementById('right-pane').style.display = 'flex';
+    applyLayout();
   }
 }
 
@@ -861,6 +869,7 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
     const open = settingsPanel.classList.toggle('open');
     btn.classList.toggle('active', open);
     if(open) {
+        closeAddRepoPanel();
         document.getElementById('setting-default-repo').value = gitConfig.default_repo;
         document.getElementById('setting-log-limit').value = gitConfig.log_limit;
         document.getElementById('setting-show-log').checked = gitConfig.layout.show_log;
@@ -1071,7 +1080,7 @@ async function browseTo(path) {
       const addBtn = e.is_git
         ? `<button class="btn-pin ${added ? 'added' : ''}" data-path="${e.path.replace(/"/g, '&quot;')}">${added ? '追加済' : '追加'}</button>`
         : '';
-      const arrow = !e.is_git ? '<span class="dir-arrow">›</span>' : '';
+      const arrow = '<span class="dir-arrow">›</span>';
       return `<div class="dir-entry" data-path="${e.path.replace(/"/g, '&quot;')}" data-is-git="${e.is_git}">
         <span class="dir-icon">${icon}</span>
         <span class="dir-name" title="${e.path}">${e.name}</span>
@@ -1082,14 +1091,7 @@ async function browseTo(path) {
     // Attach click handlers
     list.querySelectorAll('.dir-entry').forEach(entry => {
       entry.addEventListener('click', (ev) => {
-        if (entry.dataset.isGit === 'true') {
-          const btn = entry.querySelector('.btn-pin');
-          if (btn && !btn.classList.contains('added')) {
-            addRepoFromBrowser(entry.dataset.path, btn);
-          }
-        } else {
-          browseTo(entry.dataset.path);
-        }
+        browseTo(entry.dataset.path);
       });
     });
     list.querySelectorAll('.btn-pin').forEach(btn => {
@@ -1200,6 +1202,9 @@ document.getElementById('path-input').addEventListener('keydown', (e) => {
 });
 document.getElementById('path-input').addEventListener('blur', (e) => {
   const input = e.target;
+  if (e.relatedTarget && (e.relatedTarget.id === 'btn-path-add' || e.relatedTarget.id === 'btn-dir-up')) {
+    return;
+  }
   setTimeout(() => {
     input.value = browsingPath === '__drives__' ? 'マイコンピュータ' : toDisplayPath(browsingPath);
   }, 200);
