@@ -8,6 +8,8 @@ BASE         = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_DIR = os.path.join(BASE, 'settings')
 CONFIG_PATH  = os.path.join(SETTINGS_DIR, 'config.json')
 CONFIG_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'config.example.json')
+ENVS_PATH         = os.path.join(SETTINGS_DIR, 'envs.json')
+ENVS_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'envs.example.json')
 
 
 # ── Settings (settings.json + settings.local.json) ──────────────────────────
@@ -77,6 +79,8 @@ ROUTES = {
     '/db-table/':   os.path.join(BASE, 'tools', 'db-table', 'index.html'),
     '/ports':       os.path.join(BASE, 'tools', 'ports', 'index.html'),
     '/ports/':      os.path.join(BASE, 'tools', 'ports', 'index.html'),
+    '/env-launcher':  os.path.join(BASE, 'tools', 'env-launcher', 'index.html'),
+    '/env-launcher/': os.path.join(BASE, 'tools', 'env-launcher', 'index.html'),
 }
 
 
@@ -105,6 +109,84 @@ def save_config(cfg):
     with open(CONFIG_PATH, 'w') as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
         f.write('\n')
+
+
+def load_envs():
+    try:
+        with open(ENVS_PATH) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        example = ENVS_EXAMPLE_PATH
+        try:
+            with open(example) as f:
+                cfg = json.load(f)
+            save_envs(cfg)
+            return cfg
+        except FileNotFoundError:
+            pass
+    except Exception:
+        pass
+    return {'environments': []}
+
+
+def save_envs(data):
+    with open(ENVS_PATH, 'w') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+
+
+def launch_process(process_def, cwd_override=None):
+    cwd = cwd_override if cwd_override else os.path.expanduser(process_def.get('cwd', ''))
+    env = os.environ.copy()
+    env.update(process_def.get('env', {}))
+    open_in_terminal(cwd, process_def.get('command', ''), env)
+
+
+def launch_environment(env_id):
+    envs_data = load_envs()
+    env_def = next((e for e in envs_data.get('environments', []) if e.get('id') == env_id), None)
+    if not env_def:
+        raise ValueError(f"Environment '{env_id}' not found")
+
+    cwd_override = None
+    worktree = env_def.get('worktree', {})
+    if worktree.get('enabled'):
+        import tempfile
+        tmp_path = tempfile.mkdtemp(prefix=f"devhub-env-{env_id}-")
+        repo_path = os.path.expanduser(worktree.get('repo_path', ''))
+        branch = worktree.get('branch', '')
+        if repo_path and branch:
+            subprocess.run(['git', 'worktree', 'add', tmp_path, branch], cwd=repo_path, check=True)
+            cwd_override = tmp_path
+
+    processes = env_def.get('processes', [])
+
+    # Topological sort
+    in_degree = {p['id']: 0 for p in processes}
+    adj = {p['id']: [] for p in processes}
+    for p in processes:
+        for dep in p.get('depends_on', []):
+            if dep in adj:
+                adj[dep].append(p['id'])
+                in_degree[p['id']] += 1
+
+    queue = [pid for pid, deg in in_degree.items() if deg == 0]
+    sorted_pids = []
+    while queue:
+        pid = queue.pop(0)
+        sorted_pids.append(pid)
+        for nxt in adj[pid]:
+            in_degree[nxt] -= 1
+            if in_degree[nxt] == 0:
+                queue.append(nxt)
+
+    if len(sorted_pids) != len(processes):
+        raise ValueError("Circular dependency detected in depends_on")
+
+    pid_to_def = {p['id']: p for p in processes}
+    for pid in sorted_pids:
+        launch_process(pid_to_def[pid], cwd_override=cwd_override)
+        time.sleep(1)
 
 
 # ── Repo discovery ────────────────────────────────────────────────────────────
@@ -160,29 +242,42 @@ def open_in_editor(path):
         subprocess.Popen([EDITOR, path])
 
 
-def open_in_terminal(cwd, command):
+def open_in_terminal(cwd, command, env=None):
     sys_name = platform.system()
     term_cfg = TERMINAL.get(sys_name, {})
     emulator = term_cfg.get('emulator')
     shell = term_cfg.get('shell')
     shell_args = term_cfg.get('shell_args', [])
 
+    cmd_with_env = command
+    if env:
+        env_exports = []
+        for k, v in env.items():
+            if sys_name == 'Windows':
+                env_exports.append(f'set {k}={v}')
+            else:
+                env_exports.append(f'export {k}={shlex.quote(str(v))}')
+        if env_exports:
+            cmd_with_env = ' && '.join(env_exports) + ' && ' + command
+
+    merged_env = os.environ.copy() | (env or {})
+
     if not emulator or (emulator not in ('Terminal.app', 'iTerm', 'wt') and not shutil.which(emulator)):
         # Fallback if emulator is not configured or not found
-        subprocess.Popen(command, cwd=cwd, shell=True)
+        subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
         return
 
     if sys_name == 'Darwin':
         if emulator == 'ghostty':
             cmd = ['ghostty', f'--working-directory={cwd}', '-e', shell] + shell_args + ['-c', command]
-            subprocess.Popen(cmd)
+            subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'Terminal.app':
-            sh_cmd = f"cd {shlex.quote(cwd)} && {command}"
+            sh_cmd = f"cd {shlex.quote(cwd)} && {cmd_with_env}"
             safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
             script = f'tell application "Terminal" to do script "{safe_sh_cmd}"'
             subprocess.Popen(['osascript', '-e', script])
         elif emulator == 'iTerm':
-            sh_cmd = f"cd {shlex.quote(cwd)} && {command}"
+            sh_cmd = f"cd {shlex.quote(cwd)} && {cmd_with_env}"
             safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
             script = f'''
             tell application "iTerm"
@@ -194,27 +289,27 @@ def open_in_terminal(cwd, command):
             '''
             subprocess.Popen(['osascript', '-e', script])
         else:
-            subprocess.Popen(command, cwd=cwd, shell=True)
+            subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
 
     elif sys_name == 'Windows':
         if emulator == 'wt':
             flag = '-Command' if shell and ('powershell' in shell.lower() or 'pwsh' in shell.lower()) else '/c'
-            cmd = ['wt', 'new-tab', '--startingDirectory', cwd, shell] + shell_args + [flag, command]
+            cmd = ['wt', 'new-tab', '--startingDirectory', cwd, shell] + shell_args + [flag, cmd_with_env]
             subprocess.Popen(cmd)
         else:
-            subprocess.Popen(command, cwd=cwd, shell=True)
+            subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
 
     elif sys_name == 'Linux':
         if emulator == 'gnome-terminal':
             cmd = ['gnome-terminal', f'--working-directory={cwd}', '--', shell] + shell_args + ['-c', command]
-            subprocess.Popen(cmd)
+            subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'xterm':
             cmd = ['xterm', '-e', shell] + shell_args + ['-c', command]
-            subprocess.Popen(cmd, cwd=cwd)
+            subprocess.Popen(cmd, cwd=cwd, env=merged_env)
         else:
-            subprocess.Popen(command, cwd=cwd, shell=True)
+            subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
     else:
-        subprocess.Popen(command, cwd=cwd, shell=True)
+        subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
 
 
 # ── SQLite table editor ───────────────────────────────────────────────────────
@@ -973,6 +1068,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'error': str(e)}, 400)
             return
 
+        if path == '/api/envs':
+            try:
+                self.send_json(load_envs())
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
         if path == '/api/open':
             target = params.get('path', [None])[0]
             if not target or not os.path.isdir(target):
@@ -1078,6 +1180,42 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 data = json.loads(self.read_body())
                 kill_port_process(data.get('port'), data.get('pid'))
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/envs':
+            try:
+                data = json.loads(self.read_body())
+                save_envs(data)
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/envs/launch':
+            try:
+                data = json.loads(self.read_body())
+                launch_environment(data.get('env_id'))
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/envs/launch/process':
+            try:
+                data = json.loads(self.read_body())
+                env_id = data.get('env_id')
+                process_id = data.get('process_id')
+                envs_data = load_envs()
+                env_def = next((e for e in envs_data.get('environments', []) if e.get('id') == env_id), None)
+                if not env_def:
+                    raise ValueError(f"Environment '{env_id}' not found")
+                process_def = next((p for p in env_def.get('processes', []) if p.get('id') == process_id), None)
+                if not process_def:
+                    raise ValueError(f"Process '{process_id}' not found")
+                launch_process(process_def)
                 self.send_json({'ok': True})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
