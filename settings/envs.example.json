@@ -1,0 +1,35 @@
+{
+  "environments": [
+    {
+      "id": "local-full-stack",
+      "name": "フルスタック検証環境",
+      "processes": [
+        {
+          "id": "db",
+          "label": "PostgreSQL",
+          "command": "docker compose up db",
+          "cwd": "~/projects/myapp",
+          "env": {
+            "POSTGRES_PASSWORD": "secret"
+          },
+          "depends_on": []
+        },
+        {
+          "id": "backend",
+          "label": "Rails API",
+          "command": "bundle exec rails s",
+          "cwd": "~/projects/myapp",
+          "env": {
+            "RAILS_ENV": "development"
+          },
+          "depends_on": ["db"]
+        }
+      ],
+      "worktree": {
+        "enabled": false,
+        "repo_path": "",
+        "branch": ""
+      }
+    }
+  ]
+}

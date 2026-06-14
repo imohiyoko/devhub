@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>env launcher — devhub</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #7d8590;
+  --accent:  #388bfd;
+  --green:   #3fb950;
+  --red:     #f85149;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.hub-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 600;
+}
+.hub-link:hover { color: var(--text); }
+.header-title { font-weight: 600; color: var(--text); }
+.header-spacer { flex: 1; }
+.btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover { border-color: var(--muted); }
+.btn-primary { background: var(--green); border-color: var(--green); color: #fff; }
+.btn-primary:hover { opacity: 0.9; }
+
+main {
+  flex: 1;
+  overflow: auto;
+  padding: 24px;
+}
+
+/* Modal */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6);
+  display: none; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 500px;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.modal-body {
+  padding: 16px;
+  overflow: auto;
+  flex: 1;
+}
+.modal-footer {
+  padding: 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
+.form-control {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.env-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+.env-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.env-header h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.env-actions { margin-left: auto; display: flex; gap: 8px; }
+
+.env-body { padding: 16px; }
+
+.process-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.process-info { flex: 1; }
+.process-label { font-weight: 600; font-size: 14px; }
+.process-cmd { font-family: monospace; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.process-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.process-actions { display: flex; gap: 8px; }
+
+.env-var-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.env-var-row input { flex: 1; }
+.env-var-remove { background: none; border: none; color: var(--red); cursor: pointer; }
+
+/* Empty state */
+.empty-state { text-align: center; color: var(--muted); padding: 40px; }
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="hub-link">← devhub</a>
+  <span class="header-title">env launcher</span>
+  <div class="header-spacer"></div>
+  <button class="btn" onclick="openEnvModal()">＋ 環境を追加</button>
+</header>
+
+<main id="app">
+  <div class="empty-state">Loading...</div>
+</main>
+
+<!-- Env Modal -->
+<div class="modal-overlay" id="envModalOverlay">
+  <div class="modal">
+    <div class="modal-header" id="envModalTitle">環境の編集</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>ID</label>
+        <input type="text" id="envId" class="form-control" placeholder="local-full-stack">
+      </div>
+      <div class="form-group">
+        <label>表示名</label>
+        <input type="text" id="envName" class="form-control" placeholder="フルスタック検証環境">
+      </div>
+      <div class="form-group" style="margin-top: 24px;">
+        <label style="font-weight: 600; color: var(--text);">Worktree設定</label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text);">
+          <input type="checkbox" id="envWtEnabled"> 有効にする
+        </label>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+          ※有効にした場合、環境内の全プロセスは Worktree のルートディレクトリを CWD として強制的に起動します。<br>
+          <span style="color: var(--red);">※起動したworktreeは手動で削除する必要があります（一時ディレクトリ: <code>/tmp/devhub-env-{env_id}-*</code>）</span>
+        </div>
+      </div>
+      <div id="envWtFields" style="display: none; padding-left: 12px; border-left: 2px solid var(--border); margin-bottom: 12px;">
+        <div class="form-group">
+          <label>Repository Path (cwdの展開用ベース)</label>
+          <input type="text" id="envWtRepo" class="form-control" placeholder="~/projects/myapp">
+        </div>
+        <div class="form-group">
+          <label>Branch Name</label>
+          <input type="text" id="envWtBranch" class="form-control" placeholder="feature/xyz">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeEnvModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveEnv()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Process Modal -->
+<div class="modal-overlay" id="processModalOverlay">
+  <div class="modal">
+    <div class="modal-header" id="processModalTitle">プロセスの編集</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>ID</label>
+        <input type="text" id="procId" class="form-control" placeholder="backend">
+      </div>
+      <div class="form-group">
+        <label>表示名</label>
+        <input type="text" id="procLabel" class="form-control" placeholder="Rails API">
+      </div>
+      <div class="form-group">
+        <label>コマンド</label>
+        <input type="text" id="procCmd" class="form-control" placeholder="bundle exec rails s">
+      </div>
+      <div class="form-group">
+        <label>作業ディレクトリ (CWD)</label>
+        <input type="text" id="procCwd" class="form-control" placeholder="~/projects/myapp">
+      </div>
+      <div class="form-group">
+        <label>依存プロセス (Depends On)</label>
+        <select id="procDepends" class="form-control" multiple style="height: 60px;">
+          <!-- options populated dynamically -->
+        </select>
+      </div>
+      <div class="form-group">
+        <label>起動後待機時間 (秒)</label>
+        <input type="number" id="procDelay" class="form-control" value="1" step="0.1" min="0" placeholder="1.0">
+      </div>
+      <div class="form-group">
+        <label>環境変数 (Env Vars) <span style="font-size: 11px; color: var(--red);">※ 平文で保存されます。本番のクレデンシャル等は入力しないでください</span></label>
+        <div id="procEnvVars"></div>
+        <button class="btn" style="margin-top: 8px;" onclick="addEnvVar()">＋ 追加</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeProcessModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveProcess()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let envsData = { environments: [] };
+let currentEnvIndex = -1;
+let currentProcIndex = -1;
+
+// --- API ---
+async function fetchEnvs() {
+  try {
+    const res = await fetch('/api/envs');
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch environments');
+    envsData = data;
+    render();
+  } catch(e) {
+    alert('Error fetching environments: ' + e.message);
+  }
+}
+
+async function saveEnvsData() {
+  try {
+    const res = await fetch('/api/envs', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(envsData)
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to save environments');
+    render();
+  } catch(e) {
+    alert('Error saving environments: ' + e.message);
+  }
+}
+
+async function launchEnv(envId) {
+  try {
+    const res = await fetch('/api/envs/launch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({env_id: envId})
+    });
+    const result = await res.json();
+    if (result.error) alert('Error: ' + result.error);
+    else showToast('起動を開始しました。ターミナルとエラーログを確認してください。');
+  } catch(e) {
+    alert('Failed to launch environment');
+  }
+}
+
+async function launchProcess(envId, procId) {
+  try {
+    const res = await fetch('/api/envs/launch/process', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({env_id: envId, process_id: procId})
+    });
+    const result = await res.json();
+    if (result.error) alert('Error: ' + result.error);
+    else showToast('プロセス起動を開始しました。ターミナルを確認してください。');
+  } catch(e) {
+    alert('Failed to launch process');
+  }
+}
+
+function showToast(message) {
+  const toast = document.createElement('div');
+  toast.textContent = message;
+  toast.style.position = 'fixed';
+  toast.style.bottom = '20px';
+  toast.style.right = '20px';
+  toast.style.backgroundColor = 'var(--primary)';
+  toast.style.color = '#fff';
+  toast.style.padding = '12px 20px';
+  toast.style.borderRadius = '8px';
+  toast.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+  toast.style.zIndex = '9999';
+  toast.style.opacity = '0';
+  toast.style.transition = 'opacity 0.3s ease';
+  document.body.appendChild(toast);
+
+  // Fade in
+  setTimeout(() => toast.style.opacity = '1', 10);
+
+  // Fade out and remove
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+// --- Render ---
+function isMaskedKey(key) {
+  const lower = key.toLowerCase();
+  return lower.includes('password') || lower.includes('secret') || lower.includes('token') || lower.includes('apikey') || lower.includes('api_key') || lower.includes('api-key');
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function render() {
+  const app = document.getElementById('app');
+  if (!envsData.environments || envsData.environments.length === 0) {
+    app.innerHTML = '<div class="empty-state">環境がありません。「＋ 環境を追加」から作成してください。</div>';
+    return;
+  }
+
+  let html = '';
+  envsData.environments.forEach((env, eIdx) => {
+    const envId = escapeHtml(env.id);
+    const envName = escapeHtml(env.name || env.id);
+    html += `
+      <div class="env-card">
+        <div class="env-header">
+          <h2>${envName}</h2>
+          ${env.worktree?.enabled ? `<span style="font-size: 11px; background: var(--border); padding: 2px 6px; border-radius: 4px;">worktree</span>` : ''}
+          <div class="env-actions">
+            <button class="btn btn-primary" data-action="launch-env" data-env-id="${envId}">▶ 全て起動</button>
+            <button class="btn" data-action="edit-env" data-e-idx="${eIdx}">編集</button>
+            <button class="btn" data-action="delete-env" data-e-idx="${eIdx}" style="color: var(--red);">削除</button>
+          </div>
+        </div>
+        <div class="env-body">
+          <div style="margin-bottom: 12px;">
+            <button class="btn" data-action="add-process" data-e-idx="${eIdx}">＋ プロセスを追加</button>
+          </div>
+    `;
+    if (env.processes && env.processes.length > 0) {
+      env.processes.forEach((proc, pIdx) => {
+        const procId = escapeHtml(proc.id);
+        const procLabel = escapeHtml(proc.label || proc.id);
+        const procCmd = escapeHtml(proc.command);
+        const procCwd = escapeHtml(proc.cwd);
+        const procDepends = proc.depends_on && proc.depends_on.length > 0
+          ? ` | depends_on: ${escapeHtml(proc.depends_on.join(', '))}`
+          : '';
+        const procDelay = typeof proc.delay_seconds !== 'undefined'
+          ? ` | delay: ${escapeHtml(proc.delay_seconds)}s`
+          : '';
+
+        html += `
+          <div class="process-item">
+            <div class="process-info">
+              <div class="process-label">${procLabel}</div>
+              <div class="process-cmd">${procCmd}</div>
+              <div class="process-meta">
+                cwd: ${procCwd}
+                ${procDepends}
+                ${procDelay}
+              </div>
+            </div>
+            <div class="process-actions">
+              <button class="btn" data-action="launch-process" data-env-id="${envId}" data-proc-id="${procId}">▶ 起動</button>
+              <button class="btn" data-action="edit-process" data-e-idx="${eIdx}" data-p-idx="${pIdx}">編集</button>
+              <button class="btn" data-action="delete-process" data-e-idx="${eIdx}" data-p-idx="${pIdx}" style="color: var(--red);">削除</button>
+            </div>
+          </div>
+        `;
+      });
+    } else {
+      html += '<div class="empty-state" style="padding: 20px;">プロセスがありません</div>';
+    }
+    html += `</div></div>`;
+  });
+  app.innerHTML = html;
+}
+
+// --- Env Modal ---
+const envWtEnabled = document.getElementById('envWtEnabled');
+envWtEnabled.addEventListener('change', () => {
+  document.getElementById('envWtFields').style.display = envWtEnabled.checked ? 'block' : 'none';
+});
+
+function openEnvModal(index = -1) {
+  currentEnvIndex = index;
+  document.getElementById('envModalTitle').textContent = index >= 0 ? '環境の編集' : '環境の追加';
+
+  if (index >= 0) {
+    const env = envsData.environments[index];
+    document.getElementById('envId').value = env.id || '';
+    document.getElementById('envName').value = env.name || '';
+
+    const wt = env.worktree || {};
+    document.getElementById('envWtEnabled').checked = !!wt.enabled;
+    document.getElementById('envWtRepo').value = wt.repo_path || '';
+    document.getElementById('envWtBranch').value = wt.branch || '';
+  } else {
+    document.getElementById('envId').value = '';
+    document.getElementById('envName').value = '';
+    document.getElementById('envWtEnabled').checked = false;
+    document.getElementById('envWtRepo').value = '';
+    document.getElementById('envWtBranch').value = '';
+  }
+  envWtEnabled.dispatchEvent(new Event('change'));
+  document.getElementById('envModalOverlay').classList.add('open');
+}
+
+function closeEnvModal() {
+  document.getElementById('envModalOverlay').classList.remove('open');
+}
+
+function saveEnv() {
+  const id = document.getElementById('envId').value.trim();
+  if (!id) {
+    alert("IDを入力してください。");
+    return;
+  }
+
+  if (currentEnvIndex === -1 && envsData.environments.some(e => e.id === id)) {
+    alert("この環境IDは既に存在します。");
+    return;
+  }
+
+  const env = {
+    id: id,
+    name: document.getElementById('envName').value.trim(),
+    worktree: {
+      enabled: document.getElementById('envWtEnabled').checked,
+      repo_path: document.getElementById('envWtRepo').value.trim(),
+      branch: document.getElementById('envWtBranch').value.trim()
+    }
+  };
+
+  if (!env.id) { alert('IDは必須です'); return; }
+
+  if (currentEnvIndex >= 0) {
+    env.processes = envsData.environments[currentEnvIndex].processes || [];
+    envsData.environments[currentEnvIndex] = env;
+  } else {
+    env.processes = [];
+    envsData.environments.push(env);
+  }
+
+  closeEnvModal();
+  saveEnvsData();
+}
+
+function deleteEnv(index) {
+  if (confirm('この環境を削除しますか？')) {
+    envsData.environments.splice(index, 1);
+    saveEnvsData();
+  }
+}
+
+// --- Process Modal ---
+let tempEnvVars = [];
+
+function renderEnvVars() {
+  const container = document.getElementById('procEnvVars');
+  container.innerHTML = tempEnvVars.map((v, i) => {
+    const escapedKey = escapeHtml(v.key);
+    const escapedValue = escapeHtml(v.value);
+    return `
+    <div class="env-var-row">
+      <input type="text" class="form-control" placeholder="KEY" value="${escapedKey}" oninput="updateEnvVarKey(${i}, this.value, this.nextElementSibling)">
+      <input type="${isMaskedKey(v.key) ? 'password' : 'text'}" class="form-control" placeholder="VALUE" value="${escapedValue}" oninput="updateEnvVarValue(${i}, this.value)">
+      <button class="env-var-remove" onclick="removeEnvVar(${i})">✕</button>
+    </div>
+  `}).join('');
+}
+function addEnvVar() { tempEnvVars.push({key: '', value: ''}); renderEnvVars(); }
+function updateEnvVarKey(i, val, valueInputEl) {
+  tempEnvVars[i].key = val;
+  if (valueInputEl) {
+    valueInputEl.type = isMaskedKey(val) ? 'password' : 'text';
+  }
+}
+function updateEnvVarValue(i, val) { tempEnvVars[i].value = val; }
+function removeEnvVar(i) { tempEnvVars.splice(i, 1); renderEnvVars(); }
+
+function openProcessModal(envIndex, procIndex = -1) {
+  currentEnvIndex = envIndex;
+  currentProcIndex = procIndex;
+  document.getElementById('processModalTitle').textContent = procIndex >= 0 ? 'プロセスの編集' : 'プロセスの追加';
+
+  const env = envsData.environments[envIndex];
+
+  // Populate depends_on options
+  const dependsSelect = document.getElementById('procDepends');
+  dependsSelect.innerHTML = (env.processes || [])
+    .filter((_, i) => i !== procIndex) // exclude self
+    .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label || p.id)}</option>`)
+    .join('');
+
+  if (procIndex >= 0) {
+    const proc = env.processes[procIndex];
+    document.getElementById('procId').value = proc.id || '';
+    document.getElementById('procLabel').value = proc.label || '';
+    document.getElementById('procCmd').value = proc.command || '';
+    document.getElementById('procCwd').value = proc.cwd || '';
+    document.getElementById('procDelay').value = typeof proc.delay_seconds !== 'undefined' ? proc.delay_seconds : 1;
+
+    Array.from(dependsSelect.options).forEach(opt => {
+      opt.selected = (proc.depends_on || []).includes(opt.value);
+    });
+
+    tempEnvVars = Object.entries(proc.env || {}).map(([k, v]) => ({key: k, value: v}));
+  } else {
+    document.getElementById('procId').value = '';
+    document.getElementById('procLabel').value = '';
+    document.getElementById('procCmd').value = '';
+    document.getElementById('procCwd').value = '';
+    document.getElementById('procDelay').value = 1;
+    Array.from(dependsSelect.options).forEach(opt => opt.selected = false);
+    tempEnvVars = [];
+  }
+
+  renderEnvVars();
+  document.getElementById('processModalOverlay').classList.add('open');
+}
+
+function closeProcessModal() {
+  document.getElementById('processModalOverlay').classList.remove('open');
+}
+
+function saveProcess() {
+  const id = document.getElementById('procId').value.trim();
+  if (!id) {
+    alert("プロセスIDを入力してください。");
+    return;
+  }
+
+  const targetEnv = envsData.environments[currentEnvIndex];
+  if (currentProcIndex === -1 && targetEnv.processes && targetEnv.processes.some(p => p.id === id)) {
+    alert("このプロセスIDは既に環境内に存在します。");
+    return;
+  }
+
+  const dependsSelect = document.getElementById('procDepends');
+  const depends_on = Array.from(dependsSelect.selectedOptions).map(opt => opt.value);
+
+  const envObj = {};
+  tempEnvVars.forEach(v => {
+    if (v.key.trim()) envObj[v.key.trim()] = v.value;
+  });
+
+  const delayVal = document.getElementById('procDelay').value.trim();
+
+  const proc = {
+    id: id,
+    label: document.getElementById('procLabel').value.trim(),
+    command: document.getElementById('procCmd').value.trim(),
+    cwd: document.getElementById('procCwd').value.trim(),
+    delay_seconds: delayVal === '' ? 1.0 : (parseFloat(delayVal) || 0),
+    depends_on: depends_on,
+    env: envObj
+  };
+
+  if (!proc.id) { alert('IDは必須です'); return; }
+
+  const env = envsData.environments[currentEnvIndex];
+  if (!env.processes) env.processes = [];
+
+  if (currentProcIndex >= 0) {
+    env.processes[currentProcIndex] = proc;
+  } else {
+    env.processes.push(proc);
+  }
+
+  closeProcessModal();
+  saveEnvsData();
+}
+
+function deleteProcess(envIndex, procIndex) {
+  if (confirm('このプロセスを削除しますか？')) {
+    envsData.environments[envIndex].processes.splice(procIndex, 1);
+    saveEnvsData();
+  }
+}
+
+// Events
+document.getElementById('app').addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+
+  const action = btn.dataset.action;
+  if (action === 'launch-env') launchEnv(btn.dataset.envId);
+  else if (action === 'edit-env') openEnvModal(Number(btn.dataset.eIdx));
+  else if (action === 'delete-env') deleteEnv(Number(btn.dataset.eIdx));
+  else if (action === 'add-process') openProcessModal(Number(btn.dataset.eIdx), -1);
+  else if (action === 'launch-process') launchProcess(btn.dataset.envId, btn.dataset.procId);
+  else if (action === 'edit-process') openProcessModal(Number(btn.dataset.eIdx), Number(btn.dataset.pIdx));
+  else if (action === 'delete-process') deleteProcess(Number(btn.dataset.eIdx), Number(btn.dataset.pIdx));
+});
+
+// Init
+fetchEnvs();
+</script>
+</body>
+</html>
