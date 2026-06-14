@@ -460,14 +460,19 @@ function renderEnvVars() {
     const escapedValue = escapeHtml(v.value);
     return `
     <div class="env-var-row">
-      <input type="text" class="form-control" placeholder="KEY" value="${escapedKey}" oninput="updateEnvVarKey(${i}, this.value)">
+      <input type="text" class="form-control" placeholder="KEY" value="${escapedKey}" oninput="updateEnvVarKey(${i}, this.value, this.nextElementSibling)">
       <input type="${isMaskedKey(v.key) ? 'password' : 'text'}" class="form-control" placeholder="VALUE" value="${escapedValue}" oninput="updateEnvVarValue(${i}, this.value)">
       <button class="env-var-remove" onclick="removeEnvVar(${i})">✕</button>
     </div>
   `}).join('');
 }
 function addEnvVar() { tempEnvVars.push({key: '', value: ''}); renderEnvVars(); }
-function updateEnvVarKey(i, val) { tempEnvVars[i].key = val; renderEnvVars(); }
+function updateEnvVarKey(i, val, valueInputEl) {
+  tempEnvVars[i].key = val;
+  if (valueInputEl) {
+    valueInputEl.type = isMaskedKey(val) ? 'password' : 'text';
+  }
+}
 function updateEnvVarValue(i, val) { tempEnvVars[i].value = val; }
 function removeEnvVar(i) { tempEnvVars.splice(i, 1); renderEnvVars(); }
 
