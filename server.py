@@ -88,6 +88,27 @@ class Handler(BaseHTTPRequestHandler):
                 workspace_controller.handle_open(self, params)
                 return
 
+            if path == '/api/pick-directory':
+                def _pick():
+                    try:
+                        import tkinter as tk
+                        from tkinter import filedialog
+                        root = tk.Tk()
+                        root.withdraw()
+                        root.attributes('-topmost', True)
+                        folder = filedialog.askdirectory(title='リポジトリフォルダを選択')
+                        root.destroy()
+                        if folder:
+                            norm = os.path.normpath(os.path.abspath(folder))
+                            is_git = os.path.exists(os.path.join(norm, '.git'))
+                            self.send_json({'path': norm, 'is_git': is_git})
+                        else:
+                            self.send_json({'path': None})
+                    except Exception as e:
+                        self.send_json({'error': str(e)}, 500)
+                _pick()
+                return
+
             if path == '/api/info':
                 current_settings = load_settings()
                 self.send_json({
