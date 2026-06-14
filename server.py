@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import ipaddress, json, os, platform, re, shlex, shutil, signal, sqlite3, subprocess, sys, threading, time, webbrowser
+import ipaddress, json, os, platform, re, shlex, shutil, signal, sqlite3, subprocess, sys, tempfile, threading, time, webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 import xml.etree.ElementTree as ET
@@ -120,10 +120,17 @@ def load_envs():
         try:
             with open(example) as f:
                 cfg = json.load(f)
-            save_envs(cfg)
-            return cfg
         except FileNotFoundError:
-            pass
+            return {'environments': []}
+        except Exception as e:
+            print(f"Error reading example environments: {e}", file=sys.stderr)
+            return {'environments': []}
+
+        try:
+            save_envs(cfg)
+        except Exception as e:
+            print(f"Error saving initial environments: {e}", file=sys.stderr)
+        return cfg
     except Exception as e:
         print(f"Error loading environments: {e}", file=sys.stderr)
     return {'environments': []}
@@ -141,22 +148,30 @@ def launch_process(process_def, cwd_override=None):
     open_in_terminal(cwd, process_def.get('command', ''), env)
 
 
+def setup_worktree(env_id, worktree_def):
+    if not worktree_def or not worktree_def.get('enabled'):
+        return None
+    repo_path = os.path.expanduser(worktree_def.get('repo_path', ''))
+    branch = worktree_def.get('branch', '')
+    if not repo_path or not branch:
+        return None
+
+    tmp_path = tempfile.mkdtemp(prefix=f"devhub-env-{env_id}-")
+    try:
+        subprocess.run(['git', 'worktree', 'add', tmp_path, branch], cwd=repo_path, check=True)
+        return tmp_path
+    except Exception as e:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        raise e
+
+
 def launch_environment(env_id):
     envs_data = load_envs()
     env_def = next((e for e in envs_data.get('environments', []) if e.get('id') == env_id), None)
     if not env_def:
         raise ValueError(f"Environment '{env_id}' not found")
 
-    cwd_override = None
-    worktree = env_def.get('worktree', {})
-    if worktree.get('enabled'):
-        import tempfile
-        tmp_path = tempfile.mkdtemp(prefix=f"devhub-env-{env_id}-")
-        repo_path = os.path.expanduser(worktree.get('repo_path', ''))
-        branch = worktree.get('branch', '')
-        if repo_path and branch:
-            subprocess.run(['git', 'worktree', 'add', tmp_path, branch], cwd=repo_path, check=True)
-            cwd_override = tmp_path
+    cwd_override = setup_worktree(env_id, env_def.get('worktree', {}))
 
     processes = env_def.get('processes', [])
 
@@ -184,9 +199,13 @@ def launch_environment(env_id):
         raise ValueError("Circular dependency detected in depends_on")
 
     pid_to_def = {p['id']: p for p in processes}
-    for pid in sorted_pids:
-        launch_process(pid_to_def[pid], cwd_override=cwd_override)
-        time.sleep(1)
+
+    def run_all():
+        for pid in sorted_pids:
+            launch_process(pid_to_def[pid], cwd_override=cwd_override)
+            time.sleep(1)
+
+    threading.Thread(target=run_all, daemon=True).start()
 
 
 # ── Repo discovery ────────────────────────────────────────────────────────────
@@ -276,6 +295,8 @@ def open_in_terminal(cwd, command, env=None):
 
     if sys_name == 'Darwin':
         if emulator == 'ghostty':
+            # ghostty inherits the environment successfully via `env` argument from Popen,
+            # so we can use the raw `command` string directly without inline exports (`cmd_with_env`).
             cmd = ['ghostty', f'--working-directory={cwd}', '-e', shell] + shell_args + ['-c', command]
             subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'Terminal.app':
@@ -1224,7 +1245,9 @@ class Handler(BaseHTTPRequestHandler):
                 process_def = next((p for p in env_def.get('processes', []) if p.get('id') == process_id), None)
                 if not process_def:
                     raise ValueError(f"Process '{process_id}' not found")
-                launch_process(process_def)
+
+                cwd_override = setup_worktree(env_id, env_def.get('worktree', {}))
+                launch_process(process_def, cwd_override=cwd_override)
                 self.send_json({'ok': True})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
