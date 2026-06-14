@@ -396,12 +396,14 @@ function toDisplay(absPath) {
   if (userHome) {
     const normalizedAbs = absPath.replace(/\\/g, '/');
     const normalizedHome = userHome.replace(/\\/g, '/');
-    if (normalizedAbs === normalizedHome) {
+    const absLower = normalizedAbs.toLowerCase();
+    const homeLower = normalizedHome.toLowerCase();
+    if (absLower === homeLower) {
       return '~';
     }
-    const prefix = normalizedHome.endsWith('/') ? normalizedHome : normalizedHome + '/';
-    if (normalizedAbs.startsWith(prefix)) {
-      return '~/' + normalizedAbs.slice(prefix.length);
+    const prefixLower = homeLower.endsWith('/') ? homeLower : homeLower + '/';
+    if (absLower.startsWith(prefixLower)) {
+      return '~/' + normalizedAbs.slice(prefixLower.length);
     }
   }
   return absPath;

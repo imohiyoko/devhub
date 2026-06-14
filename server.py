@@ -158,6 +158,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'ok': True})
                 def do_restart():
                     time.sleep(0.3)
+                    try:
+                        self.server.server_close()
+                    except Exception:
+                        pass
                     if platform.system() == 'Windows':
                         subprocess.Popen([sys.executable] + sys.argv, close_fds=True)
                         os._exit(0)
