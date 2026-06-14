@@ -1,5 +1,6 @@
 import os
 import platform
+import sys
 import subprocess
 import shlex
 import tempfile
@@ -162,7 +163,6 @@ def launch_environment(env_id):
                         delay = 1.0
                     time.sleep(delay)
         except Exception as e:
-            import sys
             print(f"Error in run_all for env '{env_id}': {e}", file=sys.stderr)
 
     threading.Thread(target=run_all, daemon=True).start()
