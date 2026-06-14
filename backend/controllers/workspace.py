@@ -26,7 +26,25 @@ def handle_open(handler, params):
     handler.send_json({'ok': True})
 
 def handle_ls(handler, params):
-    target = os.path.normpath(os.path.abspath(os.path.expanduser(params.get('path', ['~'])[0])))
+    raw_path = params.get('path', ['~'])[0]
+
+    # Windows: virtual drive listing
+    if platform.system() == 'Windows' and raw_path == '__drives__':
+        import string
+        entries = []
+        for letter in string.ascii_uppercase:
+            drive = f"{letter}:\\"
+            if os.path.exists(drive):
+                entries.append({
+                    'name': f"{letter}:",
+                    'path': os.path.normpath(drive),
+                    'is_git': False,
+                    'in_workspace': False,
+                })
+        handler.send_json({'path': '__drives__', 'parent': None, 'entries': entries})
+        return
+
+    target = os.path.normpath(os.path.abspath(os.path.expanduser(raw_path)))
     if not os.path.isdir(target):
         handler.send_json({'error': 'not a directory'}, 400)
         return
@@ -46,6 +64,9 @@ def handle_ls(handler, params):
             })
         parent_dir = os.path.dirname(target)
         parent = parent_dir if parent_dir != target else None
+        # Windows: at drive root, allow navigating up to drive list
+        if parent is None and platform.system() == 'Windows':
+            parent = '__drives__'
         handler.send_json({'path': target, 'parent': parent, 'entries': entries})
     except PermissionError:
         handler.send_json({'error': 'permission denied'}, 403)

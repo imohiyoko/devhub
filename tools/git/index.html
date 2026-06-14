@@ -74,6 +74,9 @@ select {
 .btn-icon:hover, .btn-icon.active {
   color: var(--text); background: var(--border);
 }
+.btn-icon.danger:hover {
+  color: var(--red); border-color: var(--red); background: rgba(248,81,73,0.1);
+}
 
 .settings-panel {
   background: var(--surface);
@@ -264,6 +267,171 @@ select {
   font-weight: bold;
 }
 .toast .close:hover { color: var(--text); }
+
+/* ── Add Repo Panel ─────────────────────────────── */
+.add-repo-panel {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: none;
+  flex-direction: column;
+  flex-shrink: 0;
+  max-height: 380px;
+  animation: panelSlide 0.15s ease;
+}
+.add-repo-panel.open { display: flex; }
+@keyframes panelSlide { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 380px; } }
+
+.add-repo-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.add-repo-path-bar input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'SF Mono', monospace;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.add-repo-path-bar input:focus { border-color: var(--accent); }
+.add-repo-path-bar .path-action {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.add-repo-path-bar .path-action:hover { background: var(--accent); color: #fff; }
+.add-repo-path-bar .path-hint {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.add-repo-msg {
+  padding: 2px 14px 4px;
+  font-size: 11px;
+  min-height: 0;
+  transition: color 0.15s;
+}
+
+.add-repo-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.add-repo-picker .picker-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 7px 16px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.picker-btn:hover { opacity: 0.85; }
+.picker-btn:disabled { opacity: 0.5; cursor: wait; }
+.add-repo-picker .picker-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.add-repo-picker .picker-or {
+  color: var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.add-repo-dir-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 2px 0;
+}
+
+.dir-entry {
+  display: flex;
+  align-items: center;
+  padding: 5px 14px;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+.dir-entry:hover { background: rgba(48,54,61,0.6); }
+.dir-entry .dir-icon { width: 18px; text-align: center; flex-shrink: 0; }
+.dir-entry .dir-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dir-entry .dir-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.dir-entry .btn-pin {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 2px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.dir-entry .btn-pin:hover { background: var(--accent); color: #fff; }
+.dir-entry .btn-pin.added {
+  border-color: var(--green);
+  color: var(--green);
+  pointer-events: none;
+  opacity: 0.7;
+}
+.dir-entry .dir-arrow { color: var(--muted); font-size: 11px; }
+
+/* ── Empty state ────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 10px;
+  color: var(--muted);
+  text-align: center;
+  padding: 40px 30px;
+}
+.empty-state .empty-icon { font-size: 38px; opacity: 0.4; }
+.empty-state .empty-title { font-size: 14px; color: var(--text); font-weight: 500; }
+.empty-state .empty-desc { font-size: 12px; line-height: 1.7; max-width: 340px; }
+.empty-state .empty-btn {
+  margin-top: 6px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 7px 18px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: opacity 0.15s;
+}
+.empty-state .empty-btn:hover { opacity: 0.85; }
 </style>
 </head>
 <body>
@@ -275,10 +443,29 @@ select {
   <h1>git</h1>
   <div class="header-controls">
     <select id="repo-select"></select>
+    <button class="btn-icon danger" id="btn-remove-repo" title="このリポジトリを解除">✕</button>
+    <button class="btn-icon" id="btn-add-repo" title="リポジトリを追加">＋</button>
     <button class="btn-icon" id="btn-refresh" title="Refresh">↻</button>
     <button class="btn-icon" id="btn-settings" title="Settings">⚙</button>
   </div>
 </header>
+
+<div class="add-repo-panel" id="add-repo-panel">
+  <div class="add-repo-picker">
+    <button class="picker-btn" id="btn-pick-folder">📂 フォルダを選択</button>
+    <span class="picker-hint">Explorer / Finder からリポジトリを選ぶ</span>
+    <span class="picker-or">─ or ─</span>
+    <span class="picker-hint">下のパス入力で直接指定</span>
+    <button class="btn-icon" id="btn-close-add-panel" title="閉じる" style="margin-left:auto;">✕</button>
+  </div>
+  <div class="add-repo-path-bar">
+    <button class="btn-icon" id="btn-dir-up" title="上の階層へ" style="width:26px;height:26px;font-size:13px;">↑</button>
+    <input type="text" id="path-input" placeholder="パスを入力して Enter で移動  (例: ~/projects, C:\repos)" spellcheck="false">
+    <button class="path-action" id="btn-path-add" title="このパスをリポジトリとして追加">＋ 追加</button>
+  </div>
+  <div id="add-repo-msg" class="add-repo-msg"></div>
+  <div class="add-repo-dir-list" id="add-repo-dir-list"></div>
+</div>
 
 <div class="settings-panel" id="settings-panel">
   <div class="settings-col">
@@ -304,6 +491,7 @@ select {
     <!-- Dynamically generated -->
   </div>
   <div class="settings-col" style="justify-content: flex-end;">
+      <a href="/workspace" style="color: var(--muted); font-size: 11px; text-decoration: none; margin-bottom: 6px;" title="スキャン対象フォルダの管理">⚙ スキャン対象の設定 → workspace</a>
       <button id="btn-save-settings" style="padding: 4px 12px; background: var(--surface); color: var(--text); border: 1px solid var(--border); cursor: pointer; border-radius: 4px;">Save Settings</button>
   </div>
 </div>
@@ -435,9 +623,35 @@ async function fetchRepos() {
     }
 
     if(currentRepo) select.value = currentRepo;
+
+    // Empty state
+    renderEmptyState();
   } catch (e) {
     showError('Failed to fetch repositories.');
     console.error(e);
+  }
+}
+
+function renderEmptyState() {
+  const mainContent = document.getElementById('main-content');
+  const existing = document.getElementById('empty-state');
+  if (existing) existing.remove();
+
+  if (allRepos.length === 0) {
+    const el = document.createElement('div');
+    el.id = 'empty-state';
+    el.className = 'empty-state';
+    el.innerHTML = `
+      <div class="empty-icon">⎇</div>
+      <div class="empty-title">リポジトリが登録されていません</div>
+      <div class="empty-desc">
+        フォルダを選択してリポジトリを追加するか、<br>
+        <a href="/workspace" style="color:var(--accent);text-decoration:none;">workspace ツール</a>でスキャン対象フォルダを設定してください。
+      </div>
+      <button class="empty-btn" onclick="document.getElementById('btn-pick-folder').click()">📂 フォルダを選択して追加</button>
+    `;
+    mainContent.style.position = 'relative';
+    mainContent.appendChild(el);
   }
 }
 
@@ -788,8 +1002,311 @@ document.addEventListener('keydown', (e) => {
 });
 
 
+// ── Repo Addition (directory browser / path input) ───
+let userHome = '';
+let isWindows = false;
+let appConfig = { scan_roots: [], excludes: [], pinned_repos: [] };
+let browsingPath = '~';
+
+async function loadSystemInfo() {
+  try {
+    const info = await fetch('/api/info').then(r => r.json());
+    userHome = info.home || '';
+    isWindows = !!info.is_windows;
+  } catch(e) { console.error(e); }
+}
+
+async function loadAppConfig() {
+  try {
+    const cfg = await fetch('/api/config').then(r => r.json());
+    appConfig.scan_roots = cfg.scan_roots || [];
+    appConfig.excludes   = cfg.excludes   || [];
+    appConfig.pinned_repos = cfg.pinned_repos || [];
+  } catch(e) { console.error(e); }
+}
+
+async function saveAppConfig() {
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scan_roots:   appConfig.scan_roots,
+      excludes:     appConfig.excludes,
+      pinned_repos: appConfig.pinned_repos,
+    }),
+  });
+}
+
+function toDisplayPath(absPath) {
+  if (!userHome) return absPath;
+  const na = absPath.replace(/\\/g, '/');
+  const nh = userHome.replace(/\\/g, '/');
+  const al = na.toLowerCase(), hl = nh.toLowerCase();
+  if (al === hl) return '~';
+  const prefix = hl.endsWith('/') ? hl : hl + '/';
+  if (al.startsWith(prefix)) return '~/' + na.slice(prefix.length);
+  return absPath;
+}
+
+function normPath(s) { return s.replace(/\\/g, '/'); }
+function pathMatch(a, b) {
+  if (!a || !b) return false;
+  return isWindows
+    ? normPath(a).toLowerCase() === normPath(b).toLowerCase()
+    : normPath(a) === normPath(b);
+}
+function isInPinned(path) {
+  const t = toDisplayPath(path);
+  return appConfig.pinned_repos.some(p => pathMatch(p, path) || pathMatch(p, t));
+}
+
+function showRepoMsg(text, type) {
+  const el = document.getElementById('add-repo-msg');
+  el.textContent = text;
+  el.style.color = type === 'error' ? 'var(--red)' : type === 'warn' ? '#e3b341' : 'var(--green)';
+  if (type !== 'error') setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 3000);
+}
+
+async function browseTo(path) {
+  try {
+    const res = await fetch(`/api/ls?path=${encodeURIComponent(path)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showRepoMsg(err.error || '無効なパスです', 'error');
+      return false;
+    }
+    const data = await res.json();
+    browsingPath = data.path;
+    document.getElementById('path-input').value = browsingPath === '__drives__' ? 'マイコンピュータ' : toDisplayPath(browsingPath);
+    document.getElementById('btn-dir-up').disabled = !data.parent;
+
+    const list = document.getElementById('add-repo-dir-list');
+    if (data.entries.length === 0) {
+      list.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px;text-align:center;">サブディレクトリなし</div>';
+      return true;
+    }
+
+    const isDriveList = browsingPath === '__drives__';
+    list.innerHTML = data.entries.map(e => {
+      const icon = e.is_git
+        ? '<span style="color:var(--green)">◈</span>'
+        : isDriveList
+          ? '<span style="color:var(--muted)">💽</span>'
+          : '<span style="color:var(--muted)">📁</span>';
+      const added = e.in_workspace;
+      const addBtn = e.is_git
+        ? `<button class="btn-pin ${added ? 'added' : ''}" data-path="${e.path.replace(/"/g, '&quot;')}">${added ? '追加済' : '追加'}</button>`
+        : '';
+      const arrow = !e.is_git ? '<span class="dir-arrow">›</span>' : '';
+      return `<div class="dir-entry" data-path="${e.path.replace(/"/g, '&quot;')}" data-is-git="${e.is_git}">
+        <span class="dir-icon">${icon}</span>
+        <span class="dir-name" title="${e.path}">${e.name}</span>
+        <div class="dir-actions">${addBtn}${arrow}</div>
+      </div>`;
+    }).join('');
+
+    // Attach click handlers
+    list.querySelectorAll('.dir-entry').forEach(entry => {
+      entry.addEventListener('click', () => {
+        if (entry.dataset.isGit !== 'true') browseTo(entry.dataset.path);
+      });
+    });
+    list.querySelectorAll('.btn-pin').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (!btn.classList.contains('added')) addRepoFromBrowser(btn.dataset.path, btn);
+      });
+    });
+    return true;
+  } catch(e) {
+    console.error(e);
+    showRepoMsg('ディレクトリの読み込みに失敗しました', 'error');
+    return false;
+  }
+}
+
+async function addRepoFromBrowser(path, btnEl) {
+  const t = toDisplayPath(path);
+  const alreadyPinned = appConfig.pinned_repos.some(p => pathMatch(p, path) || pathMatch(p, t));
+  const isExcluded = appConfig.excludes.some(p => pathMatch(p, path) || pathMatch(p, t));
+  if (alreadyPinned && !isExcluded) { showRepoMsg('既に追加されています', 'warn'); return; }
+  if (isExcluded) appConfig.excludes = appConfig.excludes.filter(e => !pathMatch(e, path) && !pathMatch(e, t));
+  if (!alreadyPinned) appConfig.pinned_repos.push(path);
+  await saveAppConfig();
+  await fetchRepos();
+  if (btnEl) { btnEl.textContent = '追加済'; btnEl.classList.add('added'); }
+  const name = path.split(/[\\/]/).pop();
+  showRepoMsg(`${name} を追加しました`, 'success');
+}
+
+async function handlePathSubmit() {
+  const input = document.getElementById('path-input');
+  const rawPath = input.value.trim();
+  if (!rawPath) return;
+  await browseTo(rawPath);
+}
+
+async function handlePathAdd() {
+  const input = document.getElementById('path-input');
+  const rawPath = input.value.trim();
+  if (!rawPath) return;
+
+  showRepoMsg('確認中...', 'success');
+  try {
+    const res = await fetch(`/api/ls?path=${encodeURIComponent(rawPath)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showRepoMsg(err.error || '無効なパスです', 'error');
+      return;
+    }
+    const data = await res.json();
+    const targetPath = data.path;
+
+    // Check if it's a git repo by looking at the parent directory listing
+    let isGitRepo = false;
+    if (data.parent) {
+      try {
+        const parentRes = await fetch(`/api/ls?path=${encodeURIComponent(data.parent)}`);
+        if (parentRes.ok) {
+          const parentData = await parentRes.json();
+          const entry = parentData.entries.find(e => pathMatch(e.path, targetPath));
+          if (entry) isGitRepo = entry.is_git;
+        }
+      } catch(e) { /* ignore */ }
+    }
+
+    if (!isGitRepo) {
+      showRepoMsg('このフォルダは Git リポジトリではありません (.git が見つかりません)', 'error');
+      return;
+    }
+
+    const t = toDisplayPath(targetPath);
+    const alreadyPinned = appConfig.pinned_repos.some(p => pathMatch(p, targetPath) || pathMatch(p, t));
+    const isExcluded = appConfig.excludes.some(p => pathMatch(p, targetPath) || pathMatch(p, t));
+    if (alreadyPinned && !isExcluded) { showRepoMsg('既に追加されています', 'warn'); return; }
+    if (isExcluded) appConfig.excludes = appConfig.excludes.filter(e => !pathMatch(e, targetPath) && !pathMatch(e, t));
+    if (!alreadyPinned) appConfig.pinned_repos.push(targetPath);
+    await saveAppConfig();
+    await fetchRepos();
+    const name = targetPath.split(/[\\/]/).pop();
+    showRepoMsg(`${name} を追加しました`, 'success');
+    browseTo(browsingPath);
+  } catch(e) {
+    showRepoMsg('追加に失敗しました', 'error');
+  }
+}
+
+// ── Add-repo panel toggle ────────────────────────────
+document.getElementById('btn-add-repo').addEventListener('click', () => {
+  const panel = document.getElementById('add-repo-panel');
+  const btn   = document.getElementById('btn-add-repo');
+  const open  = panel.classList.toggle('open');
+  btn.classList.toggle('active', open);
+  if (open) {
+    // Close settings panel if open
+    document.getElementById('settings-panel').classList.remove('open');
+    document.getElementById('btn-settings').classList.remove('active');
+    browseTo(browsingPath);
+    // Auto-focus the path input
+    setTimeout(() => document.getElementById('path-input').focus(), 50);
+  }
+});
+
+function closeAddRepoPanel() {
+  document.getElementById('add-repo-panel').classList.remove('open');
+  document.getElementById('btn-add-repo').classList.remove('active');
+}
+document.getElementById('btn-close-add-panel').addEventListener('click', closeAddRepoPanel);
+
+document.getElementById('btn-dir-up').addEventListener('click', async () => {
+  try {
+    const res = await fetch(`/api/ls?path=${encodeURIComponent(browsingPath)}`);
+    const data = await res.json();
+    if (data.parent) browseTo(data.parent);
+  } catch(e) { console.error(e); }
+});
+
+document.getElementById('path-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); handlePathSubmit(); }
+  if (e.key === 'Escape') { e.target.value = browsingPath === '__drives__' ? 'マイコンピュータ' : toDisplayPath(browsingPath); e.target.blur(); }
+});
+document.getElementById('path-input').addEventListener('blur', (e) => {
+  const input = e.target;
+  setTimeout(() => {
+    input.value = browsingPath === '__drives__' ? 'マイコンピュータ' : toDisplayPath(browsingPath);
+  }, 200);
+});
+
+document.getElementById('btn-path-add').addEventListener('click', () => handlePathAdd());
+
+document.getElementById('btn-remove-repo').addEventListener('click', async () => {
+  if (!currentRepo) return;
+  const repoName = currentRepo.split(/[\\/]/).pop();
+  if (!confirm(`「${repoName}」をリポジトリ一覧から削除しますか？\n(ローカルのファイルは削除されません)`)) return;
+
+  const t = toDisplayPath(currentRepo);
+  // Remove from pinned_repos if present
+  appConfig.pinned_repos = appConfig.pinned_repos.filter(p => !pathMatch(p, currentRepo) && !pathMatch(p, t));
+  // Add to excludes to hide from scan_roots discovery
+  if (!appConfig.excludes.some(p => pathMatch(p, currentRepo) || pathMatch(p, t))) {
+    appConfig.excludes.push(currentRepo);
+  }
+  await saveAppConfig();
+  currentRepo = '';
+  await fetchRepos();
+  if (allRepos.length > 0) {
+    currentRepo = allRepos[0].path;
+    document.getElementById('repo-select').value = currentRepo;
+  }
+  await refreshData();
+  showRepoMsg(`${repoName} を削除しました`, 'success');
+});
+
+document.getElementById('btn-pick-folder').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-pick-folder');
+  btn.disabled = true;
+  btn.textContent = '選択中...';
+  try {
+    const res = await fetch('/api/pick-directory');
+    const data = await res.json();
+    if (data.error) {
+      showRepoMsg(data.error, 'error');
+    } else if (data.path) {
+      // Block non-git directories
+      if (!data.is_git) {
+        showRepoMsg('このフォルダは Git リポジトリではありません (.git が見つかりません)', 'error');
+        return;
+      }
+      // Add it as a pinned repo
+      const t = toDisplayPath(data.path);
+      const alreadyPinned = appConfig.pinned_repos.some(p => pathMatch(p, data.path) || pathMatch(p, t));
+      const isExcluded = appConfig.excludes.some(p => pathMatch(p, data.path) || pathMatch(p, t));
+      if (alreadyPinned && !isExcluded) {
+        showRepoMsg('既に追加されています', 'warn');
+      } else {
+        if (isExcluded) appConfig.excludes = appConfig.excludes.filter(e => !pathMatch(e, data.path) && !pathMatch(e, t));
+        if (!alreadyPinned) appConfig.pinned_repos.push(data.path);
+        await saveAppConfig();
+        await fetchRepos();
+        const name = data.path.split(/[\\/]/).pop();
+        showRepoMsg(`${name} を追加しました`, 'success');
+        browseTo(data.path);
+      }
+    }
+    // else: user cancelled the dialog, do nothing
+  } catch(e) {
+    showRepoMsg('フォルダ選択に失敗しました', 'error');
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📂 フォルダを選択';
+  }
+});
+
 // Init
 (async () => {
+    await loadSystemInfo();
+    await loadAppConfig();
     await loadSettings();
     await fetchRepos();
     await refreshData();
