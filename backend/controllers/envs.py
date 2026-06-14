@@ -13,6 +13,8 @@ from collections import deque
 from backend.storage import load_envs, save_envs, load_settings
 
 def open_in_terminal(cwd, command, env=None):
+    if not cwd:
+        cwd = os.getcwd()
     sys_name = platform.system()
     settings = load_settings()
     terminal = settings.get('terminal', {})
@@ -118,8 +120,14 @@ def setup_worktree(env_id, worktree_def):
 
     tmp_path = tempfile.mkdtemp(prefix=f"devhub-env-{env_id}-")
     try:
-        subprocess.run(['git', 'worktree', 'add', tmp_path, branch], cwd=repo_path, check=True)
+        subprocess.run(['git', 'worktree', 'add', tmp_path, branch], cwd=repo_path, check=True, capture_output=True, text=True)
         return tmp_path
+    except subprocess.CalledProcessError as e:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        err_msg = e.stderr.strip() if e.stderr else str(e)
+        if 'already checked out' in err_msg:
+            raise ValueError(f"Git worktree creation failed: branch '{branch}' is already checked out at another location. ({err_msg})")
+        raise ValueError(f"Git worktree creation failed: {err_msg}")
     except Exception:
         shutil.rmtree(tmp_path, ignore_errors=True)
         raise
