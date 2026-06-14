@@ -233,9 +233,41 @@ select {
 }
 .commit-box button:hover { opacity: 0.8; }
 
+.toast-container {
+  position: fixed;
+  bottom: 30px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 1000;
+}
+.toast {
+  background: var(--surface);
+  border: 1px solid var(--red);
+  color: var(--text);
+  padding: 10px 15px;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  animation: slideIn 0.3s ease;
+  max-width: 400px;
+  word-wrap: break-word;
+}
+@keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+.toast .close {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: bold;
+}
+.toast .close:hover { color: var(--text); }
 </style>
 </head>
 <body>
+<div class="toast-container" id="toast-container"></div>
 
 <header>
   <a href="/" class="hub-link">← Hub</a>
@@ -324,6 +356,18 @@ let gitData = {
     stash: ''
 };
 
+function showError(msg) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  const text = document.createElement('span'); text.textContent = msg;
+  const closeBtn = document.createElement('span'); closeBtn.className = 'close'; closeBtn.textContent = '×';
+  closeBtn.onclick = () => toast.remove();
+  toast.appendChild(text); toast.appendChild(closeBtn);
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
+}
+
 function deepMerge(target, source) {
   for (const key of Object.keys(source)) {
     if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key]) && key in target) {
@@ -369,27 +413,32 @@ function applyLayout() {
 }
 
 async function fetchRepos() {
-  allRepos = await fetch('/api/repos').then(r => r.json());
-  const select = document.getElementById('repo-select');
-  const settingSelect = document.getElementById('setting-default-repo');
-  select.innerHTML = ''; settingSelect.innerHTML = '';
+  try {
+    allRepos = await fetch('/api/repos').then(r => r.json());
+    const select = document.getElementById('repo-select');
+    const settingSelect = document.getElementById('setting-default-repo');
+    select.innerHTML = ''; settingSelect.innerHTML = '';
 
-  const emptyOpt = document.createElement('option'); emptyOpt.value = ''; emptyOpt.textContent = 'Select Repo...';
-  settingSelect.appendChild(emptyOpt.cloneNode(true));
+    const emptyOpt = document.createElement('option'); emptyOpt.value = ''; emptyOpt.textContent = 'Select Repo...';
+    settingSelect.appendChild(emptyOpt.cloneNode(true));
 
-  allRepos.forEach(r => {
-    const opt = document.createElement('option'); opt.value = r.path; opt.textContent = r.name;
-    select.appendChild(opt.cloneNode(true));
-    settingSelect.appendChild(opt);
-  });
+    allRepos.forEach(r => {
+      const opt = document.createElement('option'); opt.value = r.path; opt.textContent = r.name;
+      select.appendChild(opt.cloneNode(true));
+      settingSelect.appendChild(opt);
+    });
 
-  if (gitConfig.default_repo && allRepos.find(r => r.path === gitConfig.default_repo)) {
-    currentRepo = gitConfig.default_repo;
-  } else if (allRepos.length > 0) {
-    currentRepo = allRepos[0].path;
+    if (gitConfig.default_repo && allRepos.find(r => r.path === gitConfig.default_repo)) {
+      currentRepo = gitConfig.default_repo;
+    } else if (allRepos.length > 0) {
+      currentRepo = allRepos[0].path;
+    }
+
+    if(currentRepo) select.value = currentRepo;
+  } catch (e) {
+    showError('Failed to fetch repositories.');
+    console.error(e);
   }
-
-  if(currentRepo) select.value = currentRepo;
 }
 
 // Resizing logic
@@ -582,10 +631,14 @@ async function fetchDiff(file, staged) {
 
 async function doPost(url, data) {
     if(!data.path) data.path = currentRepo;
-    const res = await fetch(url, {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
-    }).then(r=>r.json());
-    if(res.error) alert(`Error: ${res.error}`);
+    try {
+        const res = await fetch(url, {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)
+        }).then(r=>r.json());
+        if(res.error) showError(`Error: ${res.error}`);
+    } catch (e) {
+        showError(`Network error: ${e.message}`);
+    }
     await refreshData();
 }
 
