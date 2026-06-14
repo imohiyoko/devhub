@@ -183,8 +183,12 @@ main {
       <div class="form-group" style="margin-top: 24px;">
         <label style="font-weight: 600; color: var(--text);">Worktree設定</label>
         <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text);">
-          <input type="checkbox" id="envWtEnabled"> 有効にする <span style="font-size: 11px; color: var(--red);">※起動したworktreeは手動で削除する必要があります</span>
+          <input type="checkbox" id="envWtEnabled"> 有効にする
         </label>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+          ※有効にした場合、環境内の全プロセスは Worktree のルートディレクトリを CWD として強制的に起動します。<br>
+          <span style="color: var(--red);">※起動したworktreeは手動で削除する必要があります</span>
+        </div>
       </div>
       <div id="envWtFields" style="display: none; padding-left: 12px; border-left: 2px solid var(--border); margin-bottom: 12px;">
         <div class="form-group">
@@ -427,8 +431,19 @@ function closeEnvModal() {
 }
 
 function saveEnv() {
+  const id = document.getElementById('envId').value.trim();
+  if (!id) {
+    alert("IDを入力してください。");
+    return;
+  }
+
+  if (currentEnvIndex === -1 && envsData.environments.some(e => e.id === id)) {
+    alert("この環境IDは既に存在します。");
+    return;
+  }
+
   const env = {
-    id: document.getElementById('envId').value.trim(),
+    id: id,
     name: document.getElementById('envName').value.trim(),
     worktree: {
       enabled: document.getElementById('envWtEnabled').checked,
@@ -530,6 +545,18 @@ function closeProcessModal() {
 }
 
 function saveProcess() {
+  const id = document.getElementById('procId').value.trim();
+  if (!id) {
+    alert("プロセスIDを入力してください。");
+    return;
+  }
+
+  const targetEnv = envsData.environments[currentEnvIndex];
+  if (currentProcIndex === -1 && targetEnv.processes && targetEnv.processes.some(p => p.id === id)) {
+    alert("このプロセスIDは既に環境内に存在します。");
+    return;
+  }
+
   const dependsSelect = document.getElementById('procDepends');
   const depends_on = Array.from(dependsSelect.selectedOptions).map(opt => opt.value);
 
@@ -539,7 +566,7 @@ function saveProcess() {
   });
 
   const proc = {
-    id: document.getElementById('procId').value.trim(),
+    id: id,
     label: document.getElementById('procLabel').value.trim(),
     command: document.getElementById('procCmd').value.trim(),
     cwd: document.getElementById('procCwd').value.trim(),
