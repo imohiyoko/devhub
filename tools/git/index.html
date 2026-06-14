@@ -466,11 +466,6 @@ let currentListItems = []; // For keyboard navigation
 let lastFetchedDiff = null;
 
 function renderTabContent() {
-    if (selectedItemIndex >= currentListItems.length && currentListItems.length > 0) {
-        selectedItemIndex = Math.max(0, currentListItems.length - 1);
-    } else if (currentListItems.length === 0) {
-        selectedItemIndex = 0;
-    }
     const container = document.getElementById('tab-content');
     container.innerHTML = '';
     currentListItems = [];
@@ -492,11 +487,18 @@ function renderTabContent() {
                 el.appendChild(s); el.appendChild(f);
 
                 const itemObj = { type: 'file', el, data: item, isStaged };
-                el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); fetchDiff(item.file, isStaged); };
+                el.onclick = () => {
+                    selectedItemIndex = currentListItems.indexOf(itemObj);
+                    renderTabContent();
+                };
                 currentListItems.push(itemObj);
                 if (currentListItems.length - 1 === selectedItemIndex) {
                     el.classList.add('selected');
-                    fetchDiff(item.file, isStaged);
+                    const diffKey = item.file + '_' + isStaged;
+                    if (lastFetchedDiff !== diffKey) {
+                        lastFetchedDiff = diffKey;
+                        fetchDiff(item.file, isStaged);
+                    }
                 }
                 container.appendChild(el);
             });
@@ -551,8 +553,9 @@ function renderTabContent() {
          const el = document.createElement('div'); el.style.padding = '10px';
          const headLine = gitData.branches.trim().split('\n').find(l=>l.endsWith('\t*'));
          const branch = headLine ? headLine.split('\t')[0] : 'Unknown';
+         const escapeHtml = (unsafe) => unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
          const { staged, unstaged } = parseStatus(gitData.status);
-         el.innerHTML = `<strong>Branch:</strong> ${branch}<br><br><strong>Staged files:</strong> ${staged.length}<br><strong>Unstaged files:</strong> ${unstaged.length}`;
+         el.innerHTML = `<strong>Branch:</strong> ${escapeHtml(branch)}<br><br><strong>Staged files:</strong> ${staged.length}<br><strong>Unstaged files:</strong> ${unstaged.length}`;
          container.appendChild(el);
     }
 }
