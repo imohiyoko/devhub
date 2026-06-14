@@ -232,7 +232,11 @@ main {
         </select>
       </div>
       <div class="form-group">
-        <label>環境変数 (Env Vars)</label>
+        <label>起動後待機時間 (秒)</label>
+        <input type="number" id="procDelay" class="form-control" value="1" step="0.1" min="0" placeholder="1.0">
+      </div>
+      <div class="form-group">
+        <label>環境変数 (Env Vars) <span style="font-size: 11px; color: var(--red);">※ 平文で保存されます。本番のクレデンシャル等は入力しないでください</span></label>
         <div id="procEnvVars"></div>
         <button class="btn" style="margin-top: 8px;" onclick="addEnvVar()">＋ 追加</button>
       </div>
@@ -308,7 +312,7 @@ async function launchProcess(envId, procId) {
 // --- Render ---
 function isMaskedKey(key) {
   const lower = key.toLowerCase();
-  return lower.includes('password') || lower.includes('secret') || lower.includes('token') || lower.includes('apikey') || lower.includes('api_key');
+  return lower.includes('password') || lower.includes('secret') || lower.includes('token') || lower.includes('apikey') || lower.includes('api_key') || lower.includes('api-key');
 }
 
 function escapeHtml(str) {
@@ -338,14 +342,14 @@ function render() {
           <h2>${envName}</h2>
           ${env.worktree?.enabled ? `<span style="font-size: 11px; background: var(--border); padding: 2px 6px; border-radius: 4px;">worktree</span>` : ''}
           <div class="env-actions">
-            <button class="btn btn-primary" onclick="launchEnv('${envId}')">▶ 全て起動</button>
-            <button class="btn" onclick="openEnvModal(${eIdx})">編集</button>
-            <button class="btn" onclick="deleteEnv(${eIdx})" style="color: var(--red);">削除</button>
+            <button class="btn btn-primary" data-action="launch-env" data-env-id="${envId}">▶ 全て起動</button>
+            <button class="btn" data-action="edit-env" data-e-idx="${eIdx}">編集</button>
+            <button class="btn" data-action="delete-env" data-e-idx="${eIdx}" style="color: var(--red);">削除</button>
           </div>
         </div>
         <div class="env-body">
           <div style="margin-bottom: 12px;">
-            <button class="btn" onclick="openProcessModal(${eIdx}, -1)">＋ プロセスを追加</button>
+            <button class="btn" data-action="add-process" data-e-idx="${eIdx}">＋ プロセスを追加</button>
           </div>
     `;
     if (env.processes && env.processes.length > 0) {
@@ -357,6 +361,9 @@ function render() {
         const procDepends = proc.depends_on && proc.depends_on.length > 0
           ? ` | depends_on: ${escapeHtml(proc.depends_on.join(', '))}`
           : '';
+        const procDelay = typeof proc.delay_seconds !== 'undefined'
+          ? ` | delay: ${escapeHtml(proc.delay_seconds)}s`
+          : '';
 
         html += `
           <div class="process-item">
@@ -366,12 +373,13 @@ function render() {
               <div class="process-meta">
                 cwd: ${procCwd}
                 ${procDepends}
+                ${procDelay}
               </div>
             </div>
             <div class="process-actions">
-              <button class="btn" onclick="launchProcess('${envId}', '${procId}')">▶ 起動</button>
-              <button class="btn" onclick="openProcessModal(${eIdx}, ${pIdx})">編集</button>
-              <button class="btn" onclick="deleteProcess(${eIdx}, ${pIdx})" style="color: var(--red);">削除</button>
+              <button class="btn" data-action="launch-process" data-env-id="${envId}" data-proc-id="${procId}">▶ 起動</button>
+              <button class="btn" data-action="edit-process" data-e-idx="${eIdx}" data-p-idx="${pIdx}">編集</button>
+              <button class="btn" data-action="delete-process" data-e-idx="${eIdx}" data-p-idx="${pIdx}" style="color: var(--red);">削除</button>
             </div>
           </div>
         `;
@@ -496,6 +504,7 @@ function openProcessModal(envIndex, procIndex = -1) {
     document.getElementById('procLabel').value = proc.label || '';
     document.getElementById('procCmd').value = proc.command || '';
     document.getElementById('procCwd').value = proc.cwd || '';
+    document.getElementById('procDelay').value = typeof proc.delay_seconds !== 'undefined' ? proc.delay_seconds : 1;
 
     Array.from(dependsSelect.options).forEach(opt => {
       opt.selected = (proc.depends_on || []).includes(opt.value);
@@ -507,6 +516,7 @@ function openProcessModal(envIndex, procIndex = -1) {
     document.getElementById('procLabel').value = '';
     document.getElementById('procCmd').value = '';
     document.getElementById('procCwd').value = '';
+    document.getElementById('procDelay').value = 1;
     Array.from(dependsSelect.options).forEach(opt => opt.selected = false);
     tempEnvVars = [];
   }
@@ -533,6 +543,7 @@ function saveProcess() {
     label: document.getElementById('procLabel').value.trim(),
     command: document.getElementById('procCmd').value.trim(),
     cwd: document.getElementById('procCwd').value.trim(),
+    delay_seconds: parseFloat(document.getElementById('procDelay').value) || 0,
     depends_on: depends_on,
     env: envObj
   };
@@ -558,6 +569,21 @@ function deleteProcess(envIndex, procIndex) {
     saveEnvsData();
   }
 }
+
+// Events
+document.getElementById('app').addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+
+  const action = btn.dataset.action;
+  if (action === 'launch-env') launchEnv(btn.dataset.envId);
+  else if (action === 'edit-env') openEnvModal(Number(btn.dataset.eIdx));
+  else if (action === 'delete-env') deleteEnv(Number(btn.dataset.eIdx));
+  else if (action === 'add-process') openProcessModal(Number(btn.dataset.eIdx), -1);
+  else if (action === 'launch-process') launchProcess(btn.dataset.envId, btn.dataset.procId);
+  else if (action === 'edit-process') openProcessModal(Number(btn.dataset.eIdx), Number(btn.dataset.pIdx));
+  else if (action === 'delete-process') deleteProcess(Number(btn.dataset.eIdx), Number(btn.dataset.pIdx));
+});
 
 // Init
 fetchEnvs();
