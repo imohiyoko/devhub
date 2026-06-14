@@ -30,7 +30,6 @@ def handle_ls(handler, params):
 
     # Windows: virtual drive listing
     if platform.system() == 'Windows' and raw_path == '__drives__':
-        import string
         import ctypes
         entries = []
         bitmask = ctypes.windll.kernel32.GetLogicalDrives()
@@ -38,13 +37,12 @@ def handle_ls(handler, params):
             if bitmask & (1 << i):
                 letter = chr(65 + i)
                 drive = f"{letter}:\\"
-                if os.path.exists(drive):
-                    entries.append({
-                        'name': f"{letter}:",
-                        'path': os.path.normpath(drive),
-                        'is_git': False,
-                        'in_workspace': False,
-                    })
+                entries.append({
+                    'name': f"{letter}:",
+                    'path': os.path.normpath(drive),
+                    'is_git': False,
+                    'in_workspace': False,
+                })
         handler.send_json({'path': '__drives__', 'parent': None, 'is_git': False, 'entries': entries})
         return
 

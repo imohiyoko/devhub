@@ -990,6 +990,7 @@ let userHome = '';
 let isWindows = false;
 let appConfig = { scan_roots: [], excludes: [], pinned_repos: [] };
 let browsingPath = '~';
+let browsingParent = null;
 
 async function loadSystemInfo() {
   try {
@@ -1060,6 +1061,7 @@ async function browseTo(path) {
     }
     const data = await res.json();
     browsingPath = data.path;
+    browsingParent = data.parent;
     document.getElementById('path-input').value = browsingPath === '__drives__' ? 'マイコンピュータ' : toDisplayPath(browsingPath);
     document.getElementById('btn-dir-up').disabled = !data.parent;
 
@@ -1118,7 +1120,7 @@ async function addRepoFromBrowser(path, btnEl) {
   await saveAppConfig();
   await fetchRepos();
   if (btnEl) { btnEl.textContent = '追加済'; btnEl.classList.add('added'); }
-  const name = path.split(/[\\/]/).pop();
+  const name = path.split(/[\\/]/).filter(Boolean).pop() || path;
   showRepoMsg(`${name} を追加しました`, 'success');
 }
 
@@ -1158,7 +1160,7 @@ async function handlePathAdd() {
     if (!alreadyPinned) appConfig.pinned_repos.push(targetPath);
     await saveAppConfig();
     await fetchRepos();
-    const name = targetPath.split(/[\\/]/).pop();
+    const name = targetPath.split(/[\\/]/).filter(Boolean).pop() || targetPath;
     showRepoMsg(`${name} を追加しました`, 'success');
     browseTo(browsingPath);
   } catch(e) {
@@ -1188,12 +1190,8 @@ function closeAddRepoPanel() {
 }
 document.getElementById('btn-close-add-panel').addEventListener('click', closeAddRepoPanel);
 
-document.getElementById('btn-dir-up').addEventListener('click', async () => {
-  try {
-    const res = await fetch(`/api/ls?path=${encodeURIComponent(browsingPath)}`);
-    const data = await res.json();
-    if (data.parent) browseTo(data.parent);
-  } catch(e) { console.error(e); }
+document.getElementById('btn-dir-up').addEventListener('click', () => {
+  if (browsingParent) browseTo(browsingParent);
 });
 
 document.getElementById('path-input').addEventListener('keydown', (e) => {
@@ -1202,19 +1200,18 @@ document.getElementById('path-input').addEventListener('keydown', (e) => {
 });
 document.getElementById('path-input').addEventListener('blur', (e) => {
   const input = e.target;
-  if (e.relatedTarget && (e.relatedTarget.id === 'btn-path-add' || e.relatedTarget.id === 'btn-dir-up')) {
+  const panel = document.getElementById('add-repo-panel');
+  if (e.relatedTarget && panel.contains(e.relatedTarget)) {
     return;
   }
-  setTimeout(() => {
-    input.value = browsingPath === '__drives__' ? 'マイコンピュータ' : toDisplayPath(browsingPath);
-  }, 200);
+  input.value = browsingPath === '__drives__' ? 'マイコンピュータ' : toDisplayPath(browsingPath);
 });
 
 document.getElementById('btn-path-add').addEventListener('click', () => handlePathAdd());
 
 document.getElementById('btn-remove-repo').addEventListener('click', async () => {
   if (!currentRepo) return;
-  const repoName = currentRepo.split(/[\\/]/).pop();
+  const repoName = currentRepo.split(/[\\/]/).filter(Boolean).pop() || currentRepo;
   if (!confirm(`「${repoName}」をリポジトリ一覧から削除しますか？\n(ローカルのファイルは削除されません)`)) return;
 
   const t = toDisplayPath(currentRepo);
