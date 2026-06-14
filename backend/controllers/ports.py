@@ -149,7 +149,10 @@ def kill_port_process(port, pid):
 
 def handle_get(handler, path, params):
     if path == '/api/ports':
-        handler.send_json(list_open_ports())
+        handler.send_json({
+            'ports': list_open_ports(),
+            'protected_ports': protected_ports()
+        })
         return
     handler.send_json({'error': 'not found'}, 404)
 

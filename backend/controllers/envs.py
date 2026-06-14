@@ -101,6 +101,10 @@ def launch_process(process_def, cwd_override=None):
     open_in_terminal(cwd, process_def.get('command', ''), env)
 
 def setup_worktree(env_id, worktree_def):
+    # Note: Because open_in_terminal executes via system terminal emulators,
+    # devhub cannot track when the user actually closes the terminal process.
+    # Therefore, the worktree temporary directories cannot be automatically
+    # cleaned up on process exit and must be cleaned up manually.
     if not worktree_def or not worktree_def.get('enabled'):
         return None
     repo_path = os.path.expanduser(worktree_def.get('repo_path', ''))
@@ -166,6 +170,12 @@ def launch_environment(env_id):
             print(f"Error in run_all for env '{env_id}': {e}", file=sys.stderr)
 
     threading.Thread(target=run_all, daemon=True).start()
+
+def handle_get(handler, path, params):
+    if path == '/api/envs':
+        handler.send_json(load_envs())
+        return
+    handler.send_json({'error': 'not found'}, 404)
 
 def handle_post(handler, path, data):
     if path == '/api/envs':
