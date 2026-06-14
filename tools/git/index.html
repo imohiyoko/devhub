@@ -611,10 +611,13 @@ function renderEmptyState() {
   const existing = document.getElementById('empty-state');
   if (existing) existing.remove();
 
+  const tabs = document.querySelector('.tabs');
+
   if (allRepos.length === 0) {
     document.getElementById('left-pane').style.display = 'none';
     document.getElementById('right-pane').style.display = 'none';
     document.getElementById('log-panel').style.display = 'none';
+    if (tabs) tabs.style.display = 'none';
 
     const el = document.createElement('div');
     el.id = 'empty-state';
@@ -633,6 +636,7 @@ function renderEmptyState() {
   } else {
     document.getElementById('left-pane').style.display = 'flex';
     document.getElementById('right-pane').style.display = 'flex';
+    if (tabs) tabs.style.display = 'flex';
     applyLayout();
   }
 }
