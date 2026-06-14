@@ -32,7 +32,8 @@ def open_in_terminal(cwd, command, env=None):
                     v_escaped = str(v).replace("'", "''")
                     env_exports.append(f"$env:{k}='{v_escaped}'")
                 else:
-                    env_exports.append(f'set "{k}={v}"')
+                    v_escaped = str(v).replace('"', '\\"')
+                    env_exports.append(f'set "{k}={v_escaped}"')
             else:
                 env_exports.append(f'export {k}={shlex.quote(str(v))}')
 
@@ -96,7 +97,10 @@ def open_in_terminal(cwd, command, env=None):
         subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
 
 def launch_process(process_def, cwd_override=None):
-    cwd = cwd_override if cwd_override else os.path.expanduser(process_def.get('cwd', ''))
+    raw_cwd = process_def.get('cwd')
+    cwd = cwd_override if cwd_override else (os.path.expanduser(raw_cwd) if raw_cwd else None)
+    if cwd == '':
+        cwd = None
     env = process_def.get('env', {})
     open_in_terminal(cwd, process_def.get('command', ''), env)
 
