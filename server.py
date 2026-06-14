@@ -164,9 +164,9 @@ def setup_worktree(env_id, worktree_def):
     try:
         subprocess.run(['git', 'worktree', 'add', tmp_path, branch], cwd=repo_path, check=True)
         return tmp_path
-    except Exception as e:
+    except Exception:
         shutil.rmtree(tmp_path, ignore_errors=True)
-        raise e
+        raise
 
 
 def launch_environment(env_id):
@@ -207,8 +207,11 @@ def launch_environment(env_id):
     def run_all():
         try:
             for pid in sorted_pids:
-                launch_process(pid_to_def[pid], cwd_override=cwd_override)
-                time.sleep(1)
+                p_def = pid_to_def[pid]
+                launch_process(p_def, cwd_override=cwd_override)
+                # Allow customizing delay via definition, fallback to 1 sec
+                delay = float(p_def.get('delay_seconds', 1.0))
+                time.sleep(max(0.0, delay))
         except Exception as e:
             print(f"Error in run_all for env '{env_id}': {e}", file=sys.stderr)
 
@@ -330,16 +333,16 @@ def open_in_terminal(cwd, command, env=None):
         if emulator == 'wt':
             flag = '-Command' if is_powershell else '/c'
             cmd = ['wt', 'new-tab', '--startingDirectory', cwd, shell] + shell_args + [flag, cmd_with_env]
-            subprocess.Popen(cmd)
+            subprocess.Popen(cmd, env=merged_env)
         else:
             subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
 
     elif sys_name == 'Linux':
         if emulator == 'gnome-terminal':
-            cmd = ['gnome-terminal', f'--working-directory={cwd}', '--', shell] + shell_args + ['-c', command]
+            cmd = ['gnome-terminal', f'--working-directory={cwd}', '--', shell] + shell_args + ['-c', cmd_with_env]
             subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'xterm':
-            cmd = ['xterm', '-e', shell] + shell_args + ['-c', command]
+            cmd = ['xterm', '-e', shell] + shell_args + ['-c', cmd_with_env]
             subprocess.Popen(cmd, cwd=cwd, env=merged_env)
         else:
             subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
@@ -1234,7 +1237,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/envs/launch':
             try:
                 data = json.loads(self.read_body())
-                launch_environment(data.get('env_id'))
+                env_id = data.get('env_id')
+                if not env_id:
+                    raise ValueError("env_id is required")
+                launch_environment(env_id)
                 self.send_json({'ok': True})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
@@ -1245,6 +1251,8 @@ class Handler(BaseHTTPRequestHandler):
                 data = json.loads(self.read_body())
                 env_id = data.get('env_id')
                 process_id = data.get('process_id')
+                if not env_id or not process_id:
+                    raise ValueError("env_id and process_id are required")
                 envs_data = load_envs()
                 env_def = next((e for e in envs_data.get('environments', []) if e.get('id') == env_id), None)
                 if not env_def:
