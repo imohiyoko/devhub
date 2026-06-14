@@ -194,6 +194,31 @@ def handle_post(handler, path, data):
                     raise ValueError(f"Duplicate process ID '{pid}' in environment '{eid}'")
                 proc_ids.add(pid)
 
+            # Verify dependencies and circular references
+            processes = env.get('processes', [])
+            in_degree = {p['id']: 0 for p in processes}
+            adj = {p['id']: [] for p in processes}
+            for p in processes:
+                pid = p.get('id')
+                for dep in p.get('depends_on', []):
+                    if dep not in adj:
+                        raise ValueError(f"Dependency '{dep}' for process '{pid}' not found in environment '{eid}'")
+                    adj[dep].append(pid)
+                    in_degree[pid] += 1
+
+            queue = deque([pid for pid, deg in in_degree.items() if deg == 0])
+            sorted_pids = []
+            while queue:
+                pid = queue.popleft()
+                sorted_pids.append(pid)
+                for nxt in adj[pid]:
+                    in_degree[nxt] -= 1
+                    if in_degree[nxt] == 0:
+                        queue.append(nxt)
+
+            if len(sorted_pids) != len(processes):
+                raise ValueError(f"Circular dependency detected in environment '{eid}'")
+
         save_envs(data)
         handler.send_json({'ok': True})
         return

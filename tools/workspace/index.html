@@ -381,8 +381,12 @@ function toDisplay(absPath) {
   if (userHome) {
     const normalizedAbs = absPath.replace(/\\/g, '/');
     const normalizedHome = userHome.replace(/\\/g, '/');
-    if (normalizedAbs.startsWith(normalizedHome)) {
-      return '~' + normalizedAbs.slice(normalizedHome.length);
+    if (normalizedAbs === normalizedHome) {
+      return '~';
+    }
+    const prefix = normalizedHome.endsWith('/') ? normalizedHome : normalizedHome + '/';
+    if (normalizedAbs.startsWith(prefix)) {
+      return '~/' + normalizedAbs.slice(prefix.length);
     }
   }
   return absPath;

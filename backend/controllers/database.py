@@ -6,6 +6,7 @@ import sqlite3
 import ipaddress
 import json
 import xml.etree.ElementTree as ET
+from contextlib import closing
 from backend.storage import load_settings
 from backend.controllers.base import sanitize_db_connection
 
@@ -251,7 +252,7 @@ def row_search_sample(columns, row, search, limit=3):
 
 def db_tables(profile):
     if profile['driver'] == 'sqlite':
-        with sqlite3.connect(profile['path']) as conn:
+        with closing(sqlite3.connect(profile['path'])) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT name, type FROM sqlite_master "
@@ -275,7 +276,7 @@ def db_tables(profile):
 
 def db_table_names_types(profile):
     if profile['driver'] == 'sqlite':
-        with sqlite3.connect(profile['path']) as conn:
+        with closing(sqlite3.connect(profile['path'])) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT name, type FROM sqlite_master "
@@ -301,7 +302,7 @@ def db_search(profile, column_search='', element_search=''):
 
     tables = db_table_names_types(profile)
     if profile['driver'] == 'sqlite':
-        with sqlite3.connect(profile['path']) as conn:
+        with closing(sqlite3.connect(profile['path'])) as conn:
             conn.row_factory = sqlite3.Row
             for table in tables:
                 try:
@@ -376,7 +377,7 @@ def db_search(profile, column_search='', element_search=''):
 
 def db_rows(profile, table, limit, offset, search=''):
     if profile['driver'] == 'sqlite':
-        with sqlite3.connect(profile['path']) as conn:
+        with closing(sqlite3.connect(profile['path'])) as conn:
             conn.row_factory = sqlite3.Row
             meta = sqlite_table_meta(conn, table)
             columns = sqlite_columns(conn, table)
@@ -441,23 +442,24 @@ def db_rows(profile, table, limit, offset, search=''):
 
 def db_update(profile, table, column, key, value):
     if profile['driver'] == 'sqlite':
-        with sqlite3.connect(profile['path']) as conn:
-            conn.row_factory = sqlite3.Row
-            meta = sqlite_table_meta(conn, table)
-            if meta['type'] != 'table':
-                raise ValueError('only tables can be edited')
-            columns = sqlite_columns(conn, table)
-            column_names = {c['name'] for c in columns}
-            pk_columns = {c['name'] for c in columns if c['pk']}
-            if column not in column_names:
-                raise ValueError('column was not found')
-            if column in pk_columns:
-                raise ValueError('primary key columns cannot be edited')
-            rowid = key.get('rowid') if isinstance(key, dict) else key
-            sql = f'UPDATE {quote_identifier(table)} SET {quote_identifier(column)} = ? WHERE rowid = ?'
-            cur = conn.execute(sql, (value, rowid))
-            if cur.rowcount == 0:
-                raise ValueError('row was not found')
+        with closing(sqlite3.connect(profile['path'])) as conn:
+            with conn:
+                conn.row_factory = sqlite3.Row
+                meta = sqlite_table_meta(conn, table)
+                if meta['type'] != 'table':
+                    raise ValueError('only tables can be edited')
+                columns = sqlite_columns(conn, table)
+                column_names = {c['name'] for c in columns}
+                pk_columns = {c['name'] for c in columns if c['pk']}
+                if column not in column_names:
+                    raise ValueError('column was not found')
+                if column in pk_columns:
+                    raise ValueError('primary key columns cannot be edited')
+                rowid = key.get('rowid') if isinstance(key, dict) else key
+                sql = f'UPDATE {quote_identifier(table)} SET {quote_identifier(column)} = ? WHERE rowid = ?'
+                cur = conn.execute(sql, (value, rowid))
+                if cur.rowcount == 0:
+                    raise ValueError('row was not found')
         return
 
     columns = mysql_columns(profile, table)
@@ -477,13 +479,14 @@ def db_update(profile, table, column, key, value):
 
 def db_insert(profile, table):
     if profile['driver'] == 'sqlite':
-        with sqlite3.connect(profile['path']) as conn:
-            conn.row_factory = sqlite3.Row
-            meta = sqlite_table_meta(conn, table)
-            if meta['type'] != 'table':
-                raise ValueError('only tables can be edited')
-            cur = conn.execute(f'INSERT INTO {quote_identifier(table)} DEFAULT VALUES')
-            return cur.lastrowid
+        with closing(sqlite3.connect(profile['path'])) as conn:
+            with conn:
+                conn.row_factory = sqlite3.Row
+                meta = sqlite_table_meta(conn, table)
+                if meta['type'] != 'table':
+                    raise ValueError('only tables can be edited')
+                cur = conn.execute(f'INSERT INTO {quote_identifier(table)} DEFAULT VALUES')
+                return cur.lastrowid
 
     mysql_columns(profile, table)
     mysql_run(profile, f'INSERT INTO {mysql_identifier(table)} () VALUES ()')
@@ -491,15 +494,16 @@ def db_insert(profile, table):
 
 def db_delete(profile, table, key):
     if profile['driver'] == 'sqlite':
-        with sqlite3.connect(profile['path']) as conn:
-            conn.row_factory = sqlite3.Row
-            meta = sqlite_table_meta(conn, table)
-            if meta['type'] != 'table':
-                raise ValueError('only tables can be edited')
-            rowid = key.get('rowid') if isinstance(key, dict) else key
-            cur = conn.execute(f'DELETE FROM {quote_identifier(table)} WHERE rowid = ?', (rowid,))
-            if cur.rowcount == 0:
-                raise ValueError('row was not found')
+        with closing(sqlite3.connect(profile['path'])) as conn:
+            with conn:
+                conn.row_factory = sqlite3.Row
+                meta = sqlite_table_meta(conn, table)
+                if meta['type'] != 'table':
+                    raise ValueError('only tables can be edited')
+                rowid = key.get('rowid') if isinstance(key, dict) else key
+                cur = conn.execute(f'DELETE FROM {quote_identifier(table)} WHERE rowid = ?', (rowid,))
+                if cur.rowcount == 0:
+                    raise ValueError('row was not found')
         return
 
     columns = mysql_columns(profile, table)
