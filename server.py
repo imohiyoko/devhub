@@ -124,8 +124,8 @@ def load_envs():
             return cfg
         except FileNotFoundError:
             pass
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error loading environments: {e}", file=sys.stderr)
     return {'environments': []}
 
 
@@ -137,8 +137,7 @@ def save_envs(data):
 
 def launch_process(process_def, cwd_override=None):
     cwd = cwd_override if cwd_override else os.path.expanduser(process_def.get('cwd', ''))
-    env = os.environ.copy()
-    env.update(process_def.get('env', {}))
+    env = process_def.get('env', {})
     open_in_terminal(cwd, process_def.get('command', ''), env)
 
 
@@ -166,9 +165,10 @@ def launch_environment(env_id):
     adj = {p['id']: [] for p in processes}
     for p in processes:
         for dep in p.get('depends_on', []):
-            if dep in adj:
-                adj[dep].append(p['id'])
-                in_degree[p['id']] += 1
+            if dep not in adj:
+                raise ValueError(f"Dependency '{dep}' for process '{p['id']}' not found in environment")
+            adj[dep].append(p['id'])
+            in_degree[p['id']] += 1
 
     queue = [pid for pid, deg in in_degree.items() if deg == 0]
     sorted_pids = []
@@ -249,16 +249,23 @@ def open_in_terminal(cwd, command, env=None):
     shell = term_cfg.get('shell')
     shell_args = term_cfg.get('shell_args', [])
 
+    is_powershell = shell and ('powershell' in shell.lower() or 'pwsh' in shell.lower())
+
     cmd_with_env = command
     if env:
         env_exports = []
         for k, v in env.items():
             if sys_name == 'Windows':
-                env_exports.append(f'set {k}={v}')
+                if is_powershell:
+                    env_exports.append(f"$env:{k}='{v}'")
+                else:
+                    env_exports.append(f'set {k}={v}')
             else:
                 env_exports.append(f'export {k}={shlex.quote(str(v))}')
+
         if env_exports:
-            cmd_with_env = ' && '.join(env_exports) + ' && ' + command
+            separator = ' ; ' if (sys_name == 'Windows' and is_powershell) else ' && '
+            cmd_with_env = separator.join(env_exports) + separator + command
 
     merged_env = os.environ.copy() | (env or {})
 
@@ -293,7 +300,7 @@ def open_in_terminal(cwd, command, env=None):
 
     elif sys_name == 'Windows':
         if emulator == 'wt':
-            flag = '-Command' if shell and ('powershell' in shell.lower() or 'pwsh' in shell.lower()) else '/c'
+            flag = '-Command' if is_powershell else '/c'
             cmd = ['wt', 'new-tab', '--startingDirectory', cwd, shell] + shell_args + [flag, cmd_with_env]
             subprocess.Popen(cmd)
         else:
@@ -1188,6 +1195,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/envs':
             try:
                 data = json.loads(self.read_body())
+                if not isinstance(data, dict) or not isinstance(data.get('environments'), list):
+                    raise ValueError("Invalid payload: expected object with 'environments' array")
                 save_envs(data)
                 self.send_json({'ok': True})
             except Exception as e:
