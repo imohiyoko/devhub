@@ -251,18 +251,30 @@ let currentProcIndex = -1;
 
 // --- API ---
 async function fetchEnvs() {
-  const res = await fetch('/api/envs');
-  envsData = await res.json();
-  render();
+  try {
+    const res = await fetch('/api/envs');
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch environments');
+    envsData = data;
+    render();
+  } catch(e) {
+    alert('Error fetching environments: ' + e.message);
+  }
 }
 
 async function saveEnvsData() {
-  await fetch('/api/envs', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(envsData)
-  });
-  render();
+  try {
+    const res = await fetch('/api/envs', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(envsData)
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Failed to save environments');
+    render();
+  } catch(e) {
+    alert('Error saving environments: ' + e.message);
+  }
 }
 
 async function launchEnv(envId) {
@@ -299,6 +311,16 @@ function isMaskedKey(key) {
   return lower.includes('password') || lower.includes('secret') || lower.includes('token') || lower.includes('apikey') || lower.includes('api_key');
 }
 
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function render() {
   const app = document.getElementById('app');
   if (!envsData.environments || envsData.environments.length === 0) {
@@ -308,13 +330,15 @@ function render() {
 
   let html = '';
   envsData.environments.forEach((env, eIdx) => {
+    const envId = escapeHtml(env.id);
+    const envName = escapeHtml(env.name || env.id);
     html += `
       <div class="env-card">
         <div class="env-header">
-          <h2>${env.name || env.id}</h2>
+          <h2>${envName}</h2>
           ${env.worktree?.enabled ? `<span style="font-size: 11px; background: var(--border); padding: 2px 6px; border-radius: 4px;">worktree</span>` : ''}
           <div class="env-actions">
-            <button class="btn btn-primary" onclick="launchEnv('${env.id}')">▶ 全て起動</button>
+            <button class="btn btn-primary" onclick="launchEnv('${envId}')">▶ 全て起動</button>
             <button class="btn" onclick="openEnvModal(${eIdx})">編集</button>
             <button class="btn" onclick="deleteEnv(${eIdx})" style="color: var(--red);">削除</button>
           </div>
@@ -326,18 +350,26 @@ function render() {
     `;
     if (env.processes && env.processes.length > 0) {
       env.processes.forEach((proc, pIdx) => {
+        const procId = escapeHtml(proc.id);
+        const procLabel = escapeHtml(proc.label || proc.id);
+        const procCmd = escapeHtml(proc.command);
+        const procCwd = escapeHtml(proc.cwd);
+        const procDepends = proc.depends_on && proc.depends_on.length > 0
+          ? ` | depends_on: ${escapeHtml(proc.depends_on.join(', '))}`
+          : '';
+
         html += `
           <div class="process-item">
             <div class="process-info">
-              <div class="process-label">${proc.label || proc.id}</div>
-              <div class="process-cmd">${proc.command}</div>
+              <div class="process-label">${procLabel}</div>
+              <div class="process-cmd">${procCmd}</div>
               <div class="process-meta">
-                cwd: ${proc.cwd}
-                ${proc.depends_on && proc.depends_on.length > 0 ? ` | depends_on: ${proc.depends_on.join(', ')}` : ''}
+                cwd: ${procCwd}
+                ${procDepends}
               </div>
             </div>
             <div class="process-actions">
-              <button class="btn" onclick="launchProcess('${env.id}', '${proc.id}')">▶ 起動</button>
+              <button class="btn" onclick="launchProcess('${envId}', '${procId}')">▶ 起動</button>
               <button class="btn" onclick="openProcessModal(${eIdx}, ${pIdx})">編集</button>
               <button class="btn" onclick="deleteProcess(${eIdx}, ${pIdx})" style="color: var(--red);">削除</button>
             </div>
@@ -423,13 +455,16 @@ let tempEnvVars = [];
 
 function renderEnvVars() {
   const container = document.getElementById('procEnvVars');
-  container.innerHTML = tempEnvVars.map((v, i) => `
+  container.innerHTML = tempEnvVars.map((v, i) => {
+    const escapedKey = escapeHtml(v.key);
+    const escapedValue = escapeHtml(v.value);
+    return `
     <div class="env-var-row">
-      <input type="text" class="form-control" placeholder="KEY" value="${v.key}" oninput="updateEnvVarKey(${i}, this.value)">
-      <input type="${isMaskedKey(v.key) ? 'password' : 'text'}" class="form-control" placeholder="VALUE" value="${v.value}" oninput="updateEnvVarValue(${i}, this.value)">
+      <input type="text" class="form-control" placeholder="KEY" value="${escapedKey}" oninput="updateEnvVarKey(${i}, this.value)">
+      <input type="${isMaskedKey(v.key) ? 'password' : 'text'}" class="form-control" placeholder="VALUE" value="${escapedValue}" oninput="updateEnvVarValue(${i}, this.value)">
       <button class="env-var-remove" onclick="removeEnvVar(${i})">✕</button>
     </div>
-  `).join('');
+  `}).join('');
 }
 function addEnvVar() { tempEnvVars.push({key: '', value: ''}); renderEnvVars(); }
 function updateEnvVarKey(i, val) { tempEnvVars[i].key = val; renderEnvVars(); }
