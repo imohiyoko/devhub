@@ -134,7 +134,7 @@ def handle_get(handler, path, params):
 
     if path == '/api/git/branches':
         try:
-            res = subprocess.run(['git', 'branch', '-a', '--format=%(refname:short)\t%(HEAD)'], cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(['git', 'branch', '-a', '--format=%(refname)\t%(refname:short)\t%(HEAD)'], cwd=repo_path, capture_output=True, text=True, check=True)
             handler.send_json({'output': res.stdout})
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
@@ -167,12 +167,6 @@ def handle_get(handler, path, params):
 
     if path == '/api/git/worktrees':
         try:
-            # First, run prune to clean up stale worktrees
-            try:
-                subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True)
-            except Exception:
-                pass
-
             res = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=repo_path, capture_output=True, text=True, check=True)
             lines = res.stdout.splitlines()
             worktrees = []
@@ -327,6 +321,26 @@ def handle_post(handler, path, data):
         if not worktree_path or not branch:
             handler.send_json({'error': 'missing worktree_path or branch'}, 400)
             return
+
+        # Security validations to prevent argument injection
+        if branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+            handler.send_json({'error': 'invalid branch name'}, 400)
+            return
+
+        if worktree_path.startswith('-'):
+            handler.send_json({'error': 'invalid worktree path'}, 400)
+            return
+
+        if base_commit:
+            if base_commit.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./~^@{}#-]+', base_commit):
+                handler.send_json({'error': 'invalid base commit/branch'}, 400)
+                return
+
+        # Prune stale worktrees before adding to avoid conflict with manually deleted worktrees
+        try:
+            subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True)
+        except Exception:
+            pass
             
         cmd = ['git', 'worktree', 'add']
         if new_branch:
@@ -349,6 +363,10 @@ def handle_post(handler, path, data):
         if not worktree_path:
             handler.send_json({'error': 'missing worktree_path'}, 400)
             return
+
+        if worktree_path.startswith('-'):
+            handler.send_json({'error': 'invalid worktree path'}, 400)
+            return
             
         cmd = ['git', 'worktree', 'remove']
         if force:
@@ -357,6 +375,11 @@ def handle_post(handler, path, data):
         
         try:
             res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+            # Prune after removal
+            try:
+                subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True)
+            except Exception:
+                pass
             handler.send_json({'ok': True, 'output': res.stdout})
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
@@ -367,6 +390,10 @@ def handle_post(handler, path, data):
         force = data.get('force', False)
         if not branch:
             handler.send_json({'error': 'missing branch name'}, 400)
+            return
+
+        if branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+            handler.send_json({'error': 'invalid branch name'}, 400)
             return
             
         cmd = ['git', 'branch', '-D' if force else '-d', branch]
@@ -379,7 +406,12 @@ def handle_post(handler, path, data):
 
     if path == '/api/git/fetch':
         try:
-            res = subprocess.run(['git', 'fetch', '--prune'], cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
+            # Set environment variables to prevent git fetch from hanging on authentication prompt
+            env = os.environ.copy()
+            env['GIT_TERMINAL_PROMPT'] = '0'
+            env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
+            
+            res = subprocess.run(['git', 'fetch', '--prune'], cwd=repo_path, env=env, capture_output=True, text=True, check=True, timeout=30)
             handler.send_json({'ok': True, 'output': res.stdout})
         except subprocess.TimeoutExpired:
             handler.send_json({'error': 'git fetch timed out'}, 504)
