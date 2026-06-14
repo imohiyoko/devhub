@@ -1043,8 +1043,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             if path == '/api/git/log':
-                n = params.get('n', ['100'])[0]
-                if not n.isdigit(): n = '100'
+                try:
+                    n = int(params.get('n', ['100'])[0])
+                except ValueError:
+                    n = 100
+                n = max(1, min(n, 1000))
+
                 try:
                     res = subprocess.run(['git', 'log', '--oneline', '--decorate', '--graph', f'-n{n}'], cwd=repo_path, capture_output=True, text=True, check=True)
                     self.send_json({'output': res.stdout})
@@ -1054,7 +1058,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == '/api/git/branches':
                 try:
-                    res = subprocess.run(['git', 'branch', '-a', '--format=%(refname:short)|%(HEAD)'], cwd=repo_path, capture_output=True, text=True, check=True)
+                    res = subprocess.run(['git', 'branch', '-a', '--format=%(refname:short)\t%(HEAD)'], cwd=repo_path, capture_output=True, text=True, check=True)
                     self.send_json({'output': res.stdout})
                 except subprocess.CalledProcessError as e:
                     self.send_json({'error': e.stderr}, 400)
@@ -1062,6 +1066,9 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == '/api/git/diff':
                 file_path = params.get('file', [''])[0]
+                if not file_path:
+                    self.send_json({'error': 'empty file path'}, 400)
+                    return
                 staged = params.get('staged', ['0'])[0] == '1'
                 cmd = ['git', 'diff']
                 if staged:
@@ -1081,6 +1088,9 @@ class Handler(BaseHTTPRequestHandler):
                 except subprocess.CalledProcessError as e:
                     self.send_json({'error': e.stderr}, 400)
                 return
+
+            self.send_json({'error': 'not found'}, 404)
+            return
 
         if path == '/api/ls':
             target = os.path.expanduser(params.get('path', ['~'])[0])
@@ -1185,8 +1195,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == '/api/git/stage':
                 files = data.get('files', [])
-                if not files:
-                    self.send_json({'error': 'no files specified'}, 400)
+                if not isinstance(files, list) or not all(isinstance(f, str) and f for f in files):
+                    self.send_json({'error': 'invalid files list'}, 400)
                     return
                 try:
                     res = subprocess.run(['git', 'add', '--'] + files, cwd=repo_path, capture_output=True, text=True, check=True)
@@ -1197,8 +1207,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == '/api/git/unstage':
                 files = data.get('files', [])
-                if not files:
-                    self.send_json({'error': 'no files specified'}, 400)
+                if not isinstance(files, list) or not all(isinstance(f, str) and f for f in files):
+                    self.send_json({'error': 'invalid files list'}, 400)
                     return
                 try:
                     res = subprocess.run(['git', 'restore', '--staged', '--'] + files, cwd=repo_path, capture_output=True, text=True, check=True)
@@ -1221,23 +1231,27 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == '/api/git/push':
                 try:
-                    res = subprocess.run(['git', 'push'], cwd=repo_path, capture_output=True, text=True, check=True)
+                    res = subprocess.run(['git', 'push'], cwd=repo_path, capture_output=True, text=True, check=True, timeout=60)
                     self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.TimeoutExpired:
+                    self.send_json({'error': 'push timed out'}, 504)
                 except subprocess.CalledProcessError as e:
                     self.send_json({'error': e.stderr}, 400)
                 return
 
             if path == '/api/git/pull':
                 try:
-                    res = subprocess.run(['git', 'pull'], cwd=repo_path, capture_output=True, text=True, check=True)
+                    res = subprocess.run(['git', 'pull'], cwd=repo_path, capture_output=True, text=True, check=True, timeout=60)
                     self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.TimeoutExpired:
+                    self.send_json({'error': 'pull timed out'}, 504)
                 except subprocess.CalledProcessError as e:
                     self.send_json({'error': e.stderr}, 400)
                 return
 
             if path == '/api/git/checkout':
                 branch = data.get('branch', '')
-                if not branch or not re.fullmatch(r'^[a-zA-Z0-9_\-./]+$', branch):
+                if not branch or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
                     self.send_json({'error': 'invalid branch name'}, 400)
                     return
                 try:
@@ -1249,7 +1263,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == '/api/git/branch/create':
                 branch = data.get('branch', '')
-                if not branch or not re.fullmatch(r'^[a-zA-Z0-9_\-./]+$', branch):
+                if not branch or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
                     self.send_json({'error': 'invalid branch name'}, 400)
                     return
                 try:
@@ -1266,8 +1280,11 @@ class Handler(BaseHTTPRequestHandler):
                     cmd.append(action)
                     if action in ['pop', 'drop']:
                         idx = data.get('index')
-                        if idx is not None:
+                        if isinstance(idx, int):
                             cmd.append(f'stash@{{{idx}}}')
+                        else:
+                            self.send_json({'error': 'invalid index'}, 400)
+                            return
                 else:
                     self.send_json({'error': 'invalid action'}, 400)
                     return
@@ -1278,6 +1295,9 @@ class Handler(BaseHTTPRequestHandler):
                 except subprocess.CalledProcessError as e:
                     self.send_json({'error': e.stderr}, 400)
                 return
+
+            self.send_json({'error': 'not found'}, 404)
+            return
 
         if path == '/api/ports/label':
             try:

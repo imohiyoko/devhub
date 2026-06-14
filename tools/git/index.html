@@ -327,10 +327,11 @@ let gitData = {
 function deepMerge(target, source) {
   for (const key of Object.keys(source)) {
     if (source[key] instanceof Object && key in target) {
-      Object.assign(source[key], deepMerge(target[key], source[key]));
+      target[key] = deepMerge(target[key], source[key]);
+    } else {
+      target[key] = source[key];
     }
   }
-  Object.assign(target || {}, source);
   return target;
 }
 
@@ -482,9 +483,8 @@ function renderTabContent() {
                 const f = document.createElement('span'); f.textContent = item.file;
                 el.appendChild(s); el.appendChild(f);
 
-                el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); fetchDiff(item.file, isStaged); };
-
                 const itemObj = { type: 'file', el, data: item, isStaged };
+                el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); fetchDiff(item.file, isStaged); };
                 currentListItems.push(itemObj);
                 if (currentListItems.length - 1 === selectedItemIndex) {
                     el.classList.add('selected');
@@ -510,16 +510,16 @@ function renderTabContent() {
     } else if (activeTab === 'branches') {
         const lines = gitData.branches.trim().split('\n').filter(l=>l);
         lines.forEach((line) => {
-            const parts = line.split('|');
+            const parts = line.split('\t');
             if(parts.length < 2) return;
             const name = parts[0]; const isHead = parts[1] === '*';
             const el = document.createElement('div'); el.className = 'list-item';
             el.textContent = `${isHead ? '* ' : '  '}${name}`;
             if(isHead) el.style.color = 'var(--green)';
 
+            const itemObj = { type: 'branch', el, data: name };
             el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); };
 
-            const itemObj = { type: 'branch', el, data: name };
             currentListItems.push(itemObj);
             if (currentListItems.length - 1 === selectedItemIndex) el.classList.add('selected');
             container.appendChild(el);
@@ -529,8 +529,8 @@ function renderTabContent() {
         lines.forEach(line => {
              const el = document.createElement('div'); el.className = 'list-item';
              el.textContent = line;
-             el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); };
              const itemObj = { type: 'stash', el, data: line };
+             el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); };
              currentListItems.push(itemObj);
              if (currentListItems.length - 1 === selectedItemIndex) el.classList.add('selected');
              container.appendChild(el);
@@ -541,8 +541,8 @@ function renderTabContent() {
         container.appendChild(el);
     } else if (activeTab === 'status') {
          const el = document.createElement('div'); el.style.padding = '10px';
-         const headLine = gitData.branches.trim().split('\n').find(l=>l.endsWith('|*'));
-         const branch = headLine ? headLine.split('|')[0] : 'Unknown';
+         const headLine = gitData.branches.trim().split('\n').find(l=>l.endsWith('\t*'));
+         const branch = headLine ? headLine.split('\t')[0] : 'Unknown';
          const { staged, unstaged } = parseStatus(gitData.status);
          el.innerHTML = `<strong>Branch:</strong> ${branch}<br><br><strong>Staged files:</strong> ${staged.length}<br><strong>Unstaged files:</strong> ${unstaged.length}`;
          container.appendChild(el);
@@ -709,10 +709,10 @@ document.addEventListener('keydown', (e) => {
         if (e.key === ' ' && selObj) { // space to pop
              // assuming format 'stash@{index}: ...'
              const match = selObj.data.match(/stash@\{(\d+)\}/);
-             if(match) doPost('/api/git/stash', { action: 'pop', index: match[1] });
+             if(match) doPost('/api/git/stash', { action: 'pop', index: parseInt(match[1], 10) });
         } else if (e.key === 'd' && selObj) {
              const match = selObj.data.match(/stash@\{(\d+)\}/);
-             if(match) doPost('/api/git/stash', { action: 'drop', index: match[1] });
+             if(match) doPost('/api/git/stash', { action: 'drop', index: parseInt(match[1], 10) });
         }
     }
 });
