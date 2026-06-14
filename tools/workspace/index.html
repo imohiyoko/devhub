@@ -302,6 +302,14 @@ main {
       <div class="dir-list" id="dir-list"></div>
     </div>
   </div>
+  <div class="settings-col">
+    <div class="settings-title">パスを直接追加</div>
+    <div style="display:flex; gap:6px;">
+      <input id="input-manual-path" type="text" placeholder="例: C:\path\to\repo または ~/repo" style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); padding:5px 8px; font-size:12px; outline:none;">
+      <button class="btn-sm" id="btn-manual-add" style="border-color:var(--accent); color:var(--accent);">追加</button>
+    </div>
+    <div id="manual-add-message" style="font-size:11px; margin-top:6px; min-height:16px;"></div>
+  </div>
 </div>
 
 <main>
@@ -318,9 +326,32 @@ let pinnedRepos = [];
 let repoOrder = [];
 let browsingPath = '~';
 let dragSrcPath = null;
+let userHome = '';
+let isWindows = false;
+
+function isPathMatch(p1, p2) {
+  if (!p1 || !p2) return false;
+  if (isWindows) {
+    return p1.toLowerCase().replace(/\\/g, '/') === p2.toLowerCase().replace(/\\/g, '/');
+  }
+  return p1.replace(/\\/g, '/') === p2.replace(/\\/g, '/');
+}
+
+function hasPath(list, path) {
+  const tildeBase = toDisplay(path);
+  return list.some(item => isPathMatch(item, path) || isPathMatch(item, tildeBase));
+}
 
 // ── Config ──────────────────────────────────────────
 async function loadConfig() {
+  try {
+    const info = await fetch('/api/info').then(r => r.json());
+    userHome = info.home || '';
+    isWindows = !!info.is_windows;
+  } catch (e) {
+    console.error('Failed to load system info', e);
+  }
+
   const res = await fetch('/api/config');
   const cfg = await res.json();
   scanRoots = cfg.scan_roots || [];
@@ -362,7 +393,20 @@ async function removeRoot(i) {
 
 // ── Directory browser ────────────────────────────────
 function toDisplay(absPath) {
-  return absPath.replace(/^\/Users\/[^/]+/, '~');
+  if (userHome) {
+    const normalizedAbs = absPath.replace(/\\/g, '/');
+    const normalizedHome = userHome.replace(/\\/g, '/');
+    const absLower = normalizedAbs.toLowerCase();
+    const homeLower = normalizedHome.toLowerCase();
+    if (absLower === homeLower) {
+      return '~';
+    }
+    const prefixLower = homeLower.endsWith('/') ? homeLower : homeLower + '/';
+    if (absLower.startsWith(prefixLower)) {
+      return '~/' + normalizedAbs.slice(prefixLower.length);
+    }
+  }
+  return absPath;
 }
 
 async function browseTo(path) {
@@ -412,13 +456,13 @@ function handleCode(evt, path) {
 
 async function pinRepo(path) {
   const tildeBase = toDisplay(path);
-  const alreadyPinned = pinnedRepos.includes(path) || pinnedRepos.includes(tildeBase);
-  const isExcluded = excludes.includes(path) || excludes.includes(tildeBase);
+  const alreadyPinned = hasPath(pinnedRepos, path);
+  const isExcluded = hasPath(excludes, path);
 
   if (alreadyPinned && !isExcluded) return;
 
   if (isExcluded) {
-    excludes = excludes.filter(e => e !== path && e !== tildeBase);
+    excludes = excludes.filter(e => !isPathMatch(e, path) && !isPathMatch(e, tildeBase));
   }
   if (!alreadyPinned) {
     pinnedRepos.push(path);
@@ -469,7 +513,7 @@ async function saveRepoOrder() {
 function render(query) {
   const q = query.trim().toLowerCase();
   const visible = allRepos.filter(r =>
-    !excludes.includes(r.path) &&
+    !hasPath(excludes, r.path) &&
     (!q || r.name.toLowerCase().includes(q))
   );
   const list = document.getElementById('list');
@@ -525,7 +569,7 @@ function onDrop(evt, targetPath) {
 
 async function hideRepo(e, path) {
   e.stopPropagation();
-  if (!excludes.includes(path)) excludes.push(path);
+  if (!hasPath(excludes, path)) excludes.push(path);
   await saveConfig();
   render(document.getElementById('search').value);
 }
@@ -535,6 +579,59 @@ async function openVSCode(el, path) {
   await fetch(`/api/open?path=${encodeURIComponent(path)}`);
   if (el) setTimeout(() => el.classList.remove('opening'), 800);
 }
+
+// ── Manual Add ───────────────────────────────────────
+document.getElementById('btn-manual-add').addEventListener('click', async () => {
+  const input = document.getElementById('input-manual-path');
+  const msg = document.getElementById('manual-add-message');
+  const path = input.value.trim();
+  if (!path) return;
+
+  msg.style.color = 'var(--muted)';
+  msg.textContent = '確認中...';
+
+  try {
+    const res = await fetch(`/api/ls?path=${encodeURIComponent(path)}`);
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || '無効なパスです');
+    }
+    const data = await res.json();
+    const targetPath = data.path;
+    
+    const tildeBase = toDisplay(targetPath);
+    const alreadyPinned = hasPath(pinnedRepos, targetPath);
+    const isExcluded = hasPath(excludes, targetPath);
+
+    if (alreadyPinned && !isExcluded) {
+      msg.style.color = '#e3b341';
+      msg.textContent = '既に追加されています';
+      return;
+    }
+
+    if (isExcluded) {
+      excludes = excludes.filter(e => !isPathMatch(e, targetPath) && !isPathMatch(e, tildeBase));
+    }
+    if (!alreadyPinned) {
+      pinnedRepos.push(targetPath);
+    }
+    await saveConfig();
+    await loadRepos();
+    input.value = '';
+    msg.style.color = '#3fb950';
+    msg.textContent = '追加しました';
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+  } catch (err) {
+    msg.style.color = '#f85149';
+    msg.textContent = err.message || '無効なパスです';
+  }
+});
+
+document.getElementById('input-manual-path').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    document.getElementById('btn-manual-add').click();
+  }
+});
 
 // ── Settings panel toggle ────────────────────────────
 document.getElementById('btn-settings').addEventListener('click', () => {

@@ -1,7 +1,5 @@
 {
-  "scan_roots": [
-    "~/developer"
-  ],
+  "scan_roots": [],
   "excludes": [],
   "pinned_repos": [],
   "repo_order": []
