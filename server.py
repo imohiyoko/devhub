@@ -39,7 +39,6 @@ TOOLS_SETTINGS_DIR = os.path.join(SETTINGS_DIR, 'tools')
 
 def load_tool_settings(tool_id: str) -> dict:
     """settings/tools/<tool_id>.json を読み込む。なければ空dictを返す。"""
-    os.makedirs(TOOLS_SETTINGS_DIR, exist_ok=True)
     path = os.path.join(TOOLS_SETTINGS_DIR, f'{tool_id}.json')
     try:
         with open(path) as f:
@@ -1251,7 +1250,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == '/api/git/checkout':
                 branch = data.get('branch', '')
-                if not branch or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+                if not branch or branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
                     self.send_json({'error': 'invalid branch name'}, 400)
                     return
                 try:
@@ -1263,7 +1262,7 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == '/api/git/branch/create':
                 branch = data.get('branch', '')
-                if not branch or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+                if not branch or branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
                     self.send_json({'error': 'invalid branch name'}, 400)
                     return
                 try:
