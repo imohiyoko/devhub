@@ -154,13 +154,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'ok': True})
                 def do_restart():
                     time.sleep(0.3)
-                    args = ' '.join(shlex.quote(a) for a in sys.argv)
-                    cmd = (
-                        f'lsof -ti :{PORT} | xargs kill 2>/dev/null; '
-                        f'sleep 0.3; '
-                        f'exec {shlex.quote(sys.executable)} {args}'
-                    )
-                    subprocess.Popen(['sh', '-c', cmd], close_fds=True)
+                    if platform.system() == 'Windows':
+                        subprocess.Popen([sys.executable] + sys.argv, close_fds=True)
+                        os._exit(0)
+                    else:
+                        args = ' '.join(shlex.quote(a) for a in sys.argv)
+                        cmd = (
+                            f'lsof -ti :{PORT} | xargs kill 2>/dev/null; '
+                            f'sleep 0.3; '
+                            f'exec {shlex.quote(sys.executable)} {args}'
+                        )
+                        subprocess.Popen(['sh', '-c', cmd], close_fds=True)
                 threading.Thread(target=do_restart, daemon=True).start()
                 return
 

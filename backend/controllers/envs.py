@@ -32,7 +32,7 @@ def open_in_terminal(cwd, command, env=None):
                     v_escaped = str(v).replace("'", "''")
                     env_exports.append(f"$env:{k}='{v_escaped}'")
                 else:
-                    env_exports.append(f'set {k}={v}')
+                    env_exports.append(f'set "{k}={v}"')
             else:
                 env_exports.append(f'export {k}={shlex.quote(str(v))}')
 

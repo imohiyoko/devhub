@@ -60,9 +60,6 @@ def sqlite_columns(conn, table_name):
         'pk': int(r['pk']),
     } for r in rows]
 
-def sqlite_writable_columns(conn, table_name):
-    return {c['name'] for c in sqlite_columns(conn, table_name)}
-
 def connection_from_payload(data):
     profile = data.get('connection') if isinstance(data, dict) else None
     if not profile:

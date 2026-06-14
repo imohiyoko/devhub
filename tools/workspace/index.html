@@ -606,6 +606,12 @@ document.getElementById('btn-manual-add').addEventListener('click', async () => 
   }
 });
 
+document.getElementById('input-manual-path').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    document.getElementById('btn-manual-add').click();
+  }
+});
+
 // ── Settings panel toggle ────────────────────────────
 document.getElementById('btn-settings').addEventListener('click', () => {
   const panel = document.getElementById('settings-panel');
