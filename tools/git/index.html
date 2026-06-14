@@ -333,33 +333,10 @@ select {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
-.add-repo-picker .picker-btn {
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  padding: 7px 16px;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  transition: opacity 0.15s;
-}
-.picker-btn:hover { opacity: 0.85; }
-.picker-btn:disabled { opacity: 0.5; cursor: wait; }
 .add-repo-picker .picker-hint {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
-}
-.add-repo-picker .picker-or {
-  color: var(--border);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
 }
 
 .add-repo-dir-list {
@@ -452,10 +429,7 @@ select {
 
 <div class="add-repo-panel" id="add-repo-panel">
   <div class="add-repo-picker">
-    <button class="picker-btn" id="btn-pick-folder">📂 フォルダを選択</button>
-    <span class="picker-hint">Explorer / Finder からリポジトリを選ぶ</span>
-    <span class="picker-or">─ or ─</span>
-    <span class="picker-hint">下のパス入力で直接指定</span>
+    <span class="picker-hint">パスを直接入力するか、下のディレクトリブラウザからリポジトリを選択してください</span>
     <button class="btn-icon" id="btn-close-add-panel" title="閉じる" style="margin-left:auto;">✕</button>
   </div>
   <div class="add-repo-path-bar">
@@ -645,10 +619,10 @@ function renderEmptyState() {
       <div class="empty-icon">⎇</div>
       <div class="empty-title">リポジトリが登録されていません</div>
       <div class="empty-desc">
-        フォルダを選択してリポジトリを追加するか、<br>
+        パスを指定するか、ディレクトリから探してリポジトリを追加するか、<br>
         <a href="/workspace" style="color:var(--accent);text-decoration:none;">workspace ツール</a>でスキャン対象フォルダを設定してください。
       </div>
-      <button class="empty-btn" onclick="document.getElementById('btn-pick-folder').click()">📂 フォルダを選択して追加</button>
+      <button class="empty-btn" onclick="document.getElementById('btn-add-repo').click()">＋ リポジトリを追加</button>
     `;
     mainContent.style.position = 'relative';
     mainContent.appendChild(el);
@@ -1107,8 +1081,15 @@ async function browseTo(path) {
 
     // Attach click handlers
     list.querySelectorAll('.dir-entry').forEach(entry => {
-      entry.addEventListener('click', () => {
-        if (entry.dataset.isGit !== 'true') browseTo(entry.dataset.path);
+      entry.addEventListener('click', (ev) => {
+        if (entry.dataset.isGit === 'true') {
+          const btn = entry.querySelector('.btn-pin');
+          if (btn && !btn.classList.contains('added')) {
+            addRepoFromBrowser(entry.dataset.path, btn);
+          }
+        } else {
+          browseTo(entry.dataset.path);
+        }
       });
     });
     list.querySelectorAll('.btn-pin').forEach(btn => {
@@ -1162,20 +1143,7 @@ async function handlePathAdd() {
     const data = await res.json();
     const targetPath = data.path;
 
-    // Check if it's a git repo by looking at the parent directory listing
-    let isGitRepo = false;
-    if (data.parent) {
-      try {
-        const parentRes = await fetch(`/api/ls?path=${encodeURIComponent(data.parent)}`);
-        if (parentRes.ok) {
-          const parentData = await parentRes.json();
-          const entry = parentData.entries.find(e => pathMatch(e.path, targetPath));
-          if (entry) isGitRepo = entry.is_git;
-        }
-      } catch(e) { /* ignore */ }
-    }
-
-    if (!isGitRepo) {
+    if (!data.is_git) {
       showRepoMsg('このフォルダは Git リポジトリではありません (.git が見つかりません)', 'error');
       return;
     }
@@ -1262,46 +1230,7 @@ document.getElementById('btn-remove-repo').addEventListener('click', async () =>
   showRepoMsg(`${repoName} を削除しました`, 'success');
 });
 
-document.getElementById('btn-pick-folder').addEventListener('click', async () => {
-  const btn = document.getElementById('btn-pick-folder');
-  btn.disabled = true;
-  btn.textContent = '選択中...';
-  try {
-    const res = await fetch('/api/pick-directory');
-    const data = await res.json();
-    if (data.error) {
-      showRepoMsg(data.error, 'error');
-    } else if (data.path) {
-      // Block non-git directories
-      if (!data.is_git) {
-        showRepoMsg('このフォルダは Git リポジトリではありません (.git が見つかりません)', 'error');
-        return;
-      }
-      // Add it as a pinned repo
-      const t = toDisplayPath(data.path);
-      const alreadyPinned = appConfig.pinned_repos.some(p => pathMatch(p, data.path) || pathMatch(p, t));
-      const isExcluded = appConfig.excludes.some(p => pathMatch(p, data.path) || pathMatch(p, t));
-      if (alreadyPinned && !isExcluded) {
-        showRepoMsg('既に追加されています', 'warn');
-      } else {
-        if (isExcluded) appConfig.excludes = appConfig.excludes.filter(e => !pathMatch(e, data.path) && !pathMatch(e, t));
-        if (!alreadyPinned) appConfig.pinned_repos.push(data.path);
-        await saveAppConfig();
-        await fetchRepos();
-        const name = data.path.split(/[\\/]/).pop();
-        showRepoMsg(`${name} を追加しました`, 'success');
-        browseTo(data.path);
-      }
-    }
-    // else: user cancelled the dialog, do nothing
-  } catch(e) {
-    showRepoMsg('フォルダ選択に失敗しました', 'error');
-    console.error(e);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '📂 フォルダを選択';
-  }
-});
+// (フォルダ選択ボタンは廃止)
 
 // Init
 (async () => {
