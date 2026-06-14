@@ -453,6 +453,14 @@ select {
       <input type="number" id="setting-log-limit" style="width: 80px;">
     </div>
     <div class="setting-row">
+      <label>Local Poll (sec):</label>
+      <input type="number" id="setting-local-poll" style="width: 80px;" min="0">
+    </div>
+    <div class="setting-row">
+      <label>Remote Poll (sec):</label>
+      <input type="number" id="setting-remote-poll" style="width: 80px;" min="0">
+    </div>
+    <div class="setting-row">
       <label><input type="checkbox" id="setting-show-log"> Show Log Panel</label>
     </div>
   </div>
@@ -476,6 +484,7 @@ select {
   <div class="tab" data-tab="branches">3:Branches</div>
   <div class="tab" data-tab="commits">4:Commits</div>
   <div class="tab" data-tab="stash">5:Stash</div>
+  <div class="tab" data-tab="worktrees">6:Worktrees</div>
 </div>
 
 <div class="main-content" id="main-content">
@@ -504,6 +513,8 @@ const DEFAULT_CONFIG = {
   log_limit: 100,
   keybindings: { stage: ' ', commit: 'c', push: 'P', pull: 'p', new_branch: 'n', refresh: 'r' },
   commit_template: '',
+  local_poll_interval: 10,
+  remote_poll_interval: 30,
 };
 
 let gitConfig = structuredClone(DEFAULT_CONFIG);
@@ -675,17 +686,19 @@ async function refreshData() {
     if (!currentRepo) return;
 
     try {
-        const [status, log, branches, stash] = await Promise.all([
+        const [status, log, branches, stash, worktrees] = await Promise.all([
             fetch(`/api/git/status?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
             fetch(`/api/git/log?path=${encodeURIComponent(currentRepo)}&n=${gitConfig.log_limit}`).then(r=>r.json()),
             fetch(`/api/git/branches?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
-            fetch(`/api/git/stash/list?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json())
+            fetch(`/api/git/stash/list?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
+            fetch(`/api/git/worktrees?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json())
         ]);
 
         gitData.status = status.output || '';
         gitData.log = log.output || '';
         gitData.branches = branches.output || '';
         gitData.stash = stash.output || '';
+        gitData.worktrees = worktrees.worktrees || [];
 
         renderLog();
         lastFetchedDiff = null;
@@ -773,14 +786,78 @@ function renderTabContent() {
             if(parts.length < 2) return;
             const name = parts[0]; const isHead = parts[1] === '*';
             const el = document.createElement('div'); el.className = 'list-item';
-            el.textContent = `${isHead ? '* ' : '  '}${name}`;
+            
+            const wtEntry = (gitData.worktrees || []).find(w => w.branch === name);
+            el.textContent = `${isHead ? '* ' : '  '}${name}${wtEntry ? ' [worktree]' : ''}`;
             if(isHead) el.style.color = 'var(--green)';
 
-            const itemObj = { type: 'branch', el, data: name };
+            const itemObj = { type: 'branch', el, data: name, isHead, wtEntry };
             el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); };
 
             currentListItems.push(itemObj);
-            if (currentListItems.length - 1 === selectedItemIndex) el.classList.add('selected');
+            if (currentListItems.length - 1 === selectedItemIndex) {
+                el.classList.add('selected');
+                renderBranchDetails(name, isHead, wtEntry);
+            }
+            container.appendChild(el);
+        });
+    } else if (activeTab === 'worktrees') {
+        const addEl = document.createElement('div');
+        addEl.className = 'list-item';
+        addEl.style.fontWeight = 'bold';
+        addEl.style.color = 'var(--accent)';
+        addEl.textContent = '＋ Add Worktree';
+        
+        const addObj = { type: 'add_wt_btn', el: addEl };
+        addEl.onclick = () => {
+            selectedItemIndex = 0;
+            renderTabContent();
+        };
+        currentListItems.push(addObj);
+        
+        if (selectedItemIndex === 0) {
+            addEl.classList.add('selected');
+            renderAddWorktreeForm();
+        }
+        container.appendChild(addEl);
+        
+        const wts = gitData.worktrees || [];
+        wts.forEach((wt, idx) => {
+            const isMain = wt.path === currentRepo || (isWindows && wt.path.replace(/\\/g, '/').toLowerCase() === currentRepo.replace(/\\/g, '/').toLowerCase());
+            
+            const el = document.createElement('div');
+            el.className = 'list-item';
+            
+            const branchSpan = document.createElement('span');
+            branchSpan.style.color = 'var(--green)';
+            branchSpan.style.fontFamily = 'monospace';
+            branchSpan.textContent = wt.branch || '(detached)';
+            
+            const pathSpan = document.createElement('span');
+            pathSpan.style.color = 'var(--muted)';
+            pathSpan.style.fontSize = '11px';
+            pathSpan.style.marginLeft = '8px';
+            pathSpan.style.overflow = 'hidden';
+            pathSpan.style.textOverflow = 'ellipsis';
+            pathSpan.style.whiteSpace = 'nowrap';
+            const folderName = wt.path.split(/[\\/]/).filter(Boolean).pop() || wt.path;
+            pathSpan.textContent = isMain ? `[Main Repo]` : `[${folderName}]`;
+            
+            el.appendChild(branchSpan);
+            el.appendChild(pathSpan);
+            
+            const itemObj = { type: 'worktree', el, data: wt, isMain };
+            el.onclick = () => {
+                selectedItemIndex = idx + 1;
+                renderTabContent();
+            };
+            
+            currentListItems.push(itemObj);
+            
+            if (currentListItems.length - 1 === selectedItemIndex) {
+                el.classList.add('selected');
+                renderWorktreeDetails(wt, isMain);
+            }
             container.appendChild(el);
         });
     } else if (activeTab === 'stash') {
@@ -876,6 +953,8 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
         closeAddRepoPanel();
         document.getElementById('setting-default-repo').value = gitConfig.default_repo;
         document.getElementById('setting-log-limit').value = gitConfig.log_limit;
+        document.getElementById('setting-local-poll').value = gitConfig.local_poll_interval !== undefined ? gitConfig.local_poll_interval : 10;
+        document.getElementById('setting-remote-poll').value = gitConfig.remote_poll_interval !== undefined ? gitConfig.remote_poll_interval : 30;
         document.getElementById('setting-show-log').checked = gitConfig.layout.show_log;
         document.getElementById('setting-commit-template').value = gitConfig.commit_template;
 
@@ -895,18 +974,21 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
 document.getElementById('btn-save-settings').addEventListener('click', () => {
     gitConfig.default_repo = document.getElementById('setting-default-repo').value;
     gitConfig.log_limit = parseInt(document.getElementById('setting-log-limit').value) || 100;
+    gitConfig.local_poll_interval = parseInt(document.getElementById('setting-local-poll').value) || 0;
+    gitConfig.remote_poll_interval = parseInt(document.getElementById('setting-remote-poll').value) || 0;
     gitConfig.layout.show_log = document.getElementById('setting-show-log').checked;
     gitConfig.commit_template = document.getElementById('setting-commit-template').value;
     saveSettings();
     settingsPanel.classList.remove('open');
     document.getElementById('btn-settings').classList.remove('active');
     refreshData();
+    startPolling();
 });
 
 function updateFooterHints() {
     const hints = [];
     const k = gitConfig.keybindings;
-    hints.push(`1-5: Tabs`);
+    hints.push(`1-6: Tabs`);
     hints.push(`${k.refresh}: Refresh`);
     if(activeTab === 'files') {
         hints.push(`${k.stage}: Stage/Unstage`);
@@ -933,8 +1015,8 @@ document.addEventListener('keydown', (e) => {
 
     const k = gitConfig.keybindings;
 
-    if (['1','2','3','4','5'].includes(e.key)) {
-        const tabs = ['status','files','branches','commits','stash'];
+    if (['1','2','3','4','5','6'].includes(e.key)) {
+        const tabs = ['status','files','branches','commits','stash','worktrees'];
         document.querySelector(`.tab[data-tab="${tabs[parseInt(e.key)-1]}"]`).click();
         return;
     }
@@ -1238,6 +1320,505 @@ document.getElementById('btn-remove-repo').addEventListener('click', async () =>
 
 // (フォルダ選択ボタンは廃止)
 
+// Polling & Worktree helper functions
+let localPollTimer = null;
+let remotePollTimer = null;
+
+function startPolling() {
+    stopPolling();
+    const localSec = gitConfig.local_poll_interval !== undefined ? gitConfig.local_poll_interval : 10;
+    const remoteSec = gitConfig.remote_poll_interval !== undefined ? gitConfig.remote_poll_interval : 30;
+
+    if (localSec > 0) {
+        localPollTimer = setInterval(() => {
+            if (currentRepo) refreshData();
+        }, localSec * 1000);
+    }
+
+    if (remoteSec > 0) {
+        remotePollTimer = setInterval(() => {
+            if (currentRepo) {
+                fetch('/api/git/fetch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: currentRepo })
+                }).then(r => r.json())
+                  .then(data => {
+                      if (data.ok) refreshData();
+                  }).catch(e => console.error("Origin poll failed:", e));
+            }
+        }, remoteSec * 1000);
+    }
+}
+
+function stopPolling() {
+    if (localPollTimer) clearInterval(localPollTimer);
+    if (remotePollTimer) clearInterval(remotePollTimer);
+    localPollTimer = null;
+    remotePollTimer = null;
+}
+
+function getLocalBranches() {
+    if (!gitData.branches) return [];
+    const lines = gitData.branches.trim().split('\n').filter(l=>l);
+    const branches = [];
+    lines.forEach(line => {
+        const parts = line.split('\t');
+        if (parts.length >= 1) {
+            let name = parts[0];
+            if (!name.startsWith('remotes/')) branches.push(name);
+        }
+    });
+    return branches;
+}
+
+function getAllBranchesList() {
+    if (!gitData.branches) return [];
+    const lines = gitData.branches.trim().split('\n').filter(l=>l);
+    return lines.map(line => line.split('\t')[0]);
+}
+
+function renderBranchDetails(branchName, isHead, wtEntry) {
+    const right = document.getElementById('right-pane');
+    right.innerHTML = '';
+    
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.gap = '16px';
+    
+    const title = document.createElement('h2');
+    title.style.fontSize = '18px';
+    title.style.fontWeight = '600';
+    title.style.color = 'var(--text)';
+    title.textContent = 'Branch Details';
+    container.appendChild(title);
+    
+    const card = document.createElement('div');
+    card.style.background = 'var(--surface)';
+    card.style.border = '1px solid var(--border)';
+    card.style.borderRadius = '6px';
+    card.style.padding = '16px';
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.gap = '12px';
+    
+    const nameRow = document.createElement('div');
+    nameRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Branch Name</span>
+                         <span style="font-family: monospace; font-size: 15px; font-weight: 600; color: var(--green);">${branchName}</span>`;
+    card.appendChild(nameRow);
+    
+    let statusText = 'Inactive branch';
+    if (isHead) statusText = 'Active (HEAD) branch in the main repository';
+    else if (wtEntry) statusText = `Checked out as a worktree at <code style="background: var(--bg); padding: 2px 4px; border-radius: 4px; font-size: 12px;">${wtEntry.path}</code>`;
+    
+    const statusRow = document.createElement('div');
+    statusRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Status</span>
+                           <span style="font-size: 13px; color: var(--text);">${statusText}</span>`;
+    card.appendChild(statusRow);
+    
+    if (wtEntry) {
+        const pathRow = document.createElement('div');
+        pathRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Worktree Directory</span>
+                             <span style="font-family: monospace; font-size: 13px; color: var(--blue); word-break: break-all;">${wtEntry.path}</span>`;
+        card.appendChild(pathRow);
+        
+        if (wtEntry.head) {
+            const headRow = document.createElement('div');
+            headRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Commit SHA</span>
+                                 <span style="font-family: monospace; font-size: 13px; color: var(--text);">${wtEntry.head}</span>`;
+            card.appendChild(headRow);
+        }
+    }
+    
+    container.appendChild(card);
+    
+    const btnRow = document.createElement('div');
+    btnRow.style.display = 'flex';
+    btnRow.style.gap = '10px';
+    btnRow.style.flexWrap = 'wrap';
+    
+    if (!isHead && !wtEntry) {
+        const btnCheckout = document.createElement('button');
+        btnCheckout.textContent = 'Switch to Branch';
+        btnCheckout.style.cssText = 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        btnCheckout.onclick = () => {
+            let bn = branchName.trim();
+            if (bn.startsWith('remotes/')) {
+                const parts = bn.split('/');
+                if (parts.length > 2) bn = parts.slice(2).join('/');
+            }
+            doPost('/api/git/checkout', { branch: bn });
+        };
+        btnRow.appendChild(btnCheckout);
+    }
+    
+    if (wtEntry) {
+        const btnOpen = document.createElement('button');
+        btnOpen.textContent = 'Open in Editor';
+        btnOpen.style.cssText = 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        btnOpen.onclick = () => {
+            fetch(`/api/open?path=${encodeURIComponent(wtEntry.path)}`);
+        };
+        btnRow.appendChild(btnOpen);
+    }
+    
+    if (!wtEntry && !branchName.startsWith('remotes/')) {
+        const btnWt = document.createElement('button');
+        btnWt.textContent = 'Create Worktree';
+        btnWt.style.cssText = 'background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        btnWt.onclick = () => {
+            showAddWorktreeForm(branchName);
+        };
+        btnRow.appendChild(btnWt);
+    }
+    
+    if (!isHead && !wtEntry) {
+        const btnDel = document.createElement('button');
+        btnDel.textContent = 'Delete Branch';
+        btnDel.style.cssText = 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        btnDel.onclick = async () => {
+            if (confirm(`Delete branch "${branchName}"?`)) {
+                await doPost('/api/git/branch/delete', { branch: branchName, force: false });
+            }
+        };
+        btnRow.appendChild(btnDel);
+        
+        const btnDelForce = document.createElement('button');
+        btnDelForce.textContent = 'Force Delete';
+        btnDelForce.style.cssText = 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500; opacity: 0.7;';
+        btnDelForce.onclick = async () => {
+            if (confirm(`Force delete branch "${branchName}"? (Unmerged changes will be lost)`)) {
+                await doPost('/api/git/branch/delete', { branch: branchName, force: true });
+            }
+        };
+        btnRow.appendChild(btnDelForce);
+    }
+    
+    container.appendChild(btnRow);
+    right.appendChild(container);
+}
+
+function showAddWorktreeForm(preselectedBranch = '') {
+    document.querySelectorAll('.tab').forEach(tt => tt.classList.remove('active'));
+    const wtTab = document.querySelector('.tab[data-tab="worktrees"]');
+    if (wtTab) wtTab.classList.add('active');
+    activeTab = 'worktrees';
+    renderTabContent();
+    renderAddWorktreeForm(preselectedBranch);
+}
+
+function renderAddWorktreeForm(preselectedBranch = '') {
+    const right = document.getElementById('right-pane');
+    right.innerHTML = '';
+    
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.gap = '16px';
+    container.style.maxWidth = '500px';
+    
+    const title = document.createElement('h2');
+    title.style.fontSize = '18px';
+    title.style.fontWeight = '600';
+    title.style.color = 'var(--text)';
+    title.textContent = 'Add Git Worktree';
+    container.appendChild(title);
+    
+    const pathGroup = document.createElement('div');
+    pathGroup.style.display = 'flex';
+    pathGroup.style.flexDirection = 'column';
+    pathGroup.style.gap = '6px';
+    
+    let defaultPath = '';
+    if (currentRepo && preselectedBranch) {
+        const sanitizedBranch = preselectedBranch.replace(/[^a-zA-Z0-9_-]/g, '-');
+        defaultPath = `${currentRepo}-wt-${sanitizedBranch}`;
+    } else if (currentRepo) {
+        defaultPath = `${currentRepo}-wt`;
+    }
+    
+    pathGroup.innerHTML = `<label style="font-weight: 500; font-size: 13px; color: var(--text);">Worktree Path:</label>
+                           <input type="text" id="wt-add-path" value="${defaultPath}" placeholder="e.g. C:/projects/myrepo-worktree" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: monospace;">
+                           <span style="font-size: 11px; color: var(--muted);">Specify an empty directory path where the worktree will be created.</span>`;
+    container.appendChild(pathGroup);
+    
+    const branchGroup = document.createElement('div');
+    branchGroup.style.display = 'flex';
+    branchGroup.style.flexDirection = 'column';
+    branchGroup.style.gap = '6px';
+    branchGroup.innerHTML = `<label style="font-weight: 500; font-size: 13px; color: var(--text);">Checkout Branch:</label>
+                             <select id="wt-add-branch-select" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; width: 100%;"></select>`;
+    container.appendChild(branchGroup);
+    
+    const branchSelect = branchGroup.querySelector('#wt-add-branch-select');
+    const localBranches = getLocalBranches();
+    
+    localBranches.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b;
+        opt.textContent = b;
+        if (b === preselectedBranch) opt.selected = true;
+        branchSelect.appendChild(opt);
+    });
+    
+    const cbGroup = document.createElement('div');
+    cbGroup.style.display = 'flex';
+    cbGroup.style.alignItems = 'center';
+    cbGroup.style.gap = '8px';
+    cbGroup.style.marginTop = '4px';
+    cbGroup.innerHTML = `<input type="checkbox" id="wt-add-new-branch-cb">
+                         <label for="wt-add-new-branch-cb" style="font-weight: 500; font-size: 13px; color: var(--text); user-select: none;">Create a new branch instead</label>`;
+    container.appendChild(cbGroup);
+    
+    const newBranchSection = document.createElement('div');
+    newBranchSection.id = 'wt-add-new-branch-section';
+    newBranchSection.style.display = 'none';
+    newBranchSection.style.flexDirection = 'column';
+    newBranchSection.style.gap = '12px';
+    newBranchSection.style.borderLeft = '2px solid var(--accent)';
+    newBranchSection.style.paddingLeft = '12px';
+    newBranchSection.style.marginLeft = '4px';
+    
+    newBranchSection.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-weight: 500; font-size: 13px; color: var(--text);">New Branch Name:</label>
+            <input type="text" id="wt-add-new-branch-name" placeholder="e.g. feature/my-cool-feature" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: monospace;">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-weight: 500; font-size: 13px; color: var(--text);">Base Commit/Branch:</label>
+            <select id="wt-add-base-select" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; width: 100%;"></select>
+        </div>
+    `;
+    container.appendChild(newBranchSection);
+    
+    const baseSelect = newBranchSection.querySelector('#wt-add-base-select');
+    const allBranches = getAllBranchesList();
+    allBranches.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b;
+        opt.textContent = b;
+        baseSelect.appendChild(opt);
+    });
+    
+    const cb = cbGroup.querySelector('#wt-add-new-branch-cb');
+    cb.addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        newBranchSection.style.display = checked ? 'flex' : 'none';
+        branchSelect.disabled = checked;
+        
+        if (checked) {
+            const nameInput = newBranchSection.querySelector('#wt-add-new-branch-name');
+            nameInput.addEventListener('input', () => {
+                const name = nameInput.value.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
+                document.getElementById('wt-add-path').value = `${currentRepo}-wt-${name || 'newbranch'}`;
+            });
+        } else {
+            const branch = branchSelect.value;
+            const sanitizedBranch = branch.replace(/[^a-zA-Z0-9_-]/g, '-');
+            document.getElementById('wt-add-path').value = `${currentRepo}-wt-${sanitizedBranch}`;
+        }
+    });
+    
+    branchSelect.addEventListener('change', (e) => {
+        if (!cb.checked) {
+            const branch = e.target.value;
+            const sanitizedBranch = branch.replace(/[^a-zA-Z0-9_-]/g, '-');
+            document.getElementById('wt-add-path').value = `${currentRepo}-wt-${sanitizedBranch}`;
+        }
+    });
+
+    const btnRow = document.createElement('div');
+    btnRow.style.display = 'flex';
+    btnRow.style.gap = '12px';
+    btnRow.style.marginTop = '8px';
+    
+    const btnSubmit = document.createElement('button');
+    btnSubmit.textContent = 'Create Worktree';
+    btnSubmit.style.cssText = 'background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+    btnSubmit.onclick = async () => {
+        const wtPath = document.getElementById('wt-add-path').value.trim();
+        if (!wtPath) { alert('Path is required'); return; }
+        
+        const isNewBranch = cb.checked;
+        let branch = '';
+        let baseCommit = '';
+        
+        if (isNewBranch) {
+            branch = document.getElementById('wt-add-new-branch-name').value.trim();
+            if (!branch) { alert('New branch name is required'); return; }
+            baseCommit = document.getElementById('wt-add-base-select').value;
+        } else {
+            branch = branchSelect.value;
+            if (!branch) { alert('Select a branch to checkout'); return; }
+        }
+        
+        btnSubmit.disabled = true;
+        btnSubmit.textContent = 'Creating...';
+        
+        try {
+            const res = await fetch('/api/git/worktree/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: currentRepo,
+                    worktree_path: wtPath,
+                    branch: branch,
+                    new_branch: isNewBranch,
+                    base_commit: baseCommit || undefined
+                })
+            }).then(r => r.json());
+            
+            if (res.error) {
+                showError(`Error: ${res.error}`);
+            } else {
+                showRepoMsg('Worktree created successfully', 'success');
+                await refreshData();
+                const index = gitData.worktrees.findIndex(w => w.path === wtPath);
+                selectedItemIndex = index !== -1 ? index + 1 : 0;
+                renderTabContent();
+            }
+        } catch (e) {
+            showError(`Failed to create worktree: ${e.message}`);
+        } finally {
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = 'Create Worktree';
+        }
+    };
+    
+    btnRow.appendChild(btnSubmit);
+    container.appendChild(btnRow);
+    right.appendChild(container);
+}
+
+function renderWorktreeDetails(wt, isMain) {
+    const right = document.getElementById('right-pane');
+    right.innerHTML = '';
+    
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.gap = '16px';
+    
+    const title = document.createElement('h2');
+    title.style.fontSize = '18px';
+    title.style.fontWeight = '600';
+    title.style.color = 'var(--text)';
+    title.textContent = 'Worktree Details';
+    container.appendChild(title);
+    
+    const card = document.createElement('div');
+    card.style.background = 'var(--surface)';
+    card.style.border = '1px solid var(--border)';
+    card.style.borderRadius = '6px';
+    card.style.padding = '16px';
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.gap = '12px';
+    
+    const pathRow = document.createElement('div');
+    pathRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Path</span>
+                         <span style="font-family: monospace; font-size: 13px; color: var(--text); word-break: break-all;">${wt.path}</span>`;
+    card.appendChild(pathRow);
+    
+    const branchRow = document.createElement('div');
+    branchRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Branch</span>
+                           <span style="font-family: monospace; font-size: 14px; color: var(--green);">${wt.branch || '(detached)'}</span>`;
+    card.appendChild(branchRow);
+    
+    if (wt.head) {
+        const headRow = document.createElement('div');
+        headRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Commit SHA</span>
+                             <span style="font-family: monospace; font-size: 13px; color: var(--blue);">${wt.head}</span>`;
+        card.appendChild(headRow);
+    }
+    
+    container.appendChild(card);
+    
+    const btnRow = document.createElement('div');
+    btnRow.style.display = 'flex';
+    btnRow.style.gap = '10px';
+    btnRow.style.flexWrap = 'wrap';
+    
+    const btnOpen = document.createElement('button');
+    btnOpen.textContent = 'Open in Editor';
+    btnOpen.style.cssText = 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+    btnOpen.onclick = () => {
+        fetch(`/api/open?path=${encodeURIComponent(wt.path)}`);
+    };
+    btnRow.appendChild(btnOpen);
+    
+    if (!isMain) {
+        const btnRemove = document.createElement('button');
+        btnRemove.textContent = 'Remove Worktree';
+        btnRemove.style.cssText = 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        btnRemove.onclick = async () => {
+            if (confirm(`Are you sure you want to remove the worktree at "${wt.path}"?`)) {
+                btnRemove.disabled = true;
+                btnRemove.textContent = 'Removing...';
+                try {
+                    const res = await fetch('/api/git/worktree/remove', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: currentRepo, worktree_path: wt.path, force: false })
+                    }).then(r => r.json());
+                    if (res.error) {
+                        showError(`Error: ${res.error}`);
+                    } else {
+                        showRepoMsg('Worktree removed successfully', 'success');
+                        await refreshData();
+                        selectedItemIndex = 0;
+                        renderTabContent();
+                    }
+                } catch (e) {
+                    showError(`Failed to remove worktree: ${e.message}`);
+                } finally {
+                    btnRemove.disabled = false;
+                    btnRemove.textContent = 'Remove Worktree';
+                }
+            }
+        };
+        btnRow.appendChild(btnRemove);
+        
+        const btnRemoveForce = document.createElement('button');
+        btnRemoveForce.textContent = 'Force Remove';
+        btnRemoveForce.style.cssText = 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500; opacity: 0.7;';
+        btnRemoveForce.onclick = async () => {
+            if (confirm(`Force remove worktree at "${wt.path}"? (Uncommitted changes will be lost)`)) {
+                btnRemoveForce.disabled = true;
+                btnRemoveForce.textContent = 'Removing...';
+                try {
+                    const res = await fetch('/api/git/worktree/remove', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: currentRepo, worktree_path: wt.path, force: true })
+                    }).then(r => r.json());
+                    if (res.error) {
+                        showError(`Error: ${res.error}`);
+                    } else {
+                        showRepoMsg('Worktree force-removed successfully', 'success');
+                        await refreshData();
+                        selectedItemIndex = 0;
+                        renderTabContent();
+                    }
+                } catch (e) {
+                    showError(`Failed to remove worktree: ${e.message}`);
+                } finally {
+                    btnRemoveForce.disabled = false;
+                    btnRemoveForce.textContent = 'Force Remove';
+                }
+            }
+        };
+        btnRow.appendChild(btnRemoveForce);
+    }
+    
+    container.appendChild(btnRow);
+    right.appendChild(container);
+}
+
 // Init
 (async () => {
     await loadSystemInfo();
@@ -1245,6 +1826,7 @@ document.getElementById('btn-remove-repo').addEventListener('click', async () =>
     await loadSettings();
     await fetchRepos();
     await refreshData();
+    startPolling();
 })();
 
 </script>
