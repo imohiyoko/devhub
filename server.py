@@ -38,9 +38,31 @@ def save_settings(patch):
         json.dump(current, f, indent=2, ensure_ascii=False)
         f.write('\n')
 
+
 def is_secret_key(k):
     lower = k.lower()
     return any(x in lower for x in ['password', 'secret', 'token', 'apikey', 'api_key', 'api-key'])
+TOOLS_SETTINGS_DIR = os.path.join(SETTINGS_DIR, 'tools')
+
+def load_tool_settings(tool_id: str) -> dict:
+    """settings/tools/<tool_id>.json を読み込む。なければ空dictを返す。"""
+    path = os.path.join(TOOLS_SETTINGS_DIR, f'{tool_id}.json')
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_tool_settings(tool_id: str, data: dict) -> None:
+    """settings/tools/<tool_id>.json に上書き保存する。"""
+    os.makedirs(TOOLS_SETTINGS_DIR, exist_ok=True)
+    path = os.path.join(TOOLS_SETTINGS_DIR, f'{tool_id}.json')
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+
+
+SECRET_KEYS = {'password', 'secret', 'apiKey', 'api_key', 'token'}
 
 SECRET_KEYS = {'password', 'secret', 'apiKey', 'api_key', 'api-key', 'token'} # Kept for exact matches if any
 
@@ -85,6 +107,8 @@ ROUTES = {
     '/ports/':      os.path.join(BASE, 'tools', 'ports', 'index.html'),
     '/env-launcher':  os.path.join(BASE, 'tools', 'env-launcher', 'index.html'),
     '/env-launcher/': os.path.join(BASE, 'tools', 'env-launcher', 'index.html'),
+    '/git':       os.path.join(BASE, 'tools', 'git', 'index.html'),
+    '/git/':      os.path.join(BASE, 'tools', 'git', 'index.html'),
 }
 
 
@@ -269,6 +293,21 @@ def all_repos():
             seen.add(expanded)
             repos.append({'name': os.path.basename(expanded), 'path': expanded})
     return repos
+
+
+def _validated_repo_path(params):
+    raw = params.get('path', [None])[0]
+    if not raw:
+        return None
+    valid_paths = {r['path'] for r in all_repos()}
+    return raw if raw in valid_paths else None
+
+def _validated_repo_path_from_body(data):
+    raw = data.get('path') if isinstance(data, dict) else None
+    if not raw:
+        return None
+    valid_paths = {r['path'] for r in all_repos()}
+    return raw if raw in valid_paths else None
 
 
 # ── Editor ────────────────────────────────────────────────────────────────────
@@ -1095,6 +1134,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(sanitize_settings(load_settings()))
             return
 
+        if path.startswith('/api/settings/tool/'):
+            tool_id = path.split('/')[-1]
+            if not re.fullmatch(r'[a-z0-9_-]+', tool_id):
+                self.send_json({'error': 'invalid tool_id'}, 400)
+                return
+            self.send_json(load_tool_settings(tool_id))
+            return
+
         if path == '/api/info':
             self.send_json({'base': BASE, 'port': PORT})
             return
@@ -1142,6 +1189,70 @@ class Handler(BaseHTTPRequestHandler):
                 return
             open_in_editor(target)
             self.send_json({'ok': True})
+            return
+
+        if path.startswith('/api/git/'):
+            repo_path = _validated_repo_path(params)
+            if not repo_path:
+                self.send_json({'error': 'invalid or missing repository path'}, 400)
+                return
+
+            if path == '/api/git/status':
+                try:
+                    res = subprocess.run(['git', 'status', '--porcelain=v1', '-u'], cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/log':
+                try:
+                    n = int(params.get('n', ['100'])[0])
+                except ValueError:
+                    n = 100
+                n = max(1, min(n, 1000))
+
+                try:
+                    res = subprocess.run(['git', 'log', '--oneline', '--decorate', '--graph', f'-n{n}'], cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/branches':
+                try:
+                    res = subprocess.run(['git', 'branch', '-a', '--format=%(refname:short)\t%(HEAD)'], cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/diff':
+                file_path = params.get('file', [''])[0]
+                if not file_path:
+                    self.send_json({'error': 'empty file path'}, 400)
+                    return
+                staged = params.get('staged', ['0'])[0] == '1'
+                cmd = ['git', 'diff']
+                if staged:
+                    cmd.append('--cached')
+                cmd.extend(['--', file_path])
+                try:
+                    res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/stash/list':
+                try:
+                    res = subprocess.run(['git', 'stash', 'list'], cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            self.send_json({'error': 'not found'}, 404)
             return
 
         if path == '/api/ls':
@@ -1199,6 +1310,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'error': str(e)}, 400)
             return
 
+        if path.startswith('/api/settings/tool/'):
+            tool_id = path.split('/')[-1]
+            if not re.fullmatch(r'[a-z0-9_-]+', tool_id):
+                self.send_json({'error': 'invalid tool_id'}, 400)
+                return
+            try:
+                data = json.loads(self.read_body())
+                if not isinstance(data, dict):
+                    self.send_json({'error': 'invalid'}, 400)
+                    return
+                save_tool_settings(tool_id, data)
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
         if path == '/api/settings':
             try:
                 data = json.loads(self.read_body())
@@ -1216,6 +1343,123 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'ok': True})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
+            return
+
+        if path.startswith('/api/git/'):
+            try:
+                data = json.loads(self.read_body())
+            except Exception:
+                data = {}
+
+            repo_path = _validated_repo_path_from_body(data)
+            if not repo_path:
+                self.send_json({'error': 'invalid or missing repository path'}, 400)
+                return
+
+            if path == '/api/git/stage':
+                files = data.get('files', [])
+                if not isinstance(files, list) or not all(isinstance(f, str) and f for f in files):
+                    self.send_json({'error': 'invalid files list'}, 400)
+                    return
+                try:
+                    res = subprocess.run(['git', 'add', '--'] + files, cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/unstage':
+                files = data.get('files', [])
+                if not isinstance(files, list) or not all(isinstance(f, str) and f for f in files):
+                    self.send_json({'error': 'invalid files list'}, 400)
+                    return
+                try:
+                    res = subprocess.run(['git', 'restore', '--staged', '--'] + files, cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/commit':
+                message = data.get('message', '')
+                if not message:
+                    self.send_json({'error': 'no message specified'}, 400)
+                    return
+                try:
+                    res = subprocess.run(['git', 'commit', '-m', message], cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/push':
+                try:
+                    res = subprocess.run(['git', 'push'], cwd=repo_path, capture_output=True, text=True, check=True, timeout=60)
+                    self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.TimeoutExpired:
+                    self.send_json({'error': 'push timed out'}, 504)
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/pull':
+                try:
+                    res = subprocess.run(['git', 'pull'], cwd=repo_path, capture_output=True, text=True, check=True, timeout=60)
+                    self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.TimeoutExpired:
+                    self.send_json({'error': 'pull timed out'}, 504)
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/checkout':
+                branch = data.get('branch', '')
+                if not branch or branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+                    self.send_json({'error': 'invalid branch name'}, 400)
+                    return
+                try:
+                    res = subprocess.run(['git', 'checkout', branch], cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/branch/create':
+                branch = data.get('branch', '')
+                if not branch or branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+                    self.send_json({'error': 'invalid branch name'}, 400)
+                    return
+                try:
+                    res = subprocess.run(['git', 'checkout', '-b', branch], cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            if path == '/api/git/stash':
+                action = data.get('action', '')
+                cmd = ['git', 'stash']
+                if action in ['push', 'pop', 'drop']:
+                    cmd.append(action)
+                    if action in ['pop', 'drop']:
+                        idx = data.get('index')
+                        if isinstance(idx, int):
+                            cmd.append(f'stash@{{{idx}}}')
+                        else:
+                            self.send_json({'error': 'invalid index'}, 400)
+                            return
+                else:
+                    self.send_json({'error': 'invalid action'}, 400)
+                    return
+
+                try:
+                    res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+                    self.send_json({'ok': True, 'output': res.stdout})
+                except subprocess.CalledProcessError as e:
+                    self.send_json({'error': e.stderr}, 400)
+                return
+
+            self.send_json({'error': 'not found'}, 404)
             return
 
         if path == '/api/ports/label':
