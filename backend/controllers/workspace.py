@@ -1,6 +1,7 @@
 import os
 import platform
 import subprocess
+import shutil
 from backend.storage import load_settings
 from backend.controllers.git import all_repos
 
@@ -8,7 +9,8 @@ def open_in_editor(path):
     settings = load_settings()
     editor = settings.get('editor', 'code')
     if platform.system() == 'Windows':
-        subprocess.Popen(f'"{editor}" "{path}"', shell=True)
+        resolved_editor = shutil.which(editor) or editor
+        subprocess.Popen([resolved_editor, path])
     elif platform.system() == 'Darwin' and editor in ('code', 'cursor', 'windsurf'):
         _DARWIN_APP = {'code': 'Visual Studio Code', 'cursor': 'Cursor', 'windsurf': 'Windsurf'}
         subprocess.Popen(['open', '-a', _DARWIN_APP[editor], path])
