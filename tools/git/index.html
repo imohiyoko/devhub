@@ -794,21 +794,24 @@ function renderTabContent() {
         const lines = gitData.branches.trim().split('\n').filter(l=>l);
         lines.forEach((line) => {
             const parts = line.split('\t');
-            if(parts.length < 2) return;
-            const name = parts[0]; const isHead = parts[1] === '*';
+            if(parts.length < 3) return;
+            const refname = parts[0];
+            const name = parts[1];
+            const isHead = parts[2] === '*';
             const el = document.createElement('div'); el.className = 'list-item';
             
             const wtEntry = (gitData.worktrees || []).find(w => w.branch === name);
             el.textContent = `${isHead ? '* ' : '  '}${name}${wtEntry ? ' [worktree]' : ''}`;
             if(isHead) el.style.color = 'var(--green)';
 
-            const itemObj = { type: 'branch', el, data: name, isHead, wtEntry };
+            const isRemote = refname.startsWith('refs/remotes/');
+            const itemObj = { type: 'branch', el, data: name, isHead, wtEntry, isRemote };
             el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); };
 
             currentListItems.push(itemObj);
             if (currentListItems.length - 1 === selectedItemIndex) {
                 el.classList.add('selected');
-                renderBranchDetails(name, isHead, wtEntry);
+                renderBranchDetails(name, isHead, wtEntry, isRemote);
             }
             container.appendChild(el);
         });
@@ -1071,10 +1074,11 @@ document.addEventListener('keydown', (e) => {
     } else if (activeTab === 'branches') {
         if (e.key === 'Enter' && selObj) {
             let bn = selObj.data.trim();
-            if (bn.startsWith('remotes/')) {
+            const localBranches = getLocalBranches();
+            if (bn.includes('/') && !localBranches.includes(bn)) {
                 const parts = bn.split('/');
-                if (parts.length > 2) {
-                    bn = parts.slice(2).join('/');
+                if (parts.length > 1) {
+                    bn = parts.slice(1).join('/');
                 }
             }
             doPost('/api/git/checkout', { branch: bn });
@@ -1409,9 +1413,12 @@ function getLocalBranches() {
     const branches = [];
     lines.forEach(line => {
         const parts = line.split('\t');
-        if (parts.length >= 1) {
-            let name = parts[0];
-            if (!name.startsWith('remotes/')) branches.push(name);
+        if (parts.length >= 2) {
+            const refname = parts[0]; // refs/heads/... or refs/remotes/...
+            const shortName = parts[1]; // main or origin/main
+            if (refname.startsWith('refs/heads/')) {
+                branches.push(shortName);
+            }
         }
     });
     return branches;
@@ -1420,10 +1427,13 @@ function getLocalBranches() {
 function getAllBranchesList() {
     if (!gitData.branches) return [];
     const lines = gitData.branches.trim().split('\n').filter(l=>l);
-    return lines.map(line => line.split('\t')[0]);
+    return lines.map(line => {
+        const parts = line.split('\t');
+        return parts.length >= 2 ? parts[1] : parts[0];
+    });
 }
 
-function renderBranchDetails(branchName, isHead, wtEntry) {
+function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
     const right = document.getElementById('right-pane');
     right.innerHTML = '';
     
@@ -1490,9 +1500,10 @@ function renderBranchDetails(branchName, isHead, wtEntry) {
         btnCheckout.style.cssText = 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
         btnCheckout.onclick = () => {
             let bn = branchName.trim();
-            if (bn.startsWith('remotes/')) {
+            const localBranches = getLocalBranches();
+            if (isRemote && !localBranches.includes(bn)) {
                 const parts = bn.split('/');
-                if (parts.length > 2) bn = parts.slice(2).join('/');
+                if (parts.length > 1) bn = parts.slice(1).join('/');
             }
             doPost('/api/git/checkout', { branch: bn });
         };
@@ -1509,7 +1520,7 @@ function renderBranchDetails(branchName, isHead, wtEntry) {
         btnRow.appendChild(btnOpen);
     }
     
-    if (!wtEntry && !branchName.startsWith('remotes/')) {
+    if (!wtEntry && !isRemote) {
         const btnWt = document.createElement('button');
         btnWt.textContent = 'Create Worktree';
         btnWt.style.cssText = 'background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
@@ -1649,21 +1660,26 @@ function renderAddWorktreeForm(preselectedBranch = '') {
     });
     
     const cb = cbGroup.querySelector('#wt-add-new-branch-cb');
+    const nameInput = newBranchSection.querySelector('#wt-add-new-branch-name');
+    nameInput.addEventListener('input', () => {
+        if (cb.checked) {
+            const name = nameInput.value.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
+            document.getElementById('wt-add-path').value = `${currentRepo}-wt-${name || 'newbranch'}`;
+        }
+    });
+
     cb.addEventListener('change', (e) => {
         const checked = e.target.checked;
         newBranchSection.style.display = checked ? 'flex' : 'none';
         branchSelect.disabled = checked;
         
-        if (checked) {
-            const nameInput = newBranchSection.querySelector('#wt-add-new-branch-name');
-            nameInput.addEventListener('input', () => {
-                const name = nameInput.value.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
-                document.getElementById('wt-add-path').value = `${currentRepo}-wt-${name || 'newbranch'}`;
-            });
-        } else {
+        if (!checked) {
             const branch = branchSelect.value;
             const sanitizedBranch = branch.replace(/[^a-zA-Z0-9_-]/g, '-');
             document.getElementById('wt-add-path').value = `${currentRepo}-wt-${sanitizedBranch}`;
+        } else {
+            const name = nameInput.value.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
+            document.getElementById('wt-add-path').value = `${currentRepo}-wt-${name || 'newbranch'}`;
         }
     });
     
