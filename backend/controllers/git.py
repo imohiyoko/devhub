@@ -26,53 +26,61 @@ def find_repos(root):
 
 def all_repos():
     cfg = load_config()
-    excludes = {os.path.normpath(os.path.abspath(os.path.expanduser(p))) for p in cfg.get('excludes', [])}
+    excludes = {os.path.normcase(os.path.normpath(os.path.abspath(os.path.expanduser(p)))) for p in cfg.get('excludes', [])}
     seen = set()
     repos = []
     
     for root in cfg.get('scan_roots', []):
         for r in find_repos(root):
             norm_r = os.path.normpath(os.path.abspath(r['path']))
-            if norm_r not in seen and norm_r not in excludes:
-                seen.add(norm_r)
+            case_r = os.path.normcase(norm_r)
+            if case_r not in seen and case_r not in excludes:
+                seen.add(case_r)
                 repos.append({'name': r['name'], 'path': norm_r})
                 
     for path in cfg.get('pinned_repos', []):
         expanded = os.path.normpath(os.path.abspath(os.path.expanduser(path)))
-        if expanded in excludes or not os.path.isdir(expanded):
+        case_expanded = os.path.normcase(expanded)
+        if case_expanded in excludes or not os.path.isdir(expanded):
             continue
             
         if os.path.exists(os.path.join(expanded, '.git')):
-            if expanded not in seen:
-                seen.add(expanded)
+            if case_expanded not in seen:
+                seen.add(case_expanded)
                 repos.append({'name': os.path.basename(expanded), 'path': expanded})
         else:
             sub_repos = find_repos(expanded)
             if sub_repos:
                 for r in sub_repos:
                     norm_sub = os.path.normpath(os.path.abspath(r['path']))
-                    if norm_sub not in seen and norm_sub not in excludes:
-                        seen.add(norm_sub)
+                    case_sub = os.path.normcase(norm_sub)
+                    if case_sub not in seen and case_sub not in excludes:
+                        seen.add(case_sub)
                         repos.append({'name': r['name'], 'path': norm_sub})
             else:
-                if expanded not in seen:
-                    seen.add(expanded)
+                if case_expanded not in seen:
+                    seen.add(case_expanded)
                     repos.append({'name': os.path.basename(expanded), 'path': expanded})
     return repos
 
-def _validated_repo_path(params):
-    raw = params.get('path', [None])[0]
-    if not raw:
+def _get_validated_path(raw_path):
+    if not raw_path:
         return None
-    valid_paths = {r['path'] for r in all_repos()}
-    return raw if raw in valid_paths else None
+    try:
+        norm_raw = os.path.normcase(os.path.normpath(os.path.abspath(os.path.expanduser(raw_path))))
+        for r in all_repos():
+            if os.path.normcase(r['path']) == norm_raw:
+                return r['path']
+    except Exception:
+        pass
+    return None
+
+def _validated_repo_path(params):
+    return _get_validated_path(params.get('path', [None])[0])
 
 def _validated_repo_path_from_body(data):
     raw = data.get('path') if isinstance(data, dict) else None
-    if not raw:
-        return None
-    valid_paths = {r['path'] for r in all_repos()}
-    return raw if raw in valid_paths else None
+    return _get_validated_path(raw)
 
 def handle_get(handler, path, params):
     repo_path = _validated_repo_path(params)
