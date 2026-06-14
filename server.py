@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import ipaddress, json, os, platform, re, shlex, shutil, signal, sqlite3, subprocess, sys, tempfile, threading, time, webbrowser
+from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 import xml.etree.ElementTree as ET
@@ -37,13 +38,16 @@ def save_settings(patch):
         json.dump(current, f, indent=2, ensure_ascii=False)
         f.write('\n')
 
-SECRET_KEYS = {'password', 'secret', 'apiKey', 'api_key', 'token'}
+def is_secret_key(k):
+    lower = k.lower()
+    return any(x in lower for x in ['password', 'secret', 'token', 'apikey', 'api_key', 'api-key'])
 
+SECRET_KEYS = {'password', 'secret', 'apiKey', 'api_key', 'api-key', 'token'} # Kept for exact matches if any
 
 def sanitize_db_connection(profile):
     if not isinstance(profile, dict):
         return profile
-    return {k: v for k, v in profile.items() if k not in SECRET_KEYS}
+    return {k: v for k, v in profile.items() if not is_secret_key(k)}
 
 
 def sanitize_settings(settings):
@@ -106,7 +110,6 @@ def load_config():
 
 
 def save_config(cfg):
-    import tempfile
     tmp = CONFIG_PATH + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
@@ -119,9 +122,8 @@ def load_envs():
         with open(ENVS_PATH) as f:
             return json.load(f)
     except FileNotFoundError:
-        example = ENVS_EXAMPLE_PATH
         try:
-            with open(example) as f:
+            with open(ENVS_EXAMPLE_PATH) as f:
                 cfg = json.load(f)
         except FileNotFoundError:
             return {'environments': []}
@@ -140,7 +142,6 @@ def load_envs():
 
 
 def save_envs(data):
-    import tempfile
     tmp = ENVS_PATH + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -195,7 +196,6 @@ def launch_environment(env_id):
             adj[dep].append(p['id'])
             in_degree[p['id']] += 1
 
-    from collections import deque
     queue = deque([pid for pid, deg in in_degree.items() if deg == 0])
     sorted_pids = []
     while queue:
@@ -307,7 +307,12 @@ def open_in_terminal(cwd, command, env=None):
                 env_exports.append(f'export {k}={shlex.quote(str(v))}')
 
         if env_exports:
-            separator = ' ; ' if (sys_name == 'Windows' and is_powershell) else ' && '
+            if sys_name == 'Windows' and is_powershell:
+                separator = ' ; '
+            elif sys_name == 'Windows' and not is_powershell:
+                separator = ' & '
+            else:
+                separator = ' && '
             cmd_with_env = separator.join(env_exports) + separator + command
 
     merged_env = os.environ.copy() | (env or {})

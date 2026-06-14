@@ -187,7 +187,7 @@ main {
         </label>
         <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
           ※有効にした場合、環境内の全プロセスは Worktree のルートディレクトリを CWD として強制的に起動します。<br>
-          <span style="color: var(--red);">※起動したworktreeは手動で削除する必要があります</span>
+          <span style="color: var(--red);">※起動したworktreeは手動で削除する必要があります（一時ディレクトリ: <code>/tmp/devhub-env-{env_id}-*</code>）</span>
         </div>
       </div>
       <div id="envWtFields" style="display: none; padding-left: 12px; border-left: 2px solid var(--border); margin-bottom: 12px;">
@@ -294,6 +294,7 @@ async function launchEnv(envId) {
     });
     const result = await res.json();
     if (result.error) alert('Error: ' + result.error);
+    else showToast('起動を開始しました。ターミナルとエラーログを確認してください。');
   } catch(e) {
     alert('Failed to launch environment');
   }
@@ -308,9 +309,36 @@ async function launchProcess(envId, procId) {
     });
     const result = await res.json();
     if (result.error) alert('Error: ' + result.error);
+    else showToast('プロセス起動を開始しました。ターミナルを確認してください。');
   } catch(e) {
     alert('Failed to launch process');
   }
+}
+
+function showToast(message) {
+  const toast = document.createElement('div');
+  toast.textContent = message;
+  toast.style.position = 'fixed';
+  toast.style.bottom = '20px';
+  toast.style.right = '20px';
+  toast.style.backgroundColor = 'var(--primary)';
+  toast.style.color = '#fff';
+  toast.style.padding = '12px 20px';
+  toast.style.borderRadius = '8px';
+  toast.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+  toast.style.zIndex = '9999';
+  toast.style.opacity = '0';
+  toast.style.transition = 'opacity 0.3s ease';
+  document.body.appendChild(toast);
+
+  // Fade in
+  setTimeout(() => toast.style.opacity = '1', 10);
+
+  // Fade out and remove
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }
 
 // --- Render ---
@@ -565,12 +593,14 @@ function saveProcess() {
     if (v.key.trim()) envObj[v.key.trim()] = v.value;
   });
 
+  const delayVal = document.getElementById('procDelay').value.trim();
+
   const proc = {
     id: id,
     label: document.getElementById('procLabel').value.trim(),
     command: document.getElementById('procCmd').value.trim(),
     cwd: document.getElementById('procCwd').value.trim(),
-    delay_seconds: parseFloat(document.getElementById('procDelay').value) || 0,
+    delay_seconds: delayVal === '' ? 1.0 : (parseFloat(delayVal) || 0),
     depends_on: depends_on,
     env: envObj
   };
