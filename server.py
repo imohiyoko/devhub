@@ -210,8 +210,11 @@ def launch_environment(env_id):
                 p_def = pid_to_def[pid]
                 launch_process(p_def, cwd_override=cwd_override)
                 # Allow customizing delay via definition, fallback to 1 sec
-                delay = float(p_def.get('delay_seconds', 1.0))
-                time.sleep(max(0.0, delay))
+                try:
+                    delay = max(0.0, float(p_def.get('delay_seconds', 1.0) or 1.0))
+                except (ValueError, TypeError):
+                    delay = 1.0
+                time.sleep(delay)
         except Exception as e:
             print(f"Error in run_all for env '{env_id}': {e}", file=sys.stderr)
 

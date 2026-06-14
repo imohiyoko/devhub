@@ -495,7 +495,7 @@ function openProcessModal(envIndex, procIndex = -1) {
   const dependsSelect = document.getElementById('procDepends');
   dependsSelect.innerHTML = (env.processes || [])
     .filter((_, i) => i !== procIndex) // exclude self
-    .map(p => `<option value="${p.id}">${p.label || p.id}</option>`)
+    .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label || p.id)}</option>`)
     .join('');
 
   if (procIndex >= 0) {
