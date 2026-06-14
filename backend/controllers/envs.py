@@ -18,7 +18,7 @@ def open_in_terminal(cwd, command, env=None):
     terminal = settings.get('terminal', {})
     term_cfg = terminal.get(sys_name, {})
     emulator = term_cfg.get('emulator')
-    shell = term_cfg.get('shell')
+    shell = term_cfg.get('shell') or ('powershell' if sys_name == 'Windows' else 'bash')
     shell_args = term_cfg.get('shell_args', [])
 
     is_powershell = shell and ('powershell' in shell.lower() or 'pwsh' in shell.lower())
@@ -194,6 +194,8 @@ def handle_post(handler, path, data):
             proc_ids = set()
             for proc in env.get('processes', []):
                 pid = proc.get('id')
+                if not pid or not isinstance(pid, str):
+                    raise ValueError(f"Process ID is required and must be a string in environment '{eid}'")
                 if pid in proc_ids:
                     raise ValueError(f"Duplicate process ID '{pid}' in environment '{eid}'")
                 proc_ids.add(pid)
