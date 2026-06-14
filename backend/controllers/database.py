@@ -515,7 +515,7 @@ def db_delete(profile, table, key):
 def handle_get(handler, path, params):
     if path == '/api/db/tables':
         profile = connection_from_payload({'path': params.get('path', [None])[0]})
-        handler.send_json({'connection': public_connection(profile), 'tables': db_tables(profile)})
+        handler.send_json({'connection': sanitize_db_connection(profile), 'tables': db_tables(profile)})
         return
 
     if path == '/api/db/rows':
@@ -525,7 +525,7 @@ def handle_get(handler, path, params):
         offset = max(int(params.get('offset', [0])[0]), 0)
         search = params.get('search', [''])[0]
         data = db_rows(profile, table, limit, offset, search)
-        data['connection'] = public_connection(profile)
+        data['connection'] = sanitize_db_connection(profile)
         handler.send_json(data)
         return
 
@@ -534,7 +534,7 @@ def handle_get(handler, path, params):
 def handle_post(handler, path, data):
     if path == '/api/db/tables':
         profile = connection_from_payload(data)
-        handler.send_json({'connection': public_connection(profile), 'tables': db_tables(profile)})
+        handler.send_json({'connection': sanitize_db_connection(profile), 'tables': db_tables(profile)})
         return
 
     if path == '/api/db/rows':
@@ -544,7 +544,7 @@ def handle_post(handler, path, data):
         offset = max(int(data.get('offset', 0)), 0)
         search = data.get('search', '')
         res = db_rows(profile, table, limit, offset, search)
-        res['connection'] = public_connection(profile)
+        res['connection'] = sanitize_db_connection(profile)
         handler.send_json(res)
         return
 

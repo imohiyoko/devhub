@@ -63,42 +63,46 @@ class Handler(BaseHTTPRequestHandler):
         path   = parsed.path
         params = parse_qs(parsed.query)
 
-        if path == '/api/config' or path == '/api/settings' or path.startswith('/api/settings/tool/'):
-            settings_controller.handle_get(self, path)
-            return
+        try:
+            if path == '/api/config' or path == '/api/settings' or path.startswith('/api/settings/tool/'):
+                settings_controller.handle_get(self, path)
+                return
 
-        if path == '/api/repos':
-            self.send_json(git_controller.all_repos())
-            return
+            if path == '/api/repos':
+                self.send_json(git_controller.all_repos())
+                return
 
-        if path.startswith('/api/git/'):
-            git_controller.handle_get(self, path, params)
-            return
+            if path.startswith('/api/git/'):
+                git_controller.handle_get(self, path, params)
+                return
 
-        if path == '/api/ls':
-            workspace_controller.handle_ls(self, params)
-            return
+            if path == '/api/ls':
+                workspace_controller.handle_ls(self, params)
+                return
 
-        if path == '/api/open':
-            workspace_controller.handle_open(self, params)
-            return
+            if path == '/api/open':
+                workspace_controller.handle_open(self, params)
+                return
 
-        if path == '/api/info':
-            current_settings = load_settings()
-            self.send_json({
-                'base': BASE,
-                'port': current_settings.get('port', 8765),
-                'home': os.path.expanduser('~'),
-                'is_windows': platform.system() == 'Windows'
-            })
-            return
+            if path == '/api/info':
+                current_settings = load_settings()
+                self.send_json({
+                    'base': BASE,
+                    'port': current_settings.get('port', 8765),
+                    'home': os.path.expanduser('~'),
+                    'is_windows': platform.system() == 'Windows'
+                })
+                return
 
-        if path == '/api/db/tables' or path == '/api/db/rows':
-            database_controller.handle_get(self, path, params)
-            return
+            if path == '/api/db/tables' or path == '/api/db/rows':
+                database_controller.handle_get(self, path, params)
+                return
 
-        if path == '/api/ports':
-            ports_controller.handle_get(self, path, params)
+            if path == '/api/ports':
+                ports_controller.handle_get(self, path, params)
+                return
+        except Exception as e:
+            self.send_json({'error': str(e)}, 400)
             return
 
         file_path = ROUTES.get(path)
@@ -125,41 +129,44 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             data = {}
 
-        if path == '/api/config' or path == '/api/settings' or path.startswith('/api/settings/tool/'):
-            settings_controller.handle_post(self, path, data)
-            return
+        try:
+            if path == '/api/config' or path == '/api/settings' or path.startswith('/api/settings/tool/'):
+                settings_controller.handle_post(self, path, data)
+                return
 
-        if path.startswith('/api/git/'):
-            git_controller.handle_post(self, path, data)
-            return
+            if path.startswith('/api/git/'):
+                git_controller.handle_post(self, path, data)
+                return
 
-        if path.startswith('/api/envs'):
-            envs_controller.handle_post(self, path, data)
-            return
+            if path.startswith('/api/envs'):
+                envs_controller.handle_post(self, path, data)
+                return
 
-        if path.startswith('/api/db/'):
-            database_controller.handle_post(self, path, data)
-            return
+            if path.startswith('/api/db/'):
+                database_controller.handle_post(self, path, data)
+                return
 
-        if path.startswith('/api/ports/'):
-            ports_controller.handle_post(self, path, data)
-            return
+            if path.startswith('/api/ports/'):
+                ports_controller.handle_post(self, path, data)
+                return
 
-        if path == '/api/restart':
-            self.send_json({'ok': True})
-            def do_restart():
-                time.sleep(0.3)
-                args = ' '.join(shlex.quote(a) for a in sys.argv)
-                cmd = (
-                    f'lsof -ti :{PORT} | xargs kill 2>/dev/null; '
-                    f'sleep 0.3; '
-                    f'exec {shlex.quote(sys.executable)} {args}'
-                )
-                subprocess.Popen(['sh', '-c', cmd], close_fds=True)
-            threading.Thread(target=do_restart, daemon=True).start()
-            return
+            if path == '/api/restart':
+                self.send_json({'ok': True})
+                def do_restart():
+                    time.sleep(0.3)
+                    args = ' '.join(shlex.quote(a) for a in sys.argv)
+                    cmd = (
+                        f'lsof -ti :{PORT} | xargs kill 2>/dev/null; '
+                        f'sleep 0.3; '
+                        f'exec {shlex.quote(sys.executable)} {args}'
+                    )
+                    subprocess.Popen(['sh', '-c', cmd], close_fds=True)
+                threading.Thread(target=do_restart, daemon=True).start()
+                return
 
-        self.send_json({'error': 'not found'}, 404)
+            self.send_json({'error': 'not found'}, 404)
+        except Exception as e:
+            self.send_json({'error': str(e)}, 400)
 
     def log_message(self, *_):
         pass
