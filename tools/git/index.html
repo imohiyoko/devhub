@@ -326,7 +326,7 @@ let gitData = {
 
 function deepMerge(target, source) {
   for (const key of Object.keys(source)) {
-    if (source[key] instanceof Object && key in target) {
+    if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key]) && key in target) {
       target[key] = deepMerge(target[key], source[key]);
     } else {
       target[key] = source[key];
@@ -439,6 +439,8 @@ async function refreshData() {
         gitData.stash = stash.output || '';
 
         renderLog();
+        lastFetchedDiff = null;
+        if (selectedItemIndex >= currentListItems.length) selectedItemIndex = 0;
         renderTabContent();
     } catch (e) { console.error(e); }
 }
@@ -461,8 +463,14 @@ function parseStatus(statusStr) {
 
 let selectedItemIndex = 0;
 let currentListItems = []; // For keyboard navigation
+let lastFetchedDiff = null;
 
 function renderTabContent() {
+    if (selectedItemIndex >= currentListItems.length && currentListItems.length > 0) {
+        selectedItemIndex = Math.max(0, currentListItems.length - 1);
+    } else if (currentListItems.length === 0) {
+        selectedItemIndex = 0;
+    }
     const container = document.getElementById('tab-content');
     container.innerHTML = '';
     currentListItems = [];
@@ -699,7 +707,13 @@ document.addEventListener('keydown', (e) => {
         }
     } else if (activeTab === 'branches') {
         if (e.key === 'Enter' && selObj) {
-            const bn = selObj.data.trim(); // might need to clean up `* ` or `  ` but data contains raw name
+            let bn = selObj.data.trim();
+            if (bn.startsWith('remotes/')) {
+                const parts = bn.split('/');
+                if (parts.length > 2) {
+                    bn = parts.slice(2).join('/');
+                }
+            }
             doPost('/api/git/checkout', { branch: bn });
         } else if (e.key === k.new_branch) {
             const bn = prompt('New branch name:');
