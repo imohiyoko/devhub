@@ -41,7 +41,7 @@ def handle_ls(handler, params):
                     'is_git': False,
                     'in_workspace': False,
                 })
-        handler.send_json({'path': '__drives__', 'parent': None, 'entries': entries})
+        handler.send_json({'path': '__drives__', 'parent': None, 'is_git': False, 'entries': entries})
         return
 
     target = os.path.normpath(os.path.abspath(os.path.expanduser(raw_path)))
@@ -67,6 +67,7 @@ def handle_ls(handler, params):
         # Windows: at drive root, allow navigating up to drive list
         if parent is None and platform.system() == 'Windows':
             parent = '__drives__'
-        handler.send_json({'path': target, 'parent': parent, 'entries': entries})
+        is_git = os.path.exists(os.path.join(target, '.git'))
+        handler.send_json({'path': target, 'parent': parent, 'is_git': is_git, 'entries': entries})
     except PermissionError:
         handler.send_json({'error': 'permission denied'}, 403)
