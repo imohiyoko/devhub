@@ -149,6 +149,10 @@ def launch_process(process_def, cwd_override=None):
 
 
 def setup_worktree(env_id, worktree_def):
+    # Note: Because open_in_terminal executes via system terminal emulators,
+    # devhub cannot track when the user actually closes the terminal process.
+    # Therefore, we cannot automatically run `git worktree remove` or `shutil.rmtree`
+    # when the user is done. The user must clean up these temporary worktrees manually.
     if not worktree_def or not worktree_def.get('enabled'):
         return None
     repo_path = os.path.expanduser(worktree_def.get('repo_path', ''))
@@ -201,9 +205,12 @@ def launch_environment(env_id):
     pid_to_def = {p['id']: p for p in processes}
 
     def run_all():
-        for pid in sorted_pids:
-            launch_process(pid_to_def[pid], cwd_override=cwd_override)
-            time.sleep(1)
+        try:
+            for pid in sorted_pids:
+                launch_process(pid_to_def[pid], cwd_override=cwd_override)
+                time.sleep(1)
+        except Exception as e:
+            print(f"Error in run_all for env '{env_id}': {e}", file=sys.stderr)
 
     threading.Thread(target=run_all, daemon=True).start()
 
@@ -1246,8 +1253,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not process_def:
                     raise ValueError(f"Process '{process_id}' not found")
 
-                cwd_override = setup_worktree(env_id, env_def.get('worktree', {}))
-                launch_process(process_def, cwd_override=cwd_override)
+                # We intentionally do not call setup_worktree() here to avoid creating endless
+                # tmp worktrees every time a single process is started. Single processes will
+                # launch in their default cwd. Worktrees should be started via "Launch all".
+                launch_process(process_def)
                 self.send_json({'ok': True})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)
