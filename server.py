@@ -106,9 +106,12 @@ def load_config():
 
 
 def save_config(cfg):
-    with open(CONFIG_PATH, 'w') as f:
+    import tempfile
+    tmp = CONFIG_PATH + '.tmp'
+    with open(tmp, 'w') as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
         f.write('\n')
+    os.replace(tmp, CONFIG_PATH)
 
 
 def load_envs():
@@ -137,9 +140,12 @@ def load_envs():
 
 
 def save_envs(data):
-    with open(ENVS_PATH, 'w') as f:
+    import tempfile
+    tmp = ENVS_PATH + '.tmp'
+    with open(tmp, 'w') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write('\n')
+    os.replace(tmp, ENVS_PATH)
 
 
 def launch_process(process_def, cwd_override=None):
@@ -189,10 +195,11 @@ def launch_environment(env_id):
             adj[dep].append(p['id'])
             in_degree[p['id']] += 1
 
-    queue = [pid for pid, deg in in_degree.items() if deg == 0]
+    from collections import deque
+    queue = deque([pid for pid, deg in in_degree.items() if deg == 0])
     sorted_pids = []
     while queue:
-        pid = queue.pop(0)
+        pid = queue.popleft()
         sorted_pids.append(pid)
         for nxt in adj[pid]:
             in_degree[nxt] -= 1
@@ -206,15 +213,17 @@ def launch_environment(env_id):
 
     def run_all():
         try:
-            for pid in sorted_pids:
+            for i, pid in enumerate(sorted_pids):
                 p_def = pid_to_def[pid]
                 launch_process(p_def, cwd_override=cwd_override)
-                # Allow customizing delay via definition, fallback to 1 sec
-                try:
-                    delay = max(0.0, float(p_def.get('delay_seconds', 1.0) or 1.0))
-                except (ValueError, TypeError):
-                    delay = 1.0
-                time.sleep(delay)
+                if i < len(sorted_pids) - 1:
+                    # Allow customizing delay via definition, fallback to 1 sec
+                    try:
+                        raw = p_def.get('delay_seconds')
+                        delay = max(0.0, float(raw)) if raw is not None else 1.0
+                    except (ValueError, TypeError):
+                        delay = 1.0
+                    time.sleep(delay)
         except Exception as e:
             print(f"Error in run_all for env '{env_id}': {e}", file=sys.stderr)
 
@@ -289,7 +298,9 @@ def open_in_terminal(cwd, command, env=None):
         for k, v in env.items():
             if sys_name == 'Windows':
                 if is_powershell:
-                    env_exports.append(f"$env:{k}='{v}'")
+                    # Escape single quotes in PowerShell by doubling them
+                    v_escaped = str(v).replace("'", "''")
+                    env_exports.append(f"$env:{k}='{v_escaped}'")
                 else:
                     env_exports.append(f'set {k}={v}')
             else:
@@ -308,8 +319,11 @@ def open_in_terminal(cwd, command, env=None):
 
     if sys_name == 'Darwin':
         if emulator == 'ghostty':
-            # ghostty inherits the environment successfully via `env` argument from Popen,
-            # so we can use the raw `command` string directly without inline exports (`cmd_with_env`).
+            # Note: Many terminal emulators (like iTerm, WezTerm, Terminal.app) use IPC to spawn
+            # new windows/tabs within an existing application process, which means they discard
+            # environment variables passed via `Popen(env=...)`. For those, we must inline
+            # exports via shell (`cmd_with_env`).
+            # Ghostty, however, successfully inherits variables passed directly, so we use `command` directly.
             cmd = ['ghostty', f'--working-directory={cwd}', '-e', shell] + shell_args + ['-c', command]
             subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'Terminal.app':
@@ -1231,6 +1245,21 @@ class Handler(BaseHTTPRequestHandler):
                 data = json.loads(self.read_body())
                 if not isinstance(data, dict) or not isinstance(data.get('environments'), list):
                     raise ValueError("Invalid payload: expected object with 'environments' array")
+
+                # Validate duplicate IDs
+                env_ids = set()
+                for env in data.get('environments', []):
+                    eid = env.get('id')
+                    if eid in env_ids:
+                        raise ValueError(f"Duplicate environment ID: {eid}")
+                    env_ids.add(eid)
+                    proc_ids = set()
+                    for proc in env.get('processes', []):
+                        pid = proc.get('id')
+                        if pid in proc_ids:
+                            raise ValueError(f"Duplicate process ID '{pid}' in environment '{eid}'")
+                        proc_ids.add(pid)
+
                 save_envs(data)
                 self.send_json({'ok': True})
             except Exception as e:
