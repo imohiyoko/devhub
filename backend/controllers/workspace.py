@@ -29,7 +29,7 @@ def handle_ls(handler, params):
         handler.send_json({'error': 'not a directory'}, 400)
         return
     try:
-        workspace_paths = {r['path'] for r in all_repos()}
+        workspace_paths = {os.path.normcase(r['path']) for r in all_repos()}
         entries = []
         for e in sorted(os.scandir(target), key=lambda x: x.name):
             if not e.is_dir() or e.name.startswith('.'):
@@ -40,7 +40,7 @@ def handle_ls(handler, params):
                 'name': e.name,
                 'path': norm_path,
                 'is_git': is_git,
-                'in_workspace': norm_path in workspace_paths,
+                'in_workspace': os.path.normcase(norm_path) in workspace_paths,
             })
         parent_dir = os.path.dirname(target)
         parent = parent_dir if parent_dir != target else None

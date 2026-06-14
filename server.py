@@ -72,6 +72,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(git_controller.all_repos())
                 return
 
+            if path == '/api/envs':
+                envs_controller.handle_get(self, path, params)
+                return
+
             if path.startswith('/api/git/'):
                 git_controller.handle_get(self, path, params)
                 return

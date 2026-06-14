@@ -13,7 +13,7 @@ def load_settings():
     defaults = {'port': 8765, 'editor': 'code', 'open_browser_on_start': True, 'protected_ports': [], 'db_local_only': True, 'terminal': {}}
     for name in ('server.example.json', 'server.json'):
         try:
-            with open(os.path.join(SETTINGS_DIR, name)) as f:
+            with open(os.path.join(SETTINGS_DIR, name), encoding='utf-8') as f:
                 defaults.update(json.load(f))
         except FileNotFoundError:
             pass
@@ -23,19 +23,19 @@ def save_settings(patch):
     path = os.path.join(SETTINGS_DIR, 'server.json')
     current = {}
     try:
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             current = json.load(f)
     except FileNotFoundError:
         pass
     current.update(patch)
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding='utf-8') as f:
         json.dump(current, f, indent=2, ensure_ascii=False)
         f.write('\n')
 
 def load_tool_settings(tool_id: str) -> dict:
     path = os.path.join(TOOLS_SETTINGS_DIR, f'{tool_id}.json')
     try:
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
@@ -43,18 +43,18 @@ def load_tool_settings(tool_id: str) -> dict:
 def save_tool_settings(tool_id: str, data: dict) -> None:
     os.makedirs(TOOLS_SETTINGS_DIR, exist_ok=True)
     path = os.path.join(TOOLS_SETTINGS_DIR, f'{tool_id}.json')
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write('\n')
 
 def load_config():
     try:
-        with open(CONFIG_PATH) as f:
+        with open(CONFIG_PATH, encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
         # first run: copy from example if available
         try:
-            with open(CONFIG_EXAMPLE_PATH) as f:
+            with open(CONFIG_EXAMPLE_PATH, encoding='utf-8') as f:
                 cfg = json.load(f)
             save_config(cfg)
             return cfg
@@ -67,18 +67,18 @@ def load_config():
 def save_config(cfg):
     os.makedirs(SETTINGS_DIR, exist_ok=True)
     tmp = CONFIG_PATH + '.tmp'
-    with open(tmp, 'w') as f:
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
         f.write('\n')
     os.replace(tmp, CONFIG_PATH)
 
 def load_envs():
     try:
-        with open(ENVS_PATH) as f:
+        with open(ENVS_PATH, encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
         try:
-            with open(ENVS_EXAMPLE_PATH) as f:
+            with open(ENVS_EXAMPLE_PATH, encoding='utf-8') as f:
                 envs = json.load(f)
             save_envs(envs)
             return envs
@@ -91,7 +91,7 @@ def load_envs():
 def save_envs(data):
     os.makedirs(SETTINGS_DIR, exist_ok=True)
     tmp = ENVS_PATH + '.tmp'
-    with open(tmp, 'w') as f:
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write('\n')
     os.replace(tmp, ENVS_PATH)
