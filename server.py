@@ -88,8 +88,6 @@ class Handler(BaseHTTPRequestHandler):
                 workspace_controller.handle_open(self, params)
                 return
 
-
-
             if path == '/api/info':
                 current_settings = load_settings()
                 self.send_json({
