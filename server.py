@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import ipaddress, json, os, platform, re, shlex, shutil, signal, sqlite3, subprocess, sys, threading, time, webbrowser
+import ipaddress, json, os, platform, re, shlex, shutil, signal, sqlite3, subprocess, sys, tempfile, threading, time, webbrowser
+from collections import deque
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 import xml.etree.ElementTree as ET
@@ -8,6 +9,8 @@ BASE         = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_DIR = os.path.join(BASE, 'settings')
 CONFIG_PATH  = os.path.join(SETTINGS_DIR, 'config.json')
 CONFIG_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'config.example.json')
+ENVS_PATH         = os.path.join(SETTINGS_DIR, 'envs.json')
+ENVS_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'envs.example.json')
 
 
 # ── Settings (settings.json + settings.local.json) ──────────────────────────
@@ -35,6 +38,10 @@ def save_settings(patch):
         json.dump(current, f, indent=2, ensure_ascii=False)
         f.write('\n')
 
+
+def is_secret_key(k):
+    lower = k.lower()
+    return any(x in lower for x in ['password', 'secret', 'token', 'apikey', 'api_key', 'api-key'])
 TOOLS_SETTINGS_DIR = os.path.join(SETTINGS_DIR, 'tools')
 
 def load_tool_settings(tool_id: str) -> dict:
@@ -57,11 +64,12 @@ def save_tool_settings(tool_id: str, data: dict) -> None:
 
 SECRET_KEYS = {'password', 'secret', 'apiKey', 'api_key', 'token'}
 
+SECRET_KEYS = {'password', 'secret', 'apiKey', 'api_key', 'api-key', 'token'} # Kept for exact matches if any
 
 def sanitize_db_connection(profile):
     if not isinstance(profile, dict):
         return profile
-    return {k: v for k, v in profile.items() if k not in SECRET_KEYS}
+    return {k: v for k, v in profile.items() if not is_secret_key(k)}
 
 
 def sanitize_settings(settings):
@@ -97,6 +105,8 @@ ROUTES = {
     '/db-table/':   os.path.join(BASE, 'tools', 'db-table', 'index.html'),
     '/ports':       os.path.join(BASE, 'tools', 'ports', 'index.html'),
     '/ports/':      os.path.join(BASE, 'tools', 'ports', 'index.html'),
+    '/env-launcher':  os.path.join(BASE, 'tools', 'env-launcher', 'index.html'),
+    '/env-launcher/': os.path.join(BASE, 'tools', 'env-launcher', 'index.html'),
     '/git':       os.path.join(BASE, 'tools', 'git', 'index.html'),
     '/git/':      os.path.join(BASE, 'tools', 'git', 'index.html'),
 }
@@ -124,9 +134,124 @@ def load_config():
 
 
 def save_config(cfg):
-    with open(CONFIG_PATH, 'w') as f:
+    tmp = CONFIG_PATH + '.tmp'
+    with open(tmp, 'w') as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
         f.write('\n')
+    os.replace(tmp, CONFIG_PATH)
+
+
+def load_envs():
+    try:
+        with open(ENVS_PATH) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        try:
+            with open(ENVS_EXAMPLE_PATH) as f:
+                cfg = json.load(f)
+        except FileNotFoundError:
+            return {'environments': []}
+        except Exception as e:
+            print(f"Error reading example environments: {e}", file=sys.stderr)
+            return {'environments': []}
+
+        try:
+            save_envs(cfg)
+        except Exception as e:
+            print(f"Error saving initial environments: {e}", file=sys.stderr)
+        return cfg
+    except Exception as e:
+        print(f"Error loading environments: {e}", file=sys.stderr)
+    return {'environments': []}
+
+
+def save_envs(data):
+    tmp = ENVS_PATH + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+    os.replace(tmp, ENVS_PATH)
+
+
+def launch_process(process_def, cwd_override=None):
+    cwd = cwd_override if cwd_override else os.path.expanduser(process_def.get('cwd', ''))
+    env = process_def.get('env', {})
+    open_in_terminal(cwd, process_def.get('command', ''), env)
+
+
+def setup_worktree(env_id, worktree_def):
+    # Note: Because open_in_terminal executes via system terminal emulators,
+    # devhub cannot track when the user actually closes the terminal process.
+    # Therefore, we cannot automatically run `git worktree remove` or `shutil.rmtree`
+    # when the user is done. The user must clean up these temporary worktrees manually.
+    if not worktree_def or not worktree_def.get('enabled'):
+        return None
+    repo_path = os.path.expanduser(worktree_def.get('repo_path', ''))
+    branch = worktree_def.get('branch', '')
+    if not repo_path or not branch:
+        return None
+
+    tmp_path = tempfile.mkdtemp(prefix=f"devhub-env-{env_id}-")
+    try:
+        subprocess.run(['git', 'worktree', 'add', tmp_path, branch], cwd=repo_path, check=True)
+        return tmp_path
+    except Exception:
+        shutil.rmtree(tmp_path, ignore_errors=True)
+        raise
+
+
+def launch_environment(env_id):
+    envs_data = load_envs()
+    env_def = next((e for e in envs_data.get('environments', []) if e.get('id') == env_id), None)
+    if not env_def:
+        raise ValueError(f"Environment '{env_id}' not found")
+
+    cwd_override = setup_worktree(env_id, env_def.get('worktree', {}))
+
+    processes = env_def.get('processes', [])
+
+    # Topological sort
+    in_degree = {p['id']: 0 for p in processes}
+    adj = {p['id']: [] for p in processes}
+    for p in processes:
+        for dep in p.get('depends_on', []):
+            if dep not in adj:
+                raise ValueError(f"Dependency '{dep}' for process '{p['id']}' not found in environment")
+            adj[dep].append(p['id'])
+            in_degree[p['id']] += 1
+
+    queue = deque([pid for pid, deg in in_degree.items() if deg == 0])
+    sorted_pids = []
+    while queue:
+        pid = queue.popleft()
+        sorted_pids.append(pid)
+        for nxt in adj[pid]:
+            in_degree[nxt] -= 1
+            if in_degree[nxt] == 0:
+                queue.append(nxt)
+
+    if len(sorted_pids) != len(processes):
+        raise ValueError("Circular dependency detected in depends_on")
+
+    pid_to_def = {p['id']: p for p in processes}
+
+    def run_all():
+        try:
+            for i, pid in enumerate(sorted_pids):
+                p_def = pid_to_def[pid]
+                launch_process(p_def, cwd_override=cwd_override)
+                if i < len(sorted_pids) - 1:
+                    # Allow customizing delay via definition, fallback to 1 sec
+                    try:
+                        raw = p_def.get('delay_seconds')
+                        delay = max(0.0, float(raw)) if raw is not None else 1.0
+                    except (ValueError, TypeError):
+                        delay = 1.0
+                    time.sleep(delay)
+        except Exception as e:
+            print(f"Error in run_all for env '{env_id}': {e}", file=sys.stderr)
+
+    threading.Thread(target=run_all, daemon=True).start()
 
 
 # ── Repo discovery ────────────────────────────────────────────────────────────
@@ -197,29 +322,61 @@ def open_in_editor(path):
         subprocess.Popen([EDITOR, path])
 
 
-def open_in_terminal(cwd, command):
+def open_in_terminal(cwd, command, env=None):
     sys_name = platform.system()
     term_cfg = TERMINAL.get(sys_name, {})
     emulator = term_cfg.get('emulator')
     shell = term_cfg.get('shell')
     shell_args = term_cfg.get('shell_args', [])
 
+    is_powershell = shell and ('powershell' in shell.lower() or 'pwsh' in shell.lower())
+
+    cmd_with_env = command
+    if env:
+        env_exports = []
+        for k, v in env.items():
+            if sys_name == 'Windows':
+                if is_powershell:
+                    # Escape single quotes in PowerShell by doubling them
+                    v_escaped = str(v).replace("'", "''")
+                    env_exports.append(f"$env:{k}='{v_escaped}'")
+                else:
+                    env_exports.append(f'set {k}={v}')
+            else:
+                env_exports.append(f'export {k}={shlex.quote(str(v))}')
+
+        if env_exports:
+            if sys_name == 'Windows' and is_powershell:
+                separator = ' ; '
+            elif sys_name == 'Windows' and not is_powershell:
+                separator = ' & '
+            else:
+                separator = ' && '
+            cmd_with_env = separator.join(env_exports) + separator + command
+
+    merged_env = os.environ.copy() | (env or {})
+
     if not emulator or (emulator not in ('Terminal.app', 'iTerm', 'wt') and not shutil.which(emulator)):
         # Fallback if emulator is not configured or not found
-        subprocess.Popen(command, cwd=cwd, shell=True)
+        subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
         return
 
     if sys_name == 'Darwin':
         if emulator == 'ghostty':
+            # Note: Many terminal emulators (like iTerm, WezTerm, Terminal.app) use IPC to spawn
+            # new windows/tabs within an existing application process, which means they discard
+            # environment variables passed via `Popen(env=...)`. For those, we must inline
+            # exports via shell (`cmd_with_env`).
+            # Ghostty, however, successfully inherits variables passed directly, so we use `command` directly.
             cmd = ['ghostty', f'--working-directory={cwd}', '-e', shell] + shell_args + ['-c', command]
-            subprocess.Popen(cmd)
+            subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'Terminal.app':
-            sh_cmd = f"cd {shlex.quote(cwd)} && {command}"
+            sh_cmd = f"cd {shlex.quote(cwd)} && {cmd_with_env}"
             safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
             script = f'tell application "Terminal" to do script "{safe_sh_cmd}"'
             subprocess.Popen(['osascript', '-e', script])
         elif emulator == 'iTerm':
-            sh_cmd = f"cd {shlex.quote(cwd)} && {command}"
+            sh_cmd = f"cd {shlex.quote(cwd)} && {cmd_with_env}"
             safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
             script = f'''
             tell application "iTerm"
@@ -231,27 +388,27 @@ def open_in_terminal(cwd, command):
             '''
             subprocess.Popen(['osascript', '-e', script])
         else:
-            subprocess.Popen(command, cwd=cwd, shell=True)
+            subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
 
     elif sys_name == 'Windows':
         if emulator == 'wt':
-            flag = '-Command' if shell and ('powershell' in shell.lower() or 'pwsh' in shell.lower()) else '/c'
-            cmd = ['wt', 'new-tab', '--startingDirectory', cwd, shell] + shell_args + [flag, command]
-            subprocess.Popen(cmd)
+            flag = '-Command' if is_powershell else '/c'
+            cmd = ['wt', 'new-tab', '--startingDirectory', cwd, shell] + shell_args + [flag, cmd_with_env]
+            subprocess.Popen(cmd, env=merged_env)
         else:
-            subprocess.Popen(command, cwd=cwd, shell=True)
+            subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
 
     elif sys_name == 'Linux':
         if emulator == 'gnome-terminal':
-            cmd = ['gnome-terminal', f'--working-directory={cwd}', '--', shell] + shell_args + ['-c', command]
-            subprocess.Popen(cmd)
+            cmd = ['gnome-terminal', f'--working-directory={cwd}', '--', shell] + shell_args + ['-c', cmd_with_env]
+            subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'xterm':
-            cmd = ['xterm', '-e', shell] + shell_args + ['-c', command]
-            subprocess.Popen(cmd, cwd=cwd)
+            cmd = ['xterm', '-e', shell] + shell_args + ['-c', cmd_with_env]
+            subprocess.Popen(cmd, cwd=cwd, env=merged_env)
         else:
-            subprocess.Popen(command, cwd=cwd, shell=True)
+            subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
     else:
-        subprocess.Popen(command, cwd=cwd, shell=True)
+        subprocess.Popen(command, cwd=cwd, shell=True, env=merged_env)
 
 
 # ── SQLite table editor ───────────────────────────────────────────────────────
@@ -1018,6 +1175,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'error': str(e)}, 400)
             return
 
+        if path == '/api/envs':
+            try:
+                self.send_json(load_envs())
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
         if path == '/api/open':
             target = params.get('path', [None])[0]
             if not target or not os.path.isdir(target):
@@ -1320,6 +1484,68 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 data = json.loads(self.read_body())
                 kill_port_process(data.get('port'), data.get('pid'))
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/envs':
+            try:
+                data = json.loads(self.read_body())
+                if not isinstance(data, dict) or not isinstance(data.get('environments'), list):
+                    raise ValueError("Invalid payload: expected object with 'environments' array")
+
+                # Validate duplicate IDs
+                env_ids = set()
+                for env in data.get('environments', []):
+                    eid = env.get('id')
+                    if eid in env_ids:
+                        raise ValueError(f"Duplicate environment ID: {eid}")
+                    env_ids.add(eid)
+                    proc_ids = set()
+                    for proc in env.get('processes', []):
+                        pid = proc.get('id')
+                        if pid in proc_ids:
+                            raise ValueError(f"Duplicate process ID '{pid}' in environment '{eid}'")
+                        proc_ids.add(pid)
+
+                save_envs(data)
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/envs/launch':
+            try:
+                data = json.loads(self.read_body())
+                env_id = data.get('env_id')
+                if not env_id:
+                    raise ValueError("env_id is required")
+                launch_environment(env_id)
+                self.send_json({'ok': True})
+            except Exception as e:
+                self.send_json({'error': str(e)}, 400)
+            return
+
+        if path == '/api/envs/launch/process':
+            try:
+                data = json.loads(self.read_body())
+                env_id = data.get('env_id')
+                process_id = data.get('process_id')
+                if not env_id or not process_id:
+                    raise ValueError("env_id and process_id are required")
+                envs_data = load_envs()
+                env_def = next((e for e in envs_data.get('environments', []) if e.get('id') == env_id), None)
+                if not env_def:
+                    raise ValueError(f"Environment '{env_id}' not found")
+                process_def = next((p for p in env_def.get('processes', []) if p.get('id') == process_id), None)
+                if not process_def:
+                    raise ValueError(f"Process '{process_id}' not found")
+
+                # We intentionally do not call setup_worktree() here to avoid creating endless
+                # tmp worktrees every time a single process is started. Single processes will
+                # launch in their default cwd. Worktrees should be started via "Launch all".
+                launch_process(process_def)
                 self.send_json({'ok': True})
             except Exception as e:
                 self.send_json({'error': str(e)}, 400)

@@ -12,3 +12,5 @@ __pycache__/
 
 # ログ
 *.log
+settings/envs.json
+settings/config.json

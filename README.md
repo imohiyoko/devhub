@@ -102,6 +102,8 @@ cp settings/server.example.json settings/server.json
 初回起動時に `settings/config.example.json` から自動生成されます。  
 workspace ツールの UI からも編集可能です。
 
+> **Note**: 古いバージョンからアップデートした場合、`settings/config.json` が Git の管理対象として残っている場合があります。その場合は `git rm --cached settings/config.json` を実行して管理から外してください。
+
 | キー | 説明 |
 |---|---|
 | `scan_roots` | リポジトリをスキャンするディレクトリ一覧 |
