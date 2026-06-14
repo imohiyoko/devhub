@@ -142,6 +142,48 @@ def handle_get(handler, path, params):
             handler.send_json({'error': e.stderr}, 400)
         return
 
+    if path == '/api/git/worktrees':
+        try:
+            # First, run prune to clean up stale worktrees
+            try:
+                subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True)
+            except Exception:
+                pass
+
+            res = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=repo_path, capture_output=True, text=True, check=True)
+            lines = res.stdout.splitlines()
+            worktrees = []
+            current = {}
+            for line in lines:
+                if not line.strip():
+                    if current:
+                        worktrees.append(current)
+                        current = {}
+                    continue
+                parts = line.split(' ', 1)
+                if len(parts) == 2:
+                    key, val = parts
+                    if key == 'worktree':
+                        if current:
+                            worktrees.append(current)
+                        current = {'path': val}
+                    elif key == 'HEAD':
+                        current['head'] = val
+                    elif key == 'branch':
+                        branch_ref = val
+                        if branch_ref.startswith('refs/heads/'):
+                            current['branch'] = branch_ref[len('refs/heads/'):]
+                        else:
+                            current['branch'] = branch_ref
+                elif line.strip() == 'detached':
+                    current['detached'] = True
+            if current:
+                worktrees.append(current)
+            handler.send_json({'worktrees': worktrees})
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
     handler.send_json({'error': 'not found'}, 404)
 
 def handle_post(handler, path, data):
@@ -249,6 +291,75 @@ def handle_post(handler, path, data):
         try:
             res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/worktree/add':
+        worktree_path = data.get('worktree_path')
+        branch = data.get('branch')
+        new_branch = data.get('new_branch', False)
+        base_commit = data.get('base_commit')
+        
+        if not worktree_path or not branch:
+            handler.send_json({'error': 'missing worktree_path or branch'}, 400)
+            return
+            
+        cmd = ['git', 'worktree', 'add']
+        if new_branch:
+            cmd.extend(['-b', branch, worktree_path])
+            if base_commit:
+                cmd.append(base_commit)
+        else:
+            cmd.extend([worktree_path, branch])
+            
+        try:
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/worktree/remove':
+        worktree_path = data.get('worktree_path')
+        force = data.get('force', False)
+        if not worktree_path:
+            handler.send_json({'error': 'missing worktree_path'}, 400)
+            return
+            
+        cmd = ['git', 'worktree', 'remove']
+        if force:
+            cmd.append('--force')
+        cmd.append(worktree_path)
+        
+        try:
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/branch/delete':
+        branch = data.get('branch')
+        force = data.get('force', False)
+        if not branch:
+            handler.send_json({'error': 'missing branch name'}, 400)
+            return
+            
+        cmd = ['git', 'branch', '-D' if force else '-d', branch]
+        try:
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/fetch':
+        try:
+            res = subprocess.run(['git', 'fetch', '--prune'], cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git fetch timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
