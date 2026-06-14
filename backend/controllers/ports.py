@@ -149,7 +149,12 @@ def kill_port_process(port, pid):
         if proc.returncode != 0:
             raise ValueError(proc.stderr.strip() or proc.stdout.strip() or 'taskkill failed')
     else:
-        os.kill(pid, signal.SIGTERM)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except PermissionError:
+            raise ValueError('permission denied: cannot kill this process')
+        except ProcessLookupError:
+            raise ValueError('process was not found or has already exited')
 
 def handle_get(handler, path, params):
     if path == '/api/ports':

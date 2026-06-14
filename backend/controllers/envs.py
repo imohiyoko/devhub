@@ -138,7 +138,6 @@ def launch_environment(env_id):
     if not env_def:
         raise ValueError(f"Environment '{env_id}' not found")
 
-    cwd_override = setup_worktree(env_id, env_def.get('worktree', {}))
     processes = env_def.get('processes', [])
 
     # Topological sort
@@ -163,6 +162,8 @@ def launch_environment(env_id):
 
     if len(sorted_pids) != len(processes):
         raise ValueError("Circular dependency detected in depends_on")
+
+    cwd_override = setup_worktree(env_id, env_def.get('worktree', {}))
 
     pid_to_def = {p['id']: p for p in processes}
 

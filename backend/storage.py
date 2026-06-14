@@ -28,9 +28,11 @@ def save_settings(patch):
     except FileNotFoundError:
         pass
     current.update(patch)
-    with open(path, 'w', encoding='utf-8') as f:
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(current, f, indent=2, ensure_ascii=False)
         f.write('\n')
+    os.replace(tmp, path)
 
 def load_tool_settings(tool_id: str) -> dict:
     path = os.path.join(TOOLS_SETTINGS_DIR, f'{tool_id}.json')
@@ -43,9 +45,11 @@ def load_tool_settings(tool_id: str) -> dict:
 def save_tool_settings(tool_id: str, data: dict) -> None:
     os.makedirs(TOOLS_SETTINGS_DIR, exist_ok=True)
     path = os.path.join(TOOLS_SETTINGS_DIR, f'{tool_id}.json')
-    with open(path, 'w', encoding='utf-8') as f:
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write('\n')
+    os.replace(tmp, path)
 
 def load_config():
     try:
