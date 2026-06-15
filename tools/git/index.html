@@ -968,12 +968,12 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
         document.getElementById('setting-log-limit').value = gitConfig.log_limit;
         const localAuto = gitConfig.local_poll_interval === 'auto';
         document.getElementById('setting-local-poll-auto').checked = localAuto;
-        document.getElementById('setting-local-poll').value = localAuto ? 10 : gitConfig.local_poll_interval;
+        document.getElementById('setting-local-poll').value = localAuto ? 30 : gitConfig.local_poll_interval;
         document.getElementById('setting-local-poll').disabled = localAuto;
 
         const remoteAuto = gitConfig.remote_poll_interval === 'auto';
         document.getElementById('setting-remote-poll-auto').checked = remoteAuto;
-        document.getElementById('setting-remote-poll').value = remoteAuto ? 30 : gitConfig.remote_poll_interval;
+        document.getElementById('setting-remote-poll').value = remoteAuto ? 90 : gitConfig.remote_poll_interval;
         document.getElementById('setting-remote-poll').disabled = remoteAuto;
 
         document.getElementById('setting-show-log').checked = gitConfig.layout.show_log;
@@ -1356,12 +1356,12 @@ let currentRunningRemoteInterval = null;
 function startPolling() {
     // In auto mode, refreshData() already armed the timers with the server-suggested
     // intervals. Reuse those running values if present so we don't tear them down and
-    // briefly re-poll at the aggressive auto floor (10/30); fall back to the floor only
+    // briefly re-poll at the auto floor (30/90); fall back to the floor only
     // on cold start (before the first refresh sets a running interval).
     const localSec = gitConfig.local_poll_interval === 'auto'
-        ? (currentRunningLocalInterval || 10) : gitConfig.local_poll_interval;
+        ? (currentRunningLocalInterval || 30) : gitConfig.local_poll_interval;
     const remoteSec = gitConfig.remote_poll_interval === 'auto'
-        ? (currentRunningRemoteInterval || 30) : gitConfig.remote_poll_interval;
+        ? (currentRunningRemoteInterval || 90) : gitConfig.remote_poll_interval;
     adjustDynamicPolling(localSec, remoteSec);
 }
 
