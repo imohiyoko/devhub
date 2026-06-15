@@ -873,7 +873,7 @@ function renderTabContent() {
             const branchSpan = document.createElement('span');
             branchSpan.style.color = 'var(--green)';
             branchSpan.style.fontFamily = 'monospace';
-            branchSpan.textContent = wt.branch || '(detached)';
+            branchSpan.textContent = wt.branch || (wt.bare ? '(bare)' : '(detached)');
             
             const pathSpan = document.createElement('span');
             pathSpan.style.color = 'var(--muted)';
@@ -1863,7 +1863,7 @@ function renderWorktreeDetails(wt, isMain) {
         `<span style="font-family: monospace; font-size: 13px; color: var(--text); word-break: break-all;">${escapeHtml(wt.path)}</span>`));
 
     card.appendChild(makeInfoRow('Branch',
-        `<span style="font-family: monospace; font-size: 14px; color: var(--green);">${escapeHtml(wt.branch || '(detached)')}</span>`));
+        `<span style="font-family: monospace; font-size: 14px; color: var(--green);">${escapeHtml(wt.branch || (wt.bare ? '(bare)' : '(detached)'))}</span>`));
 
     if (wt.head) {
         card.appendChild(makeInfoRow('Commit SHA',
