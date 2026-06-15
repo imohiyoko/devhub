@@ -102,8 +102,6 @@ ROUTES = {
     '/workspace/':  os.path.join(BASE, 'tools', 'workspace', 'index.html'),
     '/diagram':     os.path.join(BASE, 'tools', 'diagram', 'index.html'),
     '/diagram/':    os.path.join(BASE, 'tools', 'diagram', 'index.html'),
-    '/csv-tsv':     os.path.join(BASE, 'tools', 'csv-tsv', 'index.html'),
-    '/csv-tsv/':    os.path.join(BASE, 'tools', 'csv-tsv', 'index.html'),
     '/db-table':    os.path.join(BASE, 'tools', 'db-table', 'index.html'),
     '/db-table/':   os.path.join(BASE, 'tools', 'db-table', 'index.html'),
     '/ports':       os.path.join(BASE, 'tools', 'ports', 'index.html'),
