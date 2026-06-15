@@ -82,6 +82,10 @@ def _validated_repo_path_from_body(data):
     raw = data.get('path') if isinstance(data, dict) else None
     return _get_validated_path(raw)
 
+def _has_path_traversal(p):
+    # Reject parent-directory references ('..') in user-supplied worktree paths.
+    return any(part == '..' for part in re.split(r'[\\/]+', p) if part)
+
 def handle_get(handler, path, params):
     repo_path = _validated_repo_path(params)
     if not repo_path:
@@ -96,7 +100,7 @@ def handle_get(handler, path, params):
             dynamic_interval = 600
             try:
                 log_res = subprocess.run(
-                    ['git', 'log', '--since="1 hour ago"', '--format=%ct'],
+                    ['git', 'log', '--since=1 hour ago', '--format=%ct'],
                     cwd=repo_path, capture_output=True, text=True
                 )
                 timestamps = [int(t) for t in log_res.stdout.splitlines() if t.strip().isdigit()]
@@ -105,7 +109,8 @@ def handle_get(handler, path, params):
                     avg_interval = sum(intervals) / len(intervals)
                     dynamic_interval = max(10, min(600, int(avg_interval / 4)))
                 else:
-                    # 0 or 1 commits -> treat as 1 commit -> 1 hour interval -> 1/4 is 15 mins (900s) -> capped at 10 mins (600s)
+                    # Fewer than 2 commits in the last hour: not enough data to
+                    # estimate cadence, so fall back to the max (slow) interval.
                     dynamic_interval = 600
             except Exception:
                 pass
@@ -327,7 +332,7 @@ def handle_post(handler, path, data):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
 
-        if worktree_path.startswith('-'):
+        if worktree_path.startswith('-') or _has_path_traversal(worktree_path):
             handler.send_json({'error': 'invalid worktree path'}, 400)
             return
 
@@ -364,7 +369,7 @@ def handle_post(handler, path, data):
             handler.send_json({'error': 'missing worktree_path'}, 400)
             return
 
-        if worktree_path.startswith('-'):
+        if worktree_path.startswith('-') or _has_path_traversal(worktree_path):
             handler.send_json({'error': 'invalid worktree path'}, 400)
             return
             
