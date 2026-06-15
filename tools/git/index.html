@@ -821,6 +821,9 @@ function renderTabContent() {
             const parts = line.split('\t');
             if(parts.length < 3) return;
             const refname = parts[0];
+            // Skip the refs/remotes/<remote>/HEAD symref — it's not a real,
+            // checkout-able branch, just a pointer to the remote's default.
+            if (refname.endsWith('/HEAD')) return;
             const name = parts[1];
             const isHead = parts[2] === '*';
             const el = document.createElement('div'); el.className = 'list-item';
@@ -965,6 +968,9 @@ async function doCommit(msg) {
 // Interactions
 document.getElementById('repo-select').addEventListener('change', (e) => {
     currentRepo = e.target.value;
+    // Don't carry the previous repo's remote state into the new one; the next
+    // suggest refresh re-establishes it and adjustDynamicPolling re-arms.
+    gitData.hasRemote = undefined;
     refreshData();
 });
 
@@ -1384,6 +1390,7 @@ let localPollTimer = null;
 let remotePollTimer = null;
 let currentRunningLocalInterval = null;
 let currentRunningRemoteInterval = null;
+let currentRemoteEnabled = null;
 
 function startPolling() {
     // In auto mode, refreshData() already armed the timers with the server-suggested
@@ -1398,12 +1405,22 @@ function startPolling() {
 }
 
 function adjustDynamicPolling(targetLocal, targetRemote) {
-    if (targetLocal !== currentRunningLocalInterval || targetRemote !== currentRunningRemoteInterval) {
+    // Skip the origin-fetch timer when the repo has no remote (gitData.hasRemote
+    // === false) — otherwise it would fire a guaranteed-to-fail `git fetch` every
+    // cycle. Undefined (not yet known) still arms, to be conservative.
+    const remoteEnabled = targetRemote > 0 && gitData.hasRemote !== false;
+    // Re-arm on an interval change OR when the remote-enabled state flips, so a
+    // hasRemote true→false transition with an unchanged interval still tears the
+    // (now pointless) fetch timer down instead of being swallowed by the guard.
+    if (targetLocal !== currentRunningLocalInterval
+        || targetRemote !== currentRunningRemoteInterval
+        || remoteEnabled !== currentRemoteEnabled) {
         currentRunningLocalInterval = targetLocal;
         currentRunningRemoteInterval = targetRemote;
-        
+        currentRemoteEnabled = remoteEnabled;
+
         stopPolling();
-        
+
         if (targetLocal > 0) {
             localPollTimer = setInterval(() => {
                 // Local poll: skip the suggestion (no extra git log). The remote
@@ -1411,11 +1428,8 @@ function adjustDynamicPolling(targetLocal, targetRemote) {
                 if (currentRepo) refreshData(false);
             }, targetLocal * 1000);
         }
-        
-        // Skip the origin-fetch timer when the repo has no remote (gitData.hasRemote
-        // === false) — otherwise it would fire a guaranteed-to-fail `git fetch`
-        // every cycle. Undefined (not yet known) still arms, to be conservative.
-        if (targetRemote > 0 && gitData.hasRemote !== false) {
+
+        if (remoteEnabled) {
             remotePollTimer = setInterval(() => {
                 if (currentRepo) {
                     fetch('/api/git/fetch', {
@@ -1437,7 +1451,8 @@ function stopPolling() {
     if (remotePollTimer) clearInterval(remotePollTimer);
     localPollTimer = null;
     remotePollTimer = null;
-    // NOTE: currentRunningLocal/RemoteInterval are owned by adjustDynamicPolling.
+    // NOTE: currentRunningLocal/RemoteInterval and currentRemoteEnabled are owned
+    // by adjustDynamicPolling.
     // Resetting them here defeats its "did the interval change?" guard, so every
     // refresh would tear down and recreate both timers — and because the remote
     // interval is longer than the local one, the remote (origin fetch) timer would
@@ -1458,10 +1473,13 @@ document.getElementById('setting-remote-poll-auto').addEventListener('change', (
 // this so the tab-split parsing lives in one place.
 function parseBranchLines() {
     if (!gitData.branches) return [];
-    return gitData.branches.trim().split('\n').filter(l=>l).map(line => {
-        const parts = line.split('\t');
-        return { refname: parts[0], shortName: parts.length >= 2 ? parts[1] : parts[0] };
-    });
+    return gitData.branches.trim().split('\n').filter(l=>l)
+        // Drop the refs/remotes/<remote>/HEAD symref — not a real branch.
+        .filter(l => !l.split('\t')[0].endsWith('/HEAD'))
+        .map(line => {
+            const parts = line.split('\t');
+            return { refname: parts[0], shortName: parts.length >= 2 ? parts[1] : parts[0] };
+        });
 }
 
 function getLocalBranches() {

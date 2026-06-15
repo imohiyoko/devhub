@@ -366,8 +366,10 @@ def handle_post(handler, path, data):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
         try:
-            res = subprocess.run(['git', 'checkout', branch], cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(['git', 'checkout', branch], cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git checkout timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
@@ -378,8 +380,10 @@ def handle_post(handler, path, data):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
         try:
-            res = subprocess.run(['git', 'checkout', '-b', branch], cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(['git', 'checkout', '-b', branch], cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git branch create timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
@@ -501,8 +505,10 @@ def handle_post(handler, path, data):
             
         cmd = ['git', 'branch', '-D' if force else '-d', branch]
         try:
-            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git branch delete timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
