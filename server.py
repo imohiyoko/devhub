@@ -2,6 +2,7 @@
 import json
 import os
 import platform
+import secrets
 import shlex
 import subprocess
 import sys
@@ -24,6 +25,47 @@ SETTINGS = load_settings()
 PORT = SETTINGS.get('port', 8765)
 EDITOR = SETTINGS.get('editor', 'code')
 TERMINAL = SETTINGS.get('terminal', {})
+
+# --- Local API security ------------------------------------------------------
+# devhub の API はユーザー権限で任意コマンド実行やローカルデータ読取を行うため、
+# ブラウザ経由のクロスオリジン攻撃 (CSRF / DNS リバインディング) から守る必要がある。
+# 127.0.0.1 バインドは LAN/外部からのアクセスを隠すだけで、閲覧サイトからの攻撃は防げない。
+#
+#  (A) Host ヘッダ許可リスト  -> DNS リバインディングを遮断
+#  (B) 起動毎のランダムトークン -> /api/* に X-Devhub-Token 必須。配信 HTML にのみ埋め込む。
+#      外部サイトは CORS で HTML を読めずトークンを取得できず、カスタムヘッダ必須化により
+#      プリフライト不要の "simple request" にもできない (OPTIONS ハンドラを持たないため失敗する)。
+#  (C) Sec-Fetch-Site -> ブラウザが付与し JS から偽装できない。cross-site/same-site を拒否。
+TOKEN = secrets.token_urlsafe(32)
+ALLOWED_HOSTS = {
+    f'localhost:{PORT}',
+    f'127.0.0.1:{PORT}',
+    f'[::1]:{PORT}',
+}
+
+# 配信 HTML に注入するブートストラップ。トークンを公開し、同一オリジンの /api/ 宛て
+# fetch に自動で X-Devhub-Token を付与する。各ツールの fetch 呼び出しを個別に書き換え
+# なくて済むよう window.fetch をラップする。<head> 直後に挿入され最初に実行される。
+_FETCH_SHIM_JS = '''(function(){
+var T=%s;
+window.__DEVHUB_TOKEN__=T;
+var orig=window.fetch?window.fetch.bind(window):null;
+if(!orig)return;
+window.fetch=function(input,init){
+init=init||{};
+try{
+var url=(typeof input==='string')?input:(input&&input.url)||'';
+var u=new URL(url,window.location.href);
+if(u.origin===window.location.origin&&u.pathname.indexOf('/api/')===0){
+var h=new Headers((init&&init.headers)||(typeof input!=='string'&&input&&input.headers)||{});
+h.set('X-Devhub-Token',T);
+init.headers=h;
+}
+}catch(e){}
+return orig(input,init);
+};
+})();'''
+TOKEN_SCRIPT = ('<script>' + (_FETCH_SHIM_JS % json.dumps(TOKEN)) + '</script>').encode()
 
 ROUTES = {
     '/':            os.path.join(BASE, 'dashboard', 'index.html'),
@@ -58,10 +100,40 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length', 0))
         return self.rfile.read(length)
 
+    def host_allowed(self):
+        """(A) Host ヘッダ検証で DNS リバインディングを遮断する。"""
+        return self.headers.get('Host', '') in ALLOWED_HOSTS
+
+    def api_authorized(self):
+        """(B) トークン + (C) Sec-Fetch-Site による /api/* の認可。"""
+        # (C) ブラウザ付与の Sec-Fetch-Site。same-origin / none 以外 (cross-site, same-site) は拒否。
+        #     古いブラウザ等で未付与の場合はトークン検証に委ねる。
+        sfs = self.headers.get('Sec-Fetch-Site')
+        if sfs is not None and sfs not in ('same-origin', 'none'):
+            return False
+        # (B) 起動毎ランダムトークン。定数時間比較でタイミング差を避ける。
+        return secrets.compare_digest(self.headers.get('X-Devhub-Token', ''), TOKEN)
+
+    def inject_token(self, body):
+        """配信 HTML の <head> 直後にトークン配布スクリプトを挿入する。"""
+        marker = b'<head>'
+        idx = body.find(marker)
+        if idx != -1:
+            pos = idx + len(marker)
+            return body[:pos] + TOKEN_SCRIPT + body[pos:]
+        return TOKEN_SCRIPT + body
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path   = parsed.path
         params = parse_qs(parsed.query)
+
+        if not self.host_allowed():
+            self.send_json({'error': 'forbidden'}, 403)
+            return
+        if path.startswith('/api/') and not self.api_authorized():
+            self.send_json({'error': 'unauthorized'}, 401)
+            return
 
         try:
             if path == '/api/config' or path == '/api/settings' or path.startswith('/api/settings/tool/'):
@@ -117,6 +189,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         with open(file_path, 'rb') as f:
             body = f.read()
+        body = self.inject_token(body)
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
@@ -126,6 +199,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path   = parsed.path
+
+        if not self.host_allowed():
+            self.send_json({'error': 'forbidden'}, 403)
+            return
+        if path.startswith('/api/') and not self.api_authorized():
+            self.send_json({'error': 'unauthorized'}, 401)
+            return
 
         try:
             body = self.read_body()
