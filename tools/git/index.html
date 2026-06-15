@@ -453,6 +453,16 @@ select {
       <input type="number" id="setting-log-limit" style="width: 80px;">
     </div>
     <div class="setting-row">
+      <label>Local Poll (sec):</label>
+      <input type="number" id="setting-local-poll" style="width: 80px;" min="1">
+      <label style="margin-left: 8px;"><input type="checkbox" id="setting-local-poll-auto"> Auto</label>
+    </div>
+    <div class="setting-row">
+      <label>Remote Poll (sec):</label>
+      <input type="number" id="setting-remote-poll" style="width: 80px;" min="1">
+      <label style="margin-left: 8px;"><input type="checkbox" id="setting-remote-poll-auto"> Auto</label>
+    </div>
+    <div class="setting-row">
       <label><input type="checkbox" id="setting-show-log"> Show Log Panel</label>
     </div>
   </div>
@@ -476,6 +486,7 @@ select {
   <div class="tab" data-tab="branches">3:Branches</div>
   <div class="tab" data-tab="commits">4:Commits</div>
   <div class="tab" data-tab="stash">5:Stash</div>
+  <div class="tab" data-tab="worktrees">6:Worktrees</div>
 </div>
 
 <div class="main-content" id="main-content">
@@ -504,6 +515,8 @@ const DEFAULT_CONFIG = {
   log_limit: 100,
   keybindings: { stage: ' ', commit: 'c', push: 'P', pull: 'p', new_branch: 'n', refresh: 'r' },
   commit_template: '',
+  local_poll_interval: 'auto',
+  remote_poll_interval: 'auto',
 };
 
 let gitConfig = structuredClone(DEFAULT_CONFIG);
@@ -671,21 +684,57 @@ document.addEventListener('mouseup', () => {
 
 
 // Git Operations
-async function refreshData() {
+async function refreshData(withSuggestion = true) {
     if (!currentRepo) return;
 
     try {
-        const [status, log, branches, stash] = await Promise.all([
-            fetch(`/api/git/status?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
+        // Only ask the server to compute the poll-interval suggestion (an extra
+        // `git log`) when withSuggestion is set. The high-frequency local timer
+        // passes false; everything else (init, remote poll, manual ops) lets it
+        // default to true so the suggestion refreshes on the slower cadence.
+        const suggestQuery = withSuggestion ? '&suggest=1' : '';
+        // The worktree list rarely changes and `git worktree list` is relatively
+        // expensive, so skip it on the high-frequency local poll
+        // (withSuggestion=false) and keep the previously fetched
+        // gitData.worktrees. It refreshes on the slower cadence (init / remote
+        // poll / manual ops) alongside the suggestion.
+        const reqs = [
+            fetch(`/api/git/status?path=${encodeURIComponent(currentRepo)}${suggestQuery}`).then(r=>r.json()),
             fetch(`/api/git/log?path=${encodeURIComponent(currentRepo)}&n=${gitConfig.log_limit}`).then(r=>r.json()),
             fetch(`/api/git/branches?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
-            fetch(`/api/git/stash/list?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json())
-        ]);
+            fetch(`/api/git/stash/list?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
+        ];
+        if (withSuggestion) {
+            reqs.push(fetch(`/api/git/worktrees?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()));
+        }
+        const [status, log, branches, stash, worktrees] = await Promise.all(reqs);
 
         gitData.status = status.output || '';
         gitData.log = log.output || '';
         gitData.branches = branches.output || '';
         gitData.stash = stash.output || '';
+        if (withSuggestion) gitData.worktrees = worktrees.worktrees || [];
+        // has_remote rides along on the suggest cadence; once we learn a repo has
+        // no remote, adjustDynamicPolling stops arming the failing fetch timer.
+        if ('has_remote' in status) gitData.hasRemote = status.has_remote;
+
+        // Dynamic polling adjustment
+        const localIsAuto = gitConfig.local_poll_interval === 'auto';
+        const remoteIsAuto = gitConfig.remote_poll_interval === 'auto';
+        if (localIsAuto || remoteIsAuto) {
+            // Auto (or mixed) mode: only re-arm when this refresh actually carried a
+            // fresh suggestion. The high-frequency local poll passes
+            // withSuggestion=false and leaves the running timers untouched.
+            // Each field is resolved independently so a manually-set side is never
+            // overwritten by the server suggestion (matches startPolling()).
+            if (withSuggestion) {
+                const local = localIsAuto ? (status.suggested_local_interval || 600) : gitConfig.local_poll_interval;
+                const remote = remoteIsAuto ? (status.suggested_remote_interval || 1800) : gitConfig.remote_poll_interval;
+                adjustDynamicPolling(local, remote);
+            }
+        } else {
+            adjustDynamicPolling(gitConfig.local_poll_interval, gitConfig.remote_poll_interval);
+        }
 
         renderLog();
         lastFetchedDiff = null;
@@ -770,17 +819,87 @@ function renderTabContent() {
         const lines = gitData.branches.trim().split('\n').filter(l=>l);
         lines.forEach((line) => {
             const parts = line.split('\t');
-            if(parts.length < 2) return;
-            const name = parts[0]; const isHead = parts[1] === '*';
+            if(parts.length < 3) return;
+            const refname = parts[0];
+            // Skip the refs/remotes/<remote>/HEAD symref — it's not a real,
+            // checkout-able branch, just a pointer to the remote's default.
+            if (refname.endsWith('/HEAD')) return;
+            const name = parts[1];
+            const isHead = parts[2] === '*';
             const el = document.createElement('div'); el.className = 'list-item';
-            el.textContent = `${isHead ? '* ' : '  '}${name}`;
+            
+            const wtEntry = (gitData.worktrees || []).find(w => w.branch === name);
+            el.textContent = `${isHead ? '* ' : '  '}${name}${wtEntry ? ' [worktree]' : ''}`;
             if(isHead) el.style.color = 'var(--green)';
 
-            const itemObj = { type: 'branch', el, data: name };
+            const isRemote = refname.startsWith('refs/remotes/');
+            const itemObj = { type: 'branch', el, data: name, isHead, wtEntry, isRemote };
             el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); };
 
             currentListItems.push(itemObj);
-            if (currentListItems.length - 1 === selectedItemIndex) el.classList.add('selected');
+            if (currentListItems.length - 1 === selectedItemIndex) {
+                el.classList.add('selected');
+                renderBranchDetails(name, isHead, wtEntry, isRemote);
+            }
+            container.appendChild(el);
+        });
+    } else if (activeTab === 'worktrees') {
+        const addEl = document.createElement('div');
+        addEl.className = 'list-item';
+        addEl.style.fontWeight = 'bold';
+        addEl.style.color = 'var(--accent)';
+        addEl.textContent = '＋ Add Worktree';
+        
+        const addObj = { type: 'add_wt_btn', el: addEl };
+        addEl.onclick = () => {
+            selectedItemIndex = 0;
+            renderTabContent();
+        };
+        currentListItems.push(addObj);
+        
+        if (selectedItemIndex === 0) {
+            addEl.classList.add('selected');
+            renderAddWorktreeForm();
+        }
+        container.appendChild(addEl);
+        
+        const wts = gitData.worktrees || [];
+        wts.forEach((wt, idx) => {
+            const isMain = normalizePath(wt.path) === normalizePath(currentRepo);
+            
+            const el = document.createElement('div');
+            el.className = 'list-item';
+            
+            const branchSpan = document.createElement('span');
+            branchSpan.style.color = 'var(--green)';
+            branchSpan.style.fontFamily = 'monospace';
+            branchSpan.textContent = wt.branch || (wt.bare ? '(bare)' : '(detached)');
+            
+            const pathSpan = document.createElement('span');
+            pathSpan.style.color = 'var(--muted)';
+            pathSpan.style.fontSize = '11px';
+            pathSpan.style.marginLeft = '8px';
+            pathSpan.style.overflow = 'hidden';
+            pathSpan.style.textOverflow = 'ellipsis';
+            pathSpan.style.whiteSpace = 'nowrap';
+            const folderName = wt.path.split(/[\\/]/).filter(Boolean).pop() || wt.path;
+            pathSpan.textContent = isMain ? `[Main Repo]` : `[${folderName}]`;
+            
+            el.appendChild(branchSpan);
+            el.appendChild(pathSpan);
+            
+            const itemObj = { type: 'worktree', el, data: wt, isMain };
+            el.onclick = () => {
+                selectedItemIndex = idx + 1;
+                renderTabContent();
+            };
+            
+            currentListItems.push(itemObj);
+            
+            if (currentListItems.length - 1 === selectedItemIndex) {
+                el.classList.add('selected');
+                renderWorktreeDetails(wt, isMain);
+            }
             container.appendChild(el);
         });
     } else if (activeTab === 'stash') {
@@ -801,8 +920,7 @@ function renderTabContent() {
     } else if (activeTab === 'status') {
          const el = document.createElement('div'); el.style.padding = '10px';
          const headLine = gitData.branches.trim().split('\n').find(l=>l.endsWith('\t*'));
-         const branch = headLine ? headLine.split('\t')[0] : 'Unknown';
-         const escapeHtml = (unsafe) => unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+         const branch = headLine ? headLine.split('\t')[1] : 'Unknown';
          const { staged, unstaged } = parseStatus(gitData.status);
          el.innerHTML = `<strong>Branch:</strong> ${escapeHtml(branch)}<br><br><strong>Staged files:</strong> ${staged.length}<br><strong>Unstaged files:</strong> ${unstaged.length}`;
          container.appendChild(el);
@@ -850,6 +968,9 @@ async function doCommit(msg) {
 // Interactions
 document.getElementById('repo-select').addEventListener('change', (e) => {
     currentRepo = e.target.value;
+    // Don't carry the previous repo's remote state into the new one; the next
+    // suggest refresh re-establishes it and adjustDynamicPolling re-arms.
+    gitData.hasRemote = undefined;
     refreshData();
 });
 
@@ -876,6 +997,16 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
         closeAddRepoPanel();
         document.getElementById('setting-default-repo').value = gitConfig.default_repo;
         document.getElementById('setting-log-limit').value = gitConfig.log_limit;
+        const localAuto = gitConfig.local_poll_interval === 'auto';
+        document.getElementById('setting-local-poll-auto').checked = localAuto;
+        document.getElementById('setting-local-poll').value = localAuto ? 30 : gitConfig.local_poll_interval;
+        document.getElementById('setting-local-poll').disabled = localAuto;
+
+        const remoteAuto = gitConfig.remote_poll_interval === 'auto';
+        document.getElementById('setting-remote-poll-auto').checked = remoteAuto;
+        document.getElementById('setting-remote-poll').value = remoteAuto ? 90 : gitConfig.remote_poll_interval;
+        document.getElementById('setting-remote-poll').disabled = remoteAuto;
+
         document.getElementById('setting-show-log').checked = gitConfig.layout.show_log;
         document.getElementById('setting-commit-template').value = gitConfig.commit_template;
 
@@ -892,21 +1023,36 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
     }
 });
 
+// Parse a manual poll-interval field, flooring empty/invalid/non-positive input
+// to a sane default instead of 0 (which would silently disable that timer).
+function parsePollInterval(value, fallback) {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
 document.getElementById('btn-save-settings').addEventListener('click', () => {
     gitConfig.default_repo = document.getElementById('setting-default-repo').value;
     gitConfig.log_limit = parseInt(document.getElementById('setting-log-limit').value) || 100;
+
+    const localAuto = document.getElementById('setting-local-poll-auto').checked;
+    gitConfig.local_poll_interval = localAuto ? 'auto' : parsePollInterval(document.getElementById('setting-local-poll').value, 30);
+
+    const remoteAuto = document.getElementById('setting-remote-poll-auto').checked;
+    gitConfig.remote_poll_interval = remoteAuto ? 'auto' : parsePollInterval(document.getElementById('setting-remote-poll').value, 90);
+    
     gitConfig.layout.show_log = document.getElementById('setting-show-log').checked;
     gitConfig.commit_template = document.getElementById('setting-commit-template').value;
     saveSettings();
     settingsPanel.classList.remove('open');
     document.getElementById('btn-settings').classList.remove('active');
     refreshData();
+    startPolling();
 });
 
 function updateFooterHints() {
     const hints = [];
     const k = gitConfig.keybindings;
-    hints.push(`1-5: Tabs`);
+    hints.push(`1-6: Tabs`);
     hints.push(`${k.refresh}: Refresh`);
     if(activeTab === 'files') {
         hints.push(`${k.stage}: Stage/Unstage`);
@@ -933,8 +1079,8 @@ document.addEventListener('keydown', (e) => {
 
     const k = gitConfig.keybindings;
 
-    if (['1','2','3','4','5'].includes(e.key)) {
-        const tabs = ['status','files','branches','commits','stash'];
+    if (['1','2','3','4','5','6'].includes(e.key)) {
+        const tabs = ['status','files','branches','commits','stash','worktrees'];
         document.querySelector(`.tab[data-tab="${tabs[parseInt(e.key)-1]}"]`).click();
         return;
     }
@@ -965,10 +1111,11 @@ document.addEventListener('keydown', (e) => {
     } else if (activeTab === 'branches') {
         if (e.key === 'Enter' && selObj) {
             let bn = selObj.data.trim();
-            if (bn.startsWith('remotes/')) {
+            const localBranches = getLocalBranches();
+            if (bn.includes('/') && !localBranches.includes(bn)) {
                 const parts = bn.split('/');
-                if (parts.length > 2) {
-                    bn = parts.slice(2).join('/');
+                if (parts.length > 1) {
+                    bn = parts.slice(1).join('/');
                 }
             }
             doPost('/api/git/checkout', { branch: bn });
@@ -1238,6 +1385,569 @@ document.getElementById('btn-remove-repo').addEventListener('click', async () =>
 
 // (フォルダ選択ボタンは廃止)
 
+// Polling & Worktree helper functions
+let localPollTimer = null;
+let remotePollTimer = null;
+let currentRunningLocalInterval = null;
+let currentRunningRemoteInterval = null;
+let currentRemoteEnabled = null;
+
+function startPolling() {
+    // In auto mode, refreshData() already armed the timers with the server-suggested
+    // intervals. Reuse those running values if present so we don't tear them down and
+    // briefly re-poll at the auto floor (30/90); fall back to the floor only
+    // on cold start (before the first refresh sets a running interval).
+    const localSec = gitConfig.local_poll_interval === 'auto'
+        ? (currentRunningLocalInterval || 30) : gitConfig.local_poll_interval;
+    const remoteSec = gitConfig.remote_poll_interval === 'auto'
+        ? (currentRunningRemoteInterval || 90) : gitConfig.remote_poll_interval;
+    adjustDynamicPolling(localSec, remoteSec);
+}
+
+function adjustDynamicPolling(targetLocal, targetRemote) {
+    // Skip the origin-fetch timer when the repo has no remote (gitData.hasRemote
+    // === false) — otherwise it would fire a guaranteed-to-fail `git fetch` every
+    // cycle. Undefined (not yet known) still arms, to be conservative.
+    const remoteEnabled = targetRemote > 0 && gitData.hasRemote !== false;
+    // Re-arm on an interval change OR when the remote-enabled state flips, so a
+    // hasRemote true→false transition with an unchanged interval still tears the
+    // (now pointless) fetch timer down instead of being swallowed by the guard.
+    if (targetLocal !== currentRunningLocalInterval
+        || targetRemote !== currentRunningRemoteInterval
+        || remoteEnabled !== currentRemoteEnabled) {
+        currentRunningLocalInterval = targetLocal;
+        currentRunningRemoteInterval = targetRemote;
+        currentRemoteEnabled = remoteEnabled;
+
+        stopPolling();
+
+        if (targetLocal > 0) {
+            localPollTimer = setInterval(() => {
+                // Local poll: skip the suggestion (no extra git log). The remote
+                // timer below refreshes the interval suggestion on its cadence.
+                if (currentRepo) refreshData(false);
+            }, targetLocal * 1000);
+        }
+
+        if (remoteEnabled) {
+            remotePollTimer = setInterval(() => {
+                if (currentRepo) {
+                    fetch('/api/git/fetch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: currentRepo })
+                    }).then(r => r.json())
+                      .then(data => {
+                          if (data.ok) refreshData();
+                      }).catch(e => console.error("Origin poll failed:", e));
+                }
+            }, targetRemote * 1000);
+        }
+    }
+}
+
+function stopPolling() {
+    if (localPollTimer) clearInterval(localPollTimer);
+    if (remotePollTimer) clearInterval(remotePollTimer);
+    localPollTimer = null;
+    remotePollTimer = null;
+    // NOTE: currentRunningLocal/RemoteInterval and currentRemoteEnabled are owned
+    // by adjustDynamicPolling.
+    // Resetting them here defeats its "did the interval change?" guard, so every
+    // refresh would tear down and recreate both timers — and because the remote
+    // interval is longer than the local one, the remote (origin fetch) timer would
+    // be cleared before it ever fires.
+}
+
+// Global UI listeners for polling auto checkboxes
+document.getElementById('setting-local-poll-auto').addEventListener('change', (e) => {
+    document.getElementById('setting-local-poll').disabled = e.target.checked;
+});
+document.getElementById('setting-remote-poll-auto').addEventListener('change', (e) => {
+    document.getElementById('setting-remote-poll').disabled = e.target.checked;
+});
+
+// Shared parser for the tab-separated branch listing. Each line is
+// "<refname>\t<short-name>[\t<HEAD-marker>]" (e.g. "refs/heads/main\tmain\t*"
+// or "refs/remotes/origin/main\torigin/main"). Both helpers below derive from
+// this so the tab-split parsing lives in one place.
+function parseBranchLines() {
+    if (!gitData.branches) return [];
+    return gitData.branches.trim().split('\n').filter(l=>l)
+        // Drop the refs/remotes/<remote>/HEAD symref — not a real branch.
+        .filter(l => !l.split('\t')[0].endsWith('/HEAD'))
+        .map(line => {
+            const parts = line.split('\t');
+            return { refname: parts[0], shortName: parts.length >= 2 ? parts[1] : parts[0] };
+        });
+}
+
+function getLocalBranches() {
+    return parseBranchLines()
+        .filter(b => b.refname.startsWith('refs/heads/'))
+        .map(b => b.shortName);
+}
+
+function getAllBranchesList() {
+    return parseBranchLines().map(b => b.shortName);
+}
+
+function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+// Normalize a filesystem path for comparison: unify separators, strip a
+// trailing slash, and lowercase on Windows (where paths are case-insensitive).
+// git returns resolved real paths for worktrees, so this mainly guards the
+// main-repo match against a trailing-slash / separator mismatch on the
+// user-supplied currentRepo. (True symlink resolution isn't possible client-side.)
+function normalizePath(p) {
+    const s = String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+    return isWindows ? s.toLowerCase() : s;
+}
+
+// Small DOM builders to cut the repeated card-row / button scaffolding in the
+// branch & worktree detail panes. Behaviour-preserving: callers still supply
+// the (already-escaped) value markup and assign the click handlers.
+const LABEL_SPAN_STYLE = 'color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;';
+function makeInfoRow(label, valueHtml) {
+    const row = document.createElement('div');
+    row.innerHTML = `<span style="${LABEL_SPAN_STYLE}">${label}</span>${valueHtml}`;
+    return row;
+}
+
+const BTN_STYLES = {
+    primary: 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;',
+    secondary: 'background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;',
+    danger: 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;',
+};
+function makeButton(text, variant = 'primary') {
+    const btn = document.createElement('button');
+    btn.textContent = text;
+    btn.style.cssText = BTN_STYLES[variant] || BTN_STYLES.primary;
+    return btn;
+}
+
+function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
+    const right = document.getElementById('right-pane');
+    right.innerHTML = '';
+    
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.gap = '16px';
+    
+    const title = document.createElement('h2');
+    title.style.fontSize = '18px';
+    title.style.fontWeight = '600';
+    title.style.color = 'var(--text)';
+    title.textContent = 'Branch Details';
+    container.appendChild(title);
+    
+    const card = document.createElement('div');
+    card.style.background = 'var(--surface)';
+    card.style.border = '1px solid var(--border)';
+    card.style.borderRadius = '6px';
+    card.style.padding = '16px';
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.gap = '12px';
+    
+    card.appendChild(makeInfoRow('Branch Name',
+        `<span style="font-family: monospace; font-size: 15px; font-weight: 600; color: var(--green);">${escapeHtml(branchName)}</span>`));
+
+    let statusText = 'Inactive branch';
+    if (isHead) statusText = 'Active (HEAD) branch in the main repository';
+    else if (wtEntry) statusText = `Checked out as a worktree at <code style="background: var(--bg); padding: 2px 4px; border-radius: 4px; font-size: 12px;">${escapeHtml(wtEntry.path)}</code>`;
+
+    card.appendChild(makeInfoRow('Status',
+        `<span style="font-size: 13px; color: var(--text);">${statusText}</span>`));
+
+    if (wtEntry) {
+        card.appendChild(makeInfoRow('Worktree Directory',
+            `<span style="font-family: monospace; font-size: 13px; color: var(--blue); word-break: break-all;">${escapeHtml(wtEntry.path)}</span>`));
+
+        if (wtEntry.head) {
+            card.appendChild(makeInfoRow('Commit SHA',
+                `<span style="font-family: monospace; font-size: 13px; color: var(--text);">${escapeHtml(wtEntry.head)}</span>`));
+        }
+    }
+    
+    container.appendChild(card);
+    
+    const btnRow = document.createElement('div');
+    btnRow.style.display = 'flex';
+    btnRow.style.gap = '10px';
+    btnRow.style.flexWrap = 'wrap';
+    
+    if (!isHead && !wtEntry) {
+        const btnCheckout = makeButton('Switch to Branch', 'primary');
+        btnCheckout.onclick = () => {
+            let bn = branchName.trim();
+            const localBranches = getLocalBranches();
+            if (isRemote && !localBranches.includes(bn)) {
+                const parts = bn.split('/');
+                if (parts.length > 1) bn = parts.slice(1).join('/');
+            }
+            doPost('/api/git/checkout', { branch: bn });
+        };
+        btnRow.appendChild(btnCheckout);
+    }
+
+    if (wtEntry) {
+        const btnOpen = makeButton('Open in Editor', 'primary');
+        btnOpen.onclick = () => {
+            fetch(`/api/open?path=${encodeURIComponent(wtEntry.path)}`);
+        };
+        btnRow.appendChild(btnOpen);
+    }
+
+    if (!wtEntry && !isRemote) {
+        const btnWt = makeButton('Create Worktree', 'secondary');
+        btnWt.onclick = () => {
+            showAddWorktreeForm(branchName);
+        };
+        btnRow.appendChild(btnWt);
+    }
+
+    if (!isHead && !wtEntry && !isRemote) {
+        const btnDel = makeButton('Delete Branch', 'danger');
+        btnDel.onclick = async () => {
+            if (confirm(`Delete branch "${branchName}"?`)) {
+                await doPost('/api/git/branch/delete', { branch: branchName, force: false });
+            }
+        };
+        btnRow.appendChild(btnDel);
+
+        const btnDelForce = makeButton('Force Delete', 'danger');
+        btnDelForce.style.opacity = '0.7';
+        btnDelForce.onclick = async () => {
+            if (confirm(`Force delete branch "${branchName}"? (Unmerged changes will be lost)`)) {
+                await doPost('/api/git/branch/delete', { branch: branchName, force: true });
+            }
+        };
+        btnRow.appendChild(btnDelForce);
+    }
+    
+    container.appendChild(btnRow);
+    right.appendChild(container);
+}
+
+function showAddWorktreeForm(preselectedBranch = '') {
+    document.querySelectorAll('.tab').forEach(tt => tt.classList.remove('active'));
+    const wtTab = document.querySelector('.tab[data-tab="worktrees"]');
+    if (wtTab) wtTab.classList.add('active');
+    activeTab = 'worktrees';
+    renderTabContent();
+    renderAddWorktreeForm(preselectedBranch);
+}
+
+function renderAddWorktreeForm(preselectedBranch = '') {
+    const right = document.getElementById('right-pane');
+    right.innerHTML = '';
+    
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.gap = '16px';
+    container.style.maxWidth = '500px';
+    
+    const title = document.createElement('h2');
+    title.style.fontSize = '18px';
+    title.style.fontWeight = '600';
+    title.style.color = 'var(--text)';
+    title.textContent = 'Add Git Worktree';
+    container.appendChild(title);
+    
+    const pathGroup = document.createElement('div');
+    pathGroup.style.display = 'flex';
+    pathGroup.style.flexDirection = 'column';
+    pathGroup.style.gap = '6px';
+    
+    let defaultPath = '';
+    if (currentRepo && preselectedBranch) {
+        const sanitizedBranch = preselectedBranch.replace(/[^a-zA-Z0-9_-]/g, '-');
+        defaultPath = `${currentRepo}-wt-${sanitizedBranch}`;
+    } else if (currentRepo) {
+        defaultPath = `${currentRepo}-wt`;
+    }
+    
+    pathGroup.innerHTML = `<label style="font-weight: 500; font-size: 13px; color: var(--text);">Worktree Path:</label>
+                           <input type="text" id="wt-add-path" value="${escapeHtml(defaultPath)}" placeholder="e.g. C:/projects/myrepo-worktree" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: monospace;">
+                           <span style="font-size: 11px; color: var(--muted);">Specify an empty directory path where the worktree will be created.</span>`;
+    container.appendChild(pathGroup);
+    
+    const branchGroup = document.createElement('div');
+    branchGroup.style.display = 'flex';
+    branchGroup.style.flexDirection = 'column';
+    branchGroup.style.gap = '6px';
+    branchGroup.innerHTML = `<label style="font-weight: 500; font-size: 13px; color: var(--text);">Checkout Branch:</label>
+                             <select id="wt-add-branch-select" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; width: 100%;"></select>`;
+    container.appendChild(branchGroup);
+    
+    const branchSelect = branchGroup.querySelector('#wt-add-branch-select');
+    const localBranches = getLocalBranches();
+    
+    localBranches.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b;
+        opt.textContent = b;
+        if (b === preselectedBranch) opt.selected = true;
+        branchSelect.appendChild(opt);
+    });
+    
+    const cbGroup = document.createElement('div');
+    cbGroup.style.display = 'flex';
+    cbGroup.style.alignItems = 'center';
+    cbGroup.style.gap = '8px';
+    cbGroup.style.marginTop = '4px';
+    cbGroup.innerHTML = `<input type="checkbox" id="wt-add-new-branch-cb">
+                         <label for="wt-add-new-branch-cb" style="font-weight: 500; font-size: 13px; color: var(--text); user-select: none;">Create a new branch instead</label>`;
+    container.appendChild(cbGroup);
+    
+    const newBranchSection = document.createElement('div');
+    newBranchSection.id = 'wt-add-new-branch-section';
+    newBranchSection.style.display = 'none';
+    newBranchSection.style.flexDirection = 'column';
+    newBranchSection.style.gap = '12px';
+    newBranchSection.style.borderLeft = '2px solid var(--accent)';
+    newBranchSection.style.paddingLeft = '12px';
+    newBranchSection.style.marginLeft = '4px';
+    
+    newBranchSection.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-weight: 500; font-size: 13px; color: var(--text);">New Branch Name:</label>
+            <input type="text" id="wt-add-new-branch-name" placeholder="e.g. feature/my-cool-feature" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: monospace;">
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-weight: 500; font-size: 13px; color: var(--text);">Base Commit/Branch:</label>
+            <select id="wt-add-base-select" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; width: 100%;"></select>
+        </div>
+    `;
+    container.appendChild(newBranchSection);
+    
+    const baseSelect = newBranchSection.querySelector('#wt-add-base-select');
+    const allBranches = getAllBranchesList();
+    allBranches.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b;
+        opt.textContent = b;
+        baseSelect.appendChild(opt);
+    });
+    
+    const cb = cbGroup.querySelector('#wt-add-new-branch-cb');
+    const nameInput = newBranchSection.querySelector('#wt-add-new-branch-name');
+    nameInput.addEventListener('input', () => {
+        if (cb.checked) {
+            const name = nameInput.value.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
+            document.getElementById('wt-add-path').value = `${currentRepo}-wt-${name || 'newbranch'}`;
+        }
+    });
+
+    cb.addEventListener('change', (e) => {
+        const checked = e.target.checked;
+        newBranchSection.style.display = checked ? 'flex' : 'none';
+        branchSelect.disabled = checked;
+        
+        if (!checked) {
+            const branch = branchSelect.value;
+            const sanitizedBranch = branch.replace(/[^a-zA-Z0-9_-]/g, '-');
+            document.getElementById('wt-add-path').value = `${currentRepo}-wt-${sanitizedBranch}`;
+        } else {
+            const name = nameInput.value.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
+            document.getElementById('wt-add-path').value = `${currentRepo}-wt-${name || 'newbranch'}`;
+        }
+    });
+    
+    branchSelect.addEventListener('change', (e) => {
+        if (!cb.checked) {
+            const branch = e.target.value;
+            const sanitizedBranch = branch.replace(/[^a-zA-Z0-9_-]/g, '-');
+            document.getElementById('wt-add-path').value = `${currentRepo}-wt-${sanitizedBranch}`;
+        }
+    });
+
+    const btnRow = document.createElement('div');
+    btnRow.style.display = 'flex';
+    btnRow.style.gap = '12px';
+    btnRow.style.marginTop = '8px';
+    
+    const btnSubmit = makeButton('Create Worktree', 'primary');
+    btnSubmit.style.padding = '10px 20px';
+    btnSubmit.onclick = async () => {
+        const wtPath = document.getElementById('wt-add-path').value.trim();
+        if (!wtPath) { alert('Path is required'); return; }
+        
+        const isNewBranch = cb.checked;
+        let branch = '';
+        let baseCommit = '';
+        
+        if (isNewBranch) {
+            branch = document.getElementById('wt-add-new-branch-name').value.trim();
+            if (!branch) { alert('New branch name is required'); return; }
+            baseCommit = document.getElementById('wt-add-base-select').value;
+        } else {
+            branch = branchSelect.value;
+            if (!branch) { alert('Select a branch to checkout'); return; }
+        }
+        
+        btnSubmit.disabled = true;
+        btnSubmit.textContent = 'Creating...';
+        
+        try {
+            const res = await fetch('/api/git/worktree/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: currentRepo,
+                    worktree_path: wtPath,
+                    branch: branch,
+                    new_branch: isNewBranch,
+                    base_commit: baseCommit || undefined
+                })
+            }).then(r => r.json());
+            
+            if (res.error) {
+                showError(`Error: ${res.error}`);
+            } else {
+                showRepoMsg('Worktree created successfully', 'success');
+                await refreshData();
+                const index = gitData.worktrees.findIndex(w => normalizePath(w.path) === normalizePath(wtPath));
+                selectedItemIndex = index !== -1 ? index + 1 : 0;
+                renderTabContent();
+            }
+        } catch (e) {
+            showError(`Failed to create worktree: ${e.message}`);
+        } finally {
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = 'Create Worktree';
+        }
+    };
+    
+    btnRow.appendChild(btnSubmit);
+    container.appendChild(btnRow);
+    right.appendChild(container);
+}
+
+function renderWorktreeDetails(wt, isMain) {
+    const right = document.getElementById('right-pane');
+    right.innerHTML = '';
+    
+    const container = document.createElement('div');
+    container.style.padding = '20px';
+    container.style.display = 'flex';
+    container.style.flexDirection = 'column';
+    container.style.gap = '16px';
+    
+    const title = document.createElement('h2');
+    title.style.fontSize = '18px';
+    title.style.fontWeight = '600';
+    title.style.color = 'var(--text)';
+    title.textContent = 'Worktree Details';
+    container.appendChild(title);
+    
+    const card = document.createElement('div');
+    card.style.background = 'var(--surface)';
+    card.style.border = '1px solid var(--border)';
+    card.style.borderRadius = '6px';
+    card.style.padding = '16px';
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.gap = '12px';
+    
+    card.appendChild(makeInfoRow('Path',
+        `<span style="font-family: monospace; font-size: 13px; color: var(--text); word-break: break-all;">${escapeHtml(wt.path)}</span>`));
+
+    card.appendChild(makeInfoRow('Branch',
+        `<span style="font-family: monospace; font-size: 14px; color: var(--green);">${escapeHtml(wt.branch || (wt.bare ? '(bare)' : '(detached)'))}</span>`));
+
+    if (wt.head) {
+        card.appendChild(makeInfoRow('Commit SHA',
+            `<span style="font-family: monospace; font-size: 13px; color: var(--blue);">${escapeHtml(wt.head)}</span>`));
+    }
+    
+    container.appendChild(card);
+    
+    const btnRow = document.createElement('div');
+    btnRow.style.display = 'flex';
+    btnRow.style.gap = '10px';
+    btnRow.style.flexWrap = 'wrap';
+    
+    const btnOpen = makeButton('Open in Editor', 'primary');
+    btnOpen.onclick = () => {
+        fetch(`/api/open?path=${encodeURIComponent(wt.path)}`);
+    };
+    btnRow.appendChild(btnOpen);
+
+    if (!isMain) {
+        const btnRemove = makeButton('Remove Worktree', 'danger');
+        btnRemove.onclick = async () => {
+            if (confirm(`Are you sure you want to remove the worktree at "${wt.path}"?`)) {
+                btnRemove.disabled = true;
+                btnRemove.textContent = 'Removing...';
+                try {
+                    const res = await fetch('/api/git/worktree/remove', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: currentRepo, worktree_path: wt.path, force: false })
+                    }).then(r => r.json());
+                    if (res.error) {
+                        showError(`Error: ${res.error}`);
+                    } else {
+                        showRepoMsg('Worktree removed successfully', 'success');
+                        await refreshData();
+                        selectedItemIndex = 0;
+                        renderTabContent();
+                    }
+                } catch (e) {
+                    showError(`Failed to remove worktree: ${e.message}`);
+                } finally {
+                    btnRemove.disabled = false;
+                    btnRemove.textContent = 'Remove Worktree';
+                }
+            }
+        };
+        btnRow.appendChild(btnRemove);
+        
+        const btnRemoveForce = makeButton('Force Remove', 'danger');
+        btnRemoveForce.style.opacity = '0.7';
+        btnRemoveForce.onclick = async () => {
+            if (confirm(`Force remove worktree at "${wt.path}"? (Uncommitted changes will be lost)`)) {
+                btnRemoveForce.disabled = true;
+                btnRemoveForce.textContent = 'Removing...';
+                try {
+                    const res = await fetch('/api/git/worktree/remove', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: currentRepo, worktree_path: wt.path, force: true })
+                    }).then(r => r.json());
+                    if (res.error) {
+                        showError(`Error: ${res.error}`);
+                    } else {
+                        showRepoMsg('Worktree force-removed successfully', 'success');
+                        await refreshData();
+                        selectedItemIndex = 0;
+                        renderTabContent();
+                    }
+                } catch (e) {
+                    showError(`Failed to remove worktree: ${e.message}`);
+                } finally {
+                    btnRemoveForce.disabled = false;
+                    btnRemoveForce.textContent = 'Force Remove';
+                }
+            }
+        };
+        btnRow.appendChild(btnRemoveForce);
+    }
+    
+    container.appendChild(btnRow);
+    right.appendChild(container);
+}
+
 // Init
 (async () => {
     await loadSystemInfo();
@@ -1245,6 +1955,7 @@ document.getElementById('btn-remove-repo').addEventListener('click', async () =>
     await loadSettings();
     await fetchRepos();
     await refreshData();
+    startPolling();
 })();
 
 </script>
