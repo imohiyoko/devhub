@@ -7,7 +7,6 @@
 標準ライブラリのみ。実行: python3 -m unittest tests.test_server_security
                        または python3 tests/test_server_security.py
 """
-import json
 import os
 import socket
 import subprocess
@@ -18,7 +17,6 @@ import urllib.error
 import urllib.request
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SERVER_JSON = os.path.join(REPO_ROOT, 'settings', 'server.json')
 # 既知の固定トークンを env で注入できる (server.py は DEVHUB_API_TOKEN を起点に読む)。
 TEST_TOKEN = 'test-token-fixed-value-0123456789'
 
@@ -43,20 +41,14 @@ def _request(method, url, headers=None, status_only=True):
 class LocalApiSecurityTest(unittest.TestCase):
     proc = None
     port = None
-    _backup = None  # 既存 server.json の退避内容 (bytes) または None
 
     @classmethod
     def setUpClass(cls):
         cls.port = _free_port()
-        # 既存のユーザー設定を壊さないよう退避し、テスト用設定を書き込む。
-        if os.path.exists(SERVER_JSON):
-            with open(SERVER_JSON, 'rb') as f:
-                cls._backup = f.read()
-        os.makedirs(os.path.dirname(SERVER_JSON), exist_ok=True)
-        with open(SERVER_JSON, 'w', encoding='utf-8') as f:
-            json.dump({'port': cls.port, 'open_browser_on_start': False}, f)
-
-        env = {**os.environ, 'DEVHUB_API_TOKEN': TEST_TOKEN}
+        # DEVHUB_PORT / DEVHUB_API_TOKEN を env で渡し、リポジトリの設定ファイルは一切書き換えない。
+        env = {**os.environ,
+               'DEVHUB_PORT': str(cls.port),
+               'DEVHUB_API_TOKEN': TEST_TOKEN}
         cls.proc = subprocess.Popen(
             [sys.executable, 'server.py', '--no-browser'],
             cwd=REPO_ROOT, env=env,
@@ -85,12 +77,6 @@ class LocalApiSecurityTest(unittest.TestCase):
                 cls.proc.wait(timeout=5)
             except Exception:
                 cls.proc.kill()
-        # 設定を元に戻す。
-        if cls._backup is not None:
-            with open(SERVER_JSON, 'wb') as f:
-                f.write(cls._backup)
-        elif os.path.exists(SERVER_JSON):
-            os.remove(SERVER_JSON)
 
     @property
     def base(self):
@@ -101,8 +87,9 @@ class LocalApiSecurityTest(unittest.TestCase):
         status, body = _request('GET', self.base + '/', status_only=False)
         self.assertEqual(status, 200)
         text = body.decode('utf-8', 'replace')
-        self.assertIn(TEST_TOKEN, text)          # トークンが埋め込まれている
-        self.assertIn('X-Devhub-Token', text)    # fetch シムが注入されている
+        self.assertIn(TEST_TOKEN, text)            # トークンが埋め込まれている
+        self.assertIn('X-Devhub-Token', text)      # シムが注入されている
+        self.assertIn('XMLHttpRequest', text)      # fetch だけでなく XHR もラップ
 
     def test_token_is_stable_via_env(self):
         # 再起動は env でトークンを引き継ぐ。env 注入トークンがそのまま配信されることで
