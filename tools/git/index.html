@@ -1395,8 +1395,11 @@ function stopPolling() {
     if (remotePollTimer) clearInterval(remotePollTimer);
     localPollTimer = null;
     remotePollTimer = null;
-    currentRunningLocalInterval = null;
-    currentRunningRemoteInterval = null;
+    // NOTE: currentRunningLocal/RemoteInterval are owned by adjustDynamicPolling.
+    // Resetting them here defeats its "did the interval change?" guard, so every
+    // refresh would tear down and recreate both timers — and because the remote
+    // interval is longer than the local one, the remote (origin fetch) timer would
+    // be cleared before it ever fires.
 }
 
 // Global UI listeners for polling auto checkboxes
@@ -1433,6 +1436,12 @@ function getAllBranchesList() {
     });
 }
 
+function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
 function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
     const right = document.getElementById('right-pane');
     right.innerHTML = '';
@@ -1461,12 +1470,12 @@ function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
     
     const nameRow = document.createElement('div');
     nameRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Branch Name</span>
-                         <span style="font-family: monospace; font-size: 15px; font-weight: 600; color: var(--green);">${branchName}</span>`;
+                         <span style="font-family: monospace; font-size: 15px; font-weight: 600; color: var(--green);">${escapeHtml(branchName)}</span>`;
     card.appendChild(nameRow);
     
     let statusText = 'Inactive branch';
     if (isHead) statusText = 'Active (HEAD) branch in the main repository';
-    else if (wtEntry) statusText = `Checked out as a worktree at <code style="background: var(--bg); padding: 2px 4px; border-radius: 4px; font-size: 12px;">${wtEntry.path}</code>`;
+    else if (wtEntry) statusText = `Checked out as a worktree at <code style="background: var(--bg); padding: 2px 4px; border-radius: 4px; font-size: 12px;">${escapeHtml(wtEntry.path)}</code>`;
     
     const statusRow = document.createElement('div');
     statusRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Status</span>
@@ -1476,13 +1485,13 @@ function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
     if (wtEntry) {
         const pathRow = document.createElement('div');
         pathRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Worktree Directory</span>
-                             <span style="font-family: monospace; font-size: 13px; color: var(--blue); word-break: break-all;">${wtEntry.path}</span>`;
+                             <span style="font-family: monospace; font-size: 13px; color: var(--blue); word-break: break-all;">${escapeHtml(wtEntry.path)}</span>`;
         card.appendChild(pathRow);
         
         if (wtEntry.head) {
             const headRow = document.createElement('div');
             headRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Commit SHA</span>
-                                 <span style="font-family: monospace; font-size: 13px; color: var(--text);">${wtEntry.head}</span>`;
+                                 <span style="font-family: monospace; font-size: 13px; color: var(--text);">${escapeHtml(wtEntry.head)}</span>`;
             card.appendChild(headRow);
         }
     }
@@ -1597,7 +1606,7 @@ function renderAddWorktreeForm(preselectedBranch = '') {
     }
     
     pathGroup.innerHTML = `<label style="font-weight: 500; font-size: 13px; color: var(--text);">Worktree Path:</label>
-                           <input type="text" id="wt-add-path" value="${defaultPath}" placeholder="e.g. C:/projects/myrepo-worktree" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: monospace;">
+                           <input type="text" id="wt-add-path" value="${escapeHtml(defaultPath)}" placeholder="e.g. C:/projects/myrepo-worktree" style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: monospace;">
                            <span style="font-size: 11px; color: var(--muted);">Specify an empty directory path where the worktree will be created.</span>`;
     container.appendChild(pathGroup);
     
@@ -1782,18 +1791,18 @@ function renderWorktreeDetails(wt, isMain) {
     
     const pathRow = document.createElement('div');
     pathRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Path</span>
-                         <span style="font-family: monospace; font-size: 13px; color: var(--text); word-break: break-all;">${wt.path}</span>`;
+                         <span style="font-family: monospace; font-size: 13px; color: var(--text); word-break: break-all;">${escapeHtml(wt.path)}</span>`;
     card.appendChild(pathRow);
     
     const branchRow = document.createElement('div');
     branchRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Branch</span>
-                           <span style="font-family: monospace; font-size: 14px; color: var(--green);">${wt.branch || '(detached)'}</span>`;
+                           <span style="font-family: monospace; font-size: 14px; color: var(--green);">${escapeHtml(wt.branch || '(detached)')}</span>`;
     card.appendChild(branchRow);
     
     if (wt.head) {
         const headRow = document.createElement('div');
         headRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Commit SHA</span>
-                             <span style="font-family: monospace; font-size: 13px; color: var(--blue);">${wt.head}</span>`;
+                             <span style="font-family: monospace; font-size: 13px; color: var(--blue);">${escapeHtml(wt.head)}</span>`;
         card.appendChild(headRow);
     }
     
