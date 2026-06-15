@@ -120,6 +120,11 @@ def _validate_worktree_path(p):
     return None
 
 # Conservative allowlist for branch names passed to git as positional args.
+# Intentionally stricter than git's real ref grammar: it rejects some otherwise
+# valid branch names (e.g. ones containing '+' or unicode) in exchange for a
+# small, easy-to-audit character set. The base_commit check in /worktree/add
+# deliberately allows a broader set (~^@{}#) because it is a revspec, not a
+# branch name — that asymmetry is by design, not an oversight.
 _BRANCH_NAME_RE = re.compile(r'[a-zA-Z0-9_./-]+')
 
 def _is_valid_branch_name(branch):
@@ -191,6 +196,18 @@ def handle_get(handler, path, params):
 
                 payload['suggested_local_interval'] = dynamic_interval
                 payload['suggested_remote_interval'] = dynamic_interval * 3
+
+                # Whether any remote is configured. The frontend uses this to avoid
+                # arming the origin-fetch timer (which would otherwise fail every
+                # cycle) on a repo with no remote. Computed on the suggest cadence
+                # only — it rarely changes, so we don't pay for it on each local poll.
+                try:
+                    remote_res = subprocess.run(
+                        ['git', 'remote'], cwd=repo_path, capture_output=True, text=True, timeout=10
+                    )
+                    payload['has_remote'] = bool(remote_res.stdout.strip())
+                except Exception as e:
+                    logger.debug("Failed to check git remotes: %s", e)
 
             handler.send_json(payload)
         except subprocess.CalledProcessError as e:
@@ -411,6 +428,8 @@ def handle_post(handler, path, data):
             return
 
         if base_commit:
+            # Revspec, not a branch name: a broader char set (~^@{}#) is allowed
+            # on purpose (see _BRANCH_NAME_RE). The leading-dash / '..' guards still apply.
             if base_commit.startswith('-') or '..' in base_commit or not re.fullmatch(r'[a-zA-Z0-9_./~^@{}#-]+', base_commit):
                 handler.send_json({'error': 'invalid base commit/branch'}, 400)
                 return
