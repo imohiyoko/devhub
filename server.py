@@ -72,13 +72,12 @@ catch(e){return false;}
 var orig=window.fetch?window.fetch.bind(window):null;
 if(orig){
 window.fetch=function(input,init){
-init=init||{};
 try{
 var url=(typeof input==='string')?input:(input&&input.url)||'';
 if(isApi(url)){
 var h=new Headers((init&&init.headers)||(typeof input!=='string'&&input&&input.headers)||{});
 h.set('X-Devhub-Token',T);
-init.headers=h;
+init=Object.assign({},init,{headers:h});
 }
 }catch(e){}
 return orig(input,init);
@@ -130,7 +129,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def host_allowed(self):
         """(A) Host ヘッダ検証で DNS リバインディングを遮断する。"""
-        return self.headers.get('Host', '') in ALLOWED_HOSTS
+        # ホスト名は case-insensitive なので正規化して比較する (許可リストは小文字)。
+        return self.headers.get('Host', '').lower() in ALLOWED_HOSTS
 
     def api_authorized(self):
         """(B) トークン + (C) Sec-Fetch-Site による /api/* の認可。"""
@@ -194,10 +194,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
             if path == '/api/info':
-                current_settings = load_settings()
+                # 設定ファイルの値ではなく実際に待ち受けているポートを返す
+                # (DEVHUB_PORT 上書き時や再起動前の設定変更時の食い違いを防ぐ)。
                 self.send_json({
                     'base': BASE,
-                    'port': current_settings.get('port', 8765),
+                    'port': PORT,
                     'home': os.path.expanduser('~'),
                     'is_windows': platform.system() == 'Windows'
                 })
@@ -226,6 +227,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
+        # トークンを埋め込んだ HTML をキャッシュさせない。完全再起動でトークンが
+        # 更新された際に、キャッシュされた旧トークンで 401 になるのを防ぐ。
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(body)
 

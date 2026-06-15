@@ -7,6 +7,7 @@
 標準ライブラリのみ。実行: python3 -m unittest tests.test_server_security
                        または python3 tests/test_server_security.py
 """
+import json
 import os
 import socket
 import subprocess
@@ -104,6 +105,13 @@ class LocalApiSecurityTest(unittest.TestCase):
     def test_api_with_token_ok(self):
         self.assertEqual(
             _request('GET', self.base + '/api/info', {'X-Devhub-Token': TEST_TOKEN}), 200)
+
+    def test_api_info_reports_actual_port(self):
+        # DEVHUB_PORT 上書き時、設定ファイル値ではなく実待受ポートを返すこと。
+        status, body = _request('GET', self.base + '/api/info',
+                                {'X-Devhub-Token': TEST_TOKEN}, status_only=False)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body).get('port'), self.port)
 
     def test_api_with_wrong_token_rejected(self):
         self.assertEqual(
