@@ -892,7 +892,7 @@ function renderTabContent() {
     } else if (activeTab === 'status') {
          const el = document.createElement('div'); el.style.padding = '10px';
          const headLine = gitData.branches.trim().split('\n').find(l=>l.endsWith('\t*'));
-         const branch = headLine ? headLine.split('\t')[0] : 'Unknown';
+         const branch = headLine ? headLine.split('\t')[1] : 'Unknown';
          const escapeHtml = (unsafe) => unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
          const { staged, unstaged } = parseStatus(gitData.status);
          el.innerHTML = `<strong>Branch:</strong> ${escapeHtml(branch)}<br><br><strong>Staged files:</strong> ${staged.length}<br><strong>Unstaged files:</strong> ${unstaged.length}`;
