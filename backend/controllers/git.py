@@ -289,6 +289,9 @@ def handle_get(handler, path, params):
                             current['branch'] = branch_ref
                 elif line.strip() == 'detached':
                     current['detached'] = True
+                elif line.strip() == 'bare':
+                    # bare main worktree: no branch/HEAD lines are emitted for it
+                    current['bare'] = True
             if current:
                 worktrees.append(current)
             handler.send_json({'worktrees': worktrees})
