@@ -2,7 +2,10 @@ import os
 import subprocess
 import re
 import json
+import logging
 from backend.storage import load_config
+
+logger = logging.getLogger(__name__)
 
 def find_repos(root):
     repos = []
@@ -86,6 +89,30 @@ def _has_path_traversal(p):
     # Reject parent-directory references ('..') in user-supplied worktree paths.
     return any(part == '..' for part in re.split(r'[\\/]+', p) if part)
 
+# Reject NUL and ASCII control characters (incl. newlines) in worktree paths.
+# Note: argument injection is already prevented by the leading-dash check below
+# plus list-form subprocess calls (no shell), so this is defense-in-depth and
+# intentionally does NOT allowlist by codepoint — legitimate paths may contain
+# non-ASCII characters (e.g. Japanese directory names).
+_WORKTREE_PATH_BAD_CHARS = re.compile(r'[\x00-\x1f\x7f]')
+
+def _validate_worktree_path(p):
+    """Validate a user-supplied worktree path.
+
+    Returns an error message string if invalid, or None if the path is OK.
+    Requires an absolute path with no '..' segments, no leading dash (argument
+    injection), and no NUL/control characters.
+    """
+    if not isinstance(p, str) or not p:
+        return 'missing worktree path'
+    if p.startswith('-') or _has_path_traversal(p):
+        return 'invalid worktree path'
+    if not os.path.isabs(p):
+        return 'worktree path must be absolute'
+    if _WORKTREE_PATH_BAD_CHARS.search(p):
+        return 'invalid worktree path'
+    return None
+
 def handle_get(handler, path, params):
     repo_path = _validated_repo_path(params)
     if not repo_path:
@@ -112,8 +139,9 @@ def handle_get(handler, path, params):
                     # Fewer than 2 commits in the last hour: not enough data to
                     # estimate cadence, so fall back to the max (slow) interval.
                     dynamic_interval = 600
-            except Exception:
-                pass
+            except Exception as e:
+                # Best-effort: a failure here must not break the status response.
+                logger.debug("Failed to calculate dynamic poll interval: %s", e)
 
             handler.send_json({
                 'output': res.stdout,
@@ -332,8 +360,9 @@ def handle_post(handler, path, data):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
 
-        if worktree_path.startswith('-') or _has_path_traversal(worktree_path):
-            handler.send_json({'error': 'invalid worktree path'}, 400)
+        path_err = _validate_worktree_path(worktree_path)
+        if path_err:
+            handler.send_json({'error': path_err}, 400)
             return
 
         if base_commit:
@@ -343,10 +372,10 @@ def handle_post(handler, path, data):
 
         # Prune stale worktrees before adding to avoid conflict with manually deleted worktrees
         try:
-            subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True)
-        except Exception:
-            pass
-            
+            subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
+        except Exception as e:
+            logger.debug("worktree prune (pre-add) failed: %s", e)
+
         cmd = ['git', 'worktree', 'add']
         if new_branch:
             cmd.extend(['-b', branch, worktree_path])
@@ -354,10 +383,12 @@ def handle_post(handler, path, data):
                 cmd.append(base_commit)
         else:
             cmd.extend([worktree_path, branch])
-            
+
         try:
-            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True, timeout=120)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git worktree add timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
@@ -369,23 +400,26 @@ def handle_post(handler, path, data):
             handler.send_json({'error': 'missing worktree_path'}, 400)
             return
 
-        if worktree_path.startswith('-') or _has_path_traversal(worktree_path):
-            handler.send_json({'error': 'invalid worktree path'}, 400)
+        path_err = _validate_worktree_path(worktree_path)
+        if path_err:
+            handler.send_json({'error': path_err}, 400)
             return
-            
+
         cmd = ['git', 'worktree', 'remove']
         if force:
             cmd.append('--force')
         cmd.append(worktree_path)
-        
+
         try:
-            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True, timeout=60)
             # Prune after removal
             try:
-                subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True)
-            except Exception:
-                pass
+                subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
+            except Exception as e:
+                logger.debug("worktree prune (post-remove) failed: %s", e)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git worktree remove timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
