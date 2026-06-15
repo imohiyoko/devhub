@@ -708,14 +708,18 @@ async function refreshData(withSuggestion = true) {
         gitData.worktrees = worktrees.worktrees || [];
 
         // Dynamic polling adjustment
-        if (gitConfig.local_poll_interval === 'auto' || gitConfig.remote_poll_interval === 'auto') {
-            // In auto mode the timers are only re-armed when we actually fetched a
-            // fresh suggestion. On a plain local poll (withSuggestion=false) the
-            // running timers are left untouched.
+        const localIsAuto = gitConfig.local_poll_interval === 'auto';
+        const remoteIsAuto = gitConfig.remote_poll_interval === 'auto';
+        if (localIsAuto || remoteIsAuto) {
+            // Auto (or mixed) mode: only re-arm when this refresh actually carried a
+            // fresh suggestion. The high-frequency local poll passes
+            // withSuggestion=false and leaves the running timers untouched.
+            // Each field is resolved independently so a manually-set side is never
+            // overwritten by the server suggestion (matches startPolling()).
             if (withSuggestion) {
-                const suggestedLocal = status.suggested_local_interval || 600;
-                const suggestedRemote = status.suggested_remote_interval || 1800;
-                adjustDynamicPolling(suggestedLocal, suggestedRemote);
+                const local = localIsAuto ? (status.suggested_local_interval || 600) : gitConfig.local_poll_interval;
+                const remote = remoteIsAuto ? (status.suggested_remote_interval || 1800) : gitConfig.remote_poll_interval;
+                adjustDynamicPolling(local, remote);
             }
         } else {
             adjustDynamicPolling(gitConfig.local_poll_interval, gitConfig.remote_poll_interval);
@@ -1002,15 +1006,22 @@ document.getElementById('btn-settings').addEventListener('click', (e) => {
     }
 });
 
+// Parse a manual poll-interval field, flooring empty/invalid/non-positive input
+// to a sane default instead of 0 (which would silently disable that timer).
+function parsePollInterval(value, fallback) {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
 document.getElementById('btn-save-settings').addEventListener('click', () => {
     gitConfig.default_repo = document.getElementById('setting-default-repo').value;
     gitConfig.log_limit = parseInt(document.getElementById('setting-log-limit').value) || 100;
-    
+
     const localAuto = document.getElementById('setting-local-poll-auto').checked;
-    gitConfig.local_poll_interval = localAuto ? 'auto' : (parseInt(document.getElementById('setting-local-poll').value) || 0);
+    gitConfig.local_poll_interval = localAuto ? 'auto' : parsePollInterval(document.getElementById('setting-local-poll').value, 30);
 
     const remoteAuto = document.getElementById('setting-remote-poll-auto').checked;
-    gitConfig.remote_poll_interval = remoteAuto ? 'auto' : (parseInt(document.getElementById('setting-remote-poll').value) || 0);
+    gitConfig.remote_poll_interval = remoteAuto ? 'auto' : parsePollInterval(document.getElementById('setting-remote-poll').value, 90);
     
     gitConfig.layout.show_log = document.getElementById('setting-show-log').checked;
     gitConfig.commit_template = document.getElementById('setting-commit-template').value;
@@ -1459,6 +1470,28 @@ function escapeHtml(s) {
     }[c]));
 }
 
+// Small DOM builders to cut the repeated card-row / button scaffolding in the
+// branch & worktree detail panes. Behaviour-preserving: callers still supply
+// the (already-escaped) value markup and assign the click handlers.
+const LABEL_SPAN_STYLE = 'color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;';
+function makeInfoRow(label, valueHtml) {
+    const row = document.createElement('div');
+    row.innerHTML = `<span style="${LABEL_SPAN_STYLE}">${label}</span>${valueHtml}`;
+    return row;
+}
+
+const BTN_STYLES = {
+    primary: 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;',
+    secondary: 'background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;',
+    danger: 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;',
+};
+function makeButton(text, variant = 'primary') {
+    const btn = document.createElement('button');
+    btn.textContent = text;
+    btn.style.cssText = BTN_STYLES[variant] || BTN_STYLES.primary;
+    return btn;
+}
+
 function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
     const right = document.getElementById('right-pane');
     right.innerHTML = '';
@@ -1485,31 +1518,23 @@ function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
     card.style.flexDirection = 'column';
     card.style.gap = '12px';
     
-    const nameRow = document.createElement('div');
-    nameRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Branch Name</span>
-                         <span style="font-family: monospace; font-size: 15px; font-weight: 600; color: var(--green);">${escapeHtml(branchName)}</span>`;
-    card.appendChild(nameRow);
-    
+    card.appendChild(makeInfoRow('Branch Name',
+        `<span style="font-family: monospace; font-size: 15px; font-weight: 600; color: var(--green);">${escapeHtml(branchName)}</span>`));
+
     let statusText = 'Inactive branch';
     if (isHead) statusText = 'Active (HEAD) branch in the main repository';
     else if (wtEntry) statusText = `Checked out as a worktree at <code style="background: var(--bg); padding: 2px 4px; border-radius: 4px; font-size: 12px;">${escapeHtml(wtEntry.path)}</code>`;
-    
-    const statusRow = document.createElement('div');
-    statusRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Status</span>
-                           <span style="font-size: 13px; color: var(--text);">${statusText}</span>`;
-    card.appendChild(statusRow);
-    
+
+    card.appendChild(makeInfoRow('Status',
+        `<span style="font-size: 13px; color: var(--text);">${statusText}</span>`));
+
     if (wtEntry) {
-        const pathRow = document.createElement('div');
-        pathRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Worktree Directory</span>
-                             <span style="font-family: monospace; font-size: 13px; color: var(--blue); word-break: break-all;">${escapeHtml(wtEntry.path)}</span>`;
-        card.appendChild(pathRow);
-        
+        card.appendChild(makeInfoRow('Worktree Directory',
+            `<span style="font-family: monospace; font-size: 13px; color: var(--blue); word-break: break-all;">${escapeHtml(wtEntry.path)}</span>`));
+
         if (wtEntry.head) {
-            const headRow = document.createElement('div');
-            headRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Commit SHA</span>
-                                 <span style="font-family: monospace; font-size: 13px; color: var(--text);">${escapeHtml(wtEntry.head)}</span>`;
-            card.appendChild(headRow);
+            card.appendChild(makeInfoRow('Commit SHA',
+                `<span style="font-family: monospace; font-size: 13px; color: var(--text);">${escapeHtml(wtEntry.head)}</span>`));
         }
     }
     
@@ -1521,9 +1546,7 @@ function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
     btnRow.style.flexWrap = 'wrap';
     
     if (!isHead && !wtEntry) {
-        const btnCheckout = document.createElement('button');
-        btnCheckout.textContent = 'Switch to Branch';
-        btnCheckout.style.cssText = 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        const btnCheckout = makeButton('Switch to Branch', 'primary');
         btnCheckout.onclick = () => {
             let bn = branchName.trim();
             const localBranches = getLocalBranches();
@@ -1535,41 +1558,34 @@ function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
         };
         btnRow.appendChild(btnCheckout);
     }
-    
+
     if (wtEntry) {
-        const btnOpen = document.createElement('button');
-        btnOpen.textContent = 'Open in Editor';
-        btnOpen.style.cssText = 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        const btnOpen = makeButton('Open in Editor', 'primary');
         btnOpen.onclick = () => {
             fetch(`/api/open?path=${encodeURIComponent(wtEntry.path)}`);
         };
         btnRow.appendChild(btnOpen);
     }
-    
+
     if (!wtEntry && !isRemote) {
-        const btnWt = document.createElement('button');
-        btnWt.textContent = 'Create Worktree';
-        btnWt.style.cssText = 'background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        const btnWt = makeButton('Create Worktree', 'secondary');
         btnWt.onclick = () => {
             showAddWorktreeForm(branchName);
         };
         btnRow.appendChild(btnWt);
     }
-    
+
     if (!isHead && !wtEntry) {
-        const btnDel = document.createElement('button');
-        btnDel.textContent = 'Delete Branch';
-        btnDel.style.cssText = 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        const btnDel = makeButton('Delete Branch', 'danger');
         btnDel.onclick = async () => {
             if (confirm(`Delete branch "${branchName}"?`)) {
                 await doPost('/api/git/branch/delete', { branch: branchName, force: false });
             }
         };
         btnRow.appendChild(btnDel);
-        
-        const btnDelForce = document.createElement('button');
-        btnDelForce.textContent = 'Force Delete';
-        btnDelForce.style.cssText = 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500; opacity: 0.7;';
+
+        const btnDelForce = makeButton('Force Delete', 'danger');
+        btnDelForce.style.opacity = '0.7';
         btnDelForce.onclick = async () => {
             if (confirm(`Force delete branch "${branchName}"? (Unmerged changes will be lost)`)) {
                 await doPost('/api/git/branch/delete', { branch: branchName, force: true });
@@ -1722,9 +1738,8 @@ function renderAddWorktreeForm(preselectedBranch = '') {
     btnRow.style.gap = '12px';
     btnRow.style.marginTop = '8px';
     
-    const btnSubmit = document.createElement('button');
-    btnSubmit.textContent = 'Create Worktree';
-    btnSubmit.style.cssText = 'background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+    const btnSubmit = makeButton('Create Worktree', 'primary');
+    btnSubmit.style.padding = '10px 20px';
     btnSubmit.onclick = async () => {
         const wtPath = document.getElementById('wt-add-path').value.trim();
         if (!wtPath) { alert('Path is required'); return; }
@@ -1806,21 +1821,15 @@ function renderWorktreeDetails(wt, isMain) {
     card.style.flexDirection = 'column';
     card.style.gap = '12px';
     
-    const pathRow = document.createElement('div');
-    pathRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Path</span>
-                         <span style="font-family: monospace; font-size: 13px; color: var(--text); word-break: break-all;">${escapeHtml(wt.path)}</span>`;
-    card.appendChild(pathRow);
-    
-    const branchRow = document.createElement('div');
-    branchRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Branch</span>
-                           <span style="font-family: monospace; font-size: 14px; color: var(--green);">${escapeHtml(wt.branch || '(detached)')}</span>`;
-    card.appendChild(branchRow);
-    
+    card.appendChild(makeInfoRow('Path',
+        `<span style="font-family: monospace; font-size: 13px; color: var(--text); word-break: break-all;">${escapeHtml(wt.path)}</span>`));
+
+    card.appendChild(makeInfoRow('Branch',
+        `<span style="font-family: monospace; font-size: 14px; color: var(--green);">${escapeHtml(wt.branch || '(detached)')}</span>`));
+
     if (wt.head) {
-        const headRow = document.createElement('div');
-        headRow.innerHTML = `<span style="color: var(--muted); font-size: 11px; display: block; margin-bottom: 2px; text-transform: uppercase;">Commit SHA</span>
-                             <span style="font-family: monospace; font-size: 13px; color: var(--blue);">${escapeHtml(wt.head)}</span>`;
-        card.appendChild(headRow);
+        card.appendChild(makeInfoRow('Commit SHA',
+            `<span style="font-family: monospace; font-size: 13px; color: var(--blue);">${escapeHtml(wt.head)}</span>`));
     }
     
     container.appendChild(card);
@@ -1830,18 +1839,14 @@ function renderWorktreeDetails(wt, isMain) {
     btnRow.style.gap = '10px';
     btnRow.style.flexWrap = 'wrap';
     
-    const btnOpen = document.createElement('button');
-    btnOpen.textContent = 'Open in Editor';
-    btnOpen.style.cssText = 'background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+    const btnOpen = makeButton('Open in Editor', 'primary');
     btnOpen.onclick = () => {
         fetch(`/api/open?path=${encodeURIComponent(wt.path)}`);
     };
     btnRow.appendChild(btnOpen);
-    
+
     if (!isMain) {
-        const btnRemove = document.createElement('button');
-        btnRemove.textContent = 'Remove Worktree';
-        btnRemove.style.cssText = 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;';
+        const btnRemove = makeButton('Remove Worktree', 'danger');
         btnRemove.onclick = async () => {
             if (confirm(`Are you sure you want to remove the worktree at "${wt.path}"?`)) {
                 btnRemove.disabled = true;
@@ -1870,9 +1875,8 @@ function renderWorktreeDetails(wt, isMain) {
         };
         btnRow.appendChild(btnRemove);
         
-        const btnRemoveForce = document.createElement('button');
-        btnRemoveForce.textContent = 'Force Remove';
-        btnRemoveForce.style.cssText = 'background: transparent; border: 1px solid var(--red); color: var(--red); padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500; opacity: 0.7;';
+        const btnRemoveForce = makeButton('Force Remove', 'danger');
+        btnRemoveForce.style.opacity = '0.7';
         btnRemoveForce.onclick = async () => {
             if (confirm(`Force remove worktree at "${wt.path}"? (Uncommitted changes will be lost)`)) {
                 btnRemoveForce.disabled = true;
