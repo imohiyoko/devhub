@@ -684,12 +684,17 @@ document.addEventListener('mouseup', () => {
 
 
 // Git Operations
-async function refreshData() {
+async function refreshData(withSuggestion = true) {
     if (!currentRepo) return;
 
     try {
+        // Only ask the server to compute the poll-interval suggestion (an extra
+        // `git log`) when withSuggestion is set. The high-frequency local timer
+        // passes false; everything else (init, remote poll, manual ops) lets it
+        // default to true so the suggestion refreshes on the slower cadence.
+        const suggestQuery = withSuggestion ? '&suggest=1' : '';
         const [status, log, branches, stash, worktrees] = await Promise.all([
-            fetch(`/api/git/status?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
+            fetch(`/api/git/status?path=${encodeURIComponent(currentRepo)}${suggestQuery}`).then(r=>r.json()),
             fetch(`/api/git/log?path=${encodeURIComponent(currentRepo)}&n=${gitConfig.log_limit}`).then(r=>r.json()),
             fetch(`/api/git/branches?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
             fetch(`/api/git/stash/list?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()),
@@ -704,9 +709,14 @@ async function refreshData() {
 
         // Dynamic polling adjustment
         if (gitConfig.local_poll_interval === 'auto' || gitConfig.remote_poll_interval === 'auto') {
-            const suggestedLocal = status.suggested_local_interval || 600;
-            const suggestedRemote = status.suggested_remote_interval || 1800;
-            adjustDynamicPolling(suggestedLocal, suggestedRemote);
+            // In auto mode the timers are only re-armed when we actually fetched a
+            // fresh suggestion. On a plain local poll (withSuggestion=false) the
+            // running timers are left untouched.
+            if (withSuggestion) {
+                const suggestedLocal = status.suggested_local_interval || 600;
+                const suggestedRemote = status.suggested_remote_interval || 1800;
+                adjustDynamicPolling(suggestedLocal, suggestedRemote);
+            }
         } else {
             adjustDynamicPolling(gitConfig.local_poll_interval, gitConfig.remote_poll_interval);
         }
@@ -1374,7 +1384,9 @@ function adjustDynamicPolling(targetLocal, targetRemote) {
         
         if (targetLocal > 0) {
             localPollTimer = setInterval(() => {
-                if (currentRepo) refreshData();
+                // Local poll: skip the suggestion (no extra git log). The remote
+                // timer below refreshes the interval suggestion on its cadence.
+                if (currentRepo) refreshData(false);
             }, targetLocal * 1000);
         }
         
