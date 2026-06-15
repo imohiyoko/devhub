@@ -102,6 +102,12 @@ def _validate_worktree_path(p):
     Returns an error message string if invalid, or None if the path is OK.
     Requires an absolute path with no '..' segments, no leading dash (argument
     injection), and no NUL/control characters.
+
+    NOTE: this closes the injection/traversal surface but deliberately does NOT
+    constrain *where* on the filesystem the worktree may live (unlike repo paths,
+    which are checked against configured roots). For a single-user localhost dev
+    tool an absolute path anywhere is by design; tighten to an allowlisted parent
+    directory here if this is ever exposed beyond localhost.
     """
     if not isinstance(p, str) or not p:
         return 'missing worktree path'
@@ -112,6 +118,23 @@ def _validate_worktree_path(p):
     if _WORKTREE_PATH_BAD_CHARS.search(p):
         return 'invalid worktree path'
     return None
+
+# Conservative allowlist for branch names passed to git as positional args.
+_BRANCH_NAME_RE = re.compile(r'[a-zA-Z0-9_./-]+')
+
+def _is_valid_branch_name(branch):
+    """True if `branch` is safe to pass to git as a positional argument.
+
+    Rejects empties, leading dashes (argument injection), names outside the
+    allowlist, and any '..' segment — '..' is never valid in a git ref and is a
+    path-traversal smell, mirroring _validate_worktree_path.
+    """
+    return (
+        bool(branch)
+        and not branch.startswith('-')
+        and '..' not in branch
+        and _BRANCH_NAME_RE.fullmatch(branch) is not None
+    )
 
 # Discrete poll-interval buckets (seconds) for the local status timer.
 # Snapping the computed interval to a bucket gives two properties:
@@ -145,6 +168,9 @@ def handle_get(handler, path, params):
             # frontend requests it on the slower remote cadence, not on every
             # high-frequency local status poll.
             if params.get('suggest'):
+                # Default to the slow ceiling. This is the value used both when
+                # there are fewer than 2 commits in the last hour (not enough data
+                # to estimate cadence) and when the `git log` below fails.
                 dynamic_interval = 600
                 try:
                     log_res = subprocess.run(
@@ -159,10 +185,6 @@ def handle_get(handler, path, params):
                         intervals = [abs(timestamps[i] - timestamps[i+1]) for i in range(len(timestamps)-1)]
                         avg_interval = sum(intervals) / len(intervals)
                         dynamic_interval = _bucketize_interval(int(avg_interval / 4))
-                    else:
-                        # Fewer than 2 commits in the last hour: not enough data to
-                        # estimate cadence, so fall back to the max (slow) interval.
-                        dynamic_interval = 600
                 except Exception as e:
                     # Best-effort: a failure here must not break the status response.
                     logger.debug("Failed to calculate dynamic poll interval: %s", e)
@@ -323,7 +345,7 @@ def handle_post(handler, path, data):
 
     if path == '/api/git/checkout':
         branch = data.get('branch', '')
-        if not branch or branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+        if not _is_valid_branch_name(branch):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
         try:
@@ -335,7 +357,7 @@ def handle_post(handler, path, data):
 
     if path == '/api/git/branch/create':
         branch = data.get('branch', '')
-        if not branch or branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+        if not _is_valid_branch_name(branch):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
         try:
@@ -379,7 +401,7 @@ def handle_post(handler, path, data):
             return
 
         # Security validations to prevent argument injection
-        if branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+        if not _is_valid_branch_name(branch):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
 
@@ -389,7 +411,7 @@ def handle_post(handler, path, data):
             return
 
         if base_commit:
-            if base_commit.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./~^@{}#-]+', base_commit):
+            if base_commit.startswith('-') or '..' in base_commit or not re.fullmatch(r'[a-zA-Z0-9_./~^@{}#-]+', base_commit):
                 handler.send_json({'error': 'invalid base commit/branch'}, 400)
                 return
 
@@ -454,7 +476,7 @@ def handle_post(handler, path, data):
             handler.send_json({'error': 'missing branch name'}, 400)
             return
 
-        if branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+        if not _is_valid_branch_name(branch):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
             
