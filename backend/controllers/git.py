@@ -2,7 +2,10 @@ import os
 import subprocess
 import re
 import json
+import logging
 from backend.storage import load_config
+
+logger = logging.getLogger(__name__)
 
 def find_repos(root):
     repos = []
@@ -82,6 +85,78 @@ def _validated_repo_path_from_body(data):
     raw = data.get('path') if isinstance(data, dict) else None
     return _get_validated_path(raw)
 
+def _has_path_traversal(p):
+    # Reject parent-directory references ('..') in user-supplied worktree paths.
+    return any(part == '..' for part in re.split(r'[\\/]+', p) if part)
+
+# Reject NUL and ASCII control characters (incl. newlines) in worktree paths.
+# Note: argument injection is already prevented by the leading-dash check below
+# plus list-form subprocess calls (no shell), so this is defense-in-depth and
+# intentionally does NOT allowlist by codepoint — legitimate paths may contain
+# non-ASCII characters (e.g. Japanese directory names).
+_WORKTREE_PATH_BAD_CHARS = re.compile(r'[\x00-\x1f\x7f]')
+
+def _validate_worktree_path(p):
+    """Validate a user-supplied worktree path.
+
+    Returns an error message string if invalid, or None if the path is OK.
+    Requires an absolute path with no '..' segments, no leading dash (argument
+    injection), and no NUL/control characters.
+
+    NOTE: this closes the injection/traversal surface but deliberately does NOT
+    constrain *where* on the filesystem the worktree may live (unlike repo paths,
+    which are checked against configured roots). For a single-user localhost dev
+    tool an absolute path anywhere is by design; tighten to an allowlisted parent
+    directory here if this is ever exposed beyond localhost.
+    """
+    if not isinstance(p, str) or not p:
+        return 'missing worktree path'
+    if p.startswith('-') or _has_path_traversal(p):
+        return 'invalid worktree path'
+    if not os.path.isabs(p):
+        return 'worktree path must be absolute'
+    if _WORKTREE_PATH_BAD_CHARS.search(p):
+        return 'invalid worktree path'
+    return None
+
+# Conservative allowlist for branch names passed to git as positional args.
+# Intentionally stricter than git's real ref grammar: it rejects some otherwise
+# valid branch names (e.g. ones containing '+' or unicode) in exchange for a
+# small, easy-to-audit character set. The base_commit check in /worktree/add
+# deliberately allows a broader set (~^@{}#) because it is a revspec, not a
+# branch name — that asymmetry is by design, not an oversight.
+_BRANCH_NAME_RE = re.compile(r'[a-zA-Z0-9_./-]+')
+
+def _is_valid_branch_name(branch):
+    """True if `branch` is safe to pass to git as a positional argument.
+
+    Rejects empties, leading dashes (argument injection), names outside the
+    allowlist, and any '..' segment — '..' is never valid in a git ref and is a
+    path-traversal smell, mirroring _validate_worktree_path.
+    """
+    return (
+        bool(branch)
+        and not branch.startswith('-')
+        and '..' not in branch
+        and _BRANCH_NAME_RE.fullmatch(branch) is not None
+    )
+
+# Discrete poll-interval buckets (seconds) for the local status timer.
+# Snapping the computed interval to a bucket gives two properties:
+#  1. A sane floor (30s) — nothing meaningful changes in 10-30s, so polling
+#     faster than this just wastes work.
+#  2. Hysteresis — the suggested value only changes when commit cadence crosses
+#     a bucket boundary, instead of jittering every poll (e.g. 45->50->42).
+#     That keeps the frontend timers stable so the slower remote/fetch timer
+#     actually reaches its deadline instead of being torn down each local poll.
+_POLL_BUCKETS = [30, 60, 120, 300, 600]
+
+def _bucketize_interval(seconds):
+    for b in _POLL_BUCKETS:
+        if seconds <= b:
+            return b
+    return _POLL_BUCKETS[-1]
+
 def handle_get(handler, path, params):
     repo_path = _validated_repo_path(params)
     if not repo_path:
@@ -91,7 +166,50 @@ def handle_get(handler, path, params):
     if path == '/api/git/status':
         try:
             res = subprocess.run(['git', 'status', '--porcelain=v1', '-u'], cwd=repo_path, capture_output=True, text=True, check=True)
-            handler.send_json({'output': res.stdout})
+            payload = {'output': res.stdout}
+
+            # The dynamic poll interval spawns an extra `git log` subprocess, so it
+            # is only computed when the client explicitly asks (?suggest=1). The
+            # frontend requests it on the slower remote cadence, not on every
+            # high-frequency local status poll.
+            if params.get('suggest'):
+                # Default to the slow ceiling. This is the value used both when
+                # there are fewer than 2 commits in the last hour (not enough data
+                # to estimate cadence) and when the `git log` below fails.
+                dynamic_interval = 600
+                try:
+                    log_res = subprocess.run(
+                        ['git', 'log', '--since=1 hour ago', '--format=%ct'],
+                        cwd=repo_path, capture_output=True, text=True, timeout=10
+                    )
+                    timestamps = [int(t) for t in log_res.stdout.splitlines() if t.strip().isdigit()]
+                    if len(timestamps) >= 2:
+                        # abs(): git log is normally reverse-chronological, but a
+                        # rebase/cherry-pick can skew committer dates and yield a
+                        # negative delta, which would drag the average down.
+                        intervals = [abs(timestamps[i] - timestamps[i+1]) for i in range(len(timestamps)-1)]
+                        avg_interval = sum(intervals) / len(intervals)
+                        dynamic_interval = _bucketize_interval(int(avg_interval / 4))
+                except Exception as e:
+                    # Best-effort: a failure here must not break the status response.
+                    logger.debug("Failed to calculate dynamic poll interval: %s", e)
+
+                payload['suggested_local_interval'] = dynamic_interval
+                payload['suggested_remote_interval'] = dynamic_interval * 3
+
+                # Whether any remote is configured. The frontend uses this to avoid
+                # arming the origin-fetch timer (which would otherwise fail every
+                # cycle) on a repo with no remote. Computed on the suggest cadence
+                # only — it rarely changes, so we don't pay for it on each local poll.
+                try:
+                    remote_res = subprocess.run(
+                        ['git', 'remote'], cwd=repo_path, capture_output=True, text=True, timeout=10
+                    )
+                    payload['has_remote'] = bool(remote_res.stdout.strip())
+                except Exception as e:
+                    logger.debug("Failed to check git remotes: %s", e)
+
+            handler.send_json(payload)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
@@ -111,7 +229,7 @@ def handle_get(handler, path, params):
 
     if path == '/api/git/branches':
         try:
-            res = subprocess.run(['git', 'branch', '-a', '--format=%(refname:short)\t%(HEAD)'], cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(['git', 'branch', '-a', '--format=%(refname)\t%(refname:short)\t%(HEAD)'], cwd=repo_path, capture_output=True, text=True, check=True)
             handler.send_json({'output': res.stdout})
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
@@ -138,6 +256,45 @@ def handle_get(handler, path, params):
         try:
             res = subprocess.run(['git', 'stash', 'list'], cwd=repo_path, capture_output=True, text=True, check=True)
             handler.send_json({'output': res.stdout})
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/worktrees':
+        try:
+            res = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=repo_path, capture_output=True, text=True, check=True)
+            lines = res.stdout.splitlines()
+            worktrees = []
+            current = {}
+            for line in lines:
+                if not line.strip():
+                    if current:
+                        worktrees.append(current)
+                        current = {}
+                    continue
+                parts = line.split(' ', 1)
+                if len(parts) == 2:
+                    key, val = parts
+                    if key == 'worktree':
+                        if current:
+                            worktrees.append(current)
+                        current = {'path': val}
+                    elif key == 'HEAD':
+                        current['head'] = val
+                    elif key == 'branch':
+                        branch_ref = val
+                        if branch_ref.startswith('refs/heads/'):
+                            current['branch'] = branch_ref[len('refs/heads/'):]
+                        else:
+                            current['branch'] = branch_ref
+                elif line.strip() == 'detached':
+                    current['detached'] = True
+                elif line.strip() == 'bare':
+                    # bare main worktree: no branch/HEAD lines are emitted for it
+                    current['bare'] = True
+            if current:
+                worktrees.append(current)
+            handler.send_json({'worktrees': worktrees})
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
@@ -208,24 +365,28 @@ def handle_post(handler, path, data):
 
     if path == '/api/git/checkout':
         branch = data.get('branch', '')
-        if not branch or branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+        if not _is_valid_branch_name(branch):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
         try:
-            res = subprocess.run(['git', 'checkout', branch], cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(['git', 'checkout', branch], cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git checkout timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
 
     if path == '/api/git/branch/create':
         branch = data.get('branch', '')
-        if not branch or branch.startswith('-') or not re.fullmatch(r'[a-zA-Z0-9_./-]+', branch):
+        if not _is_valid_branch_name(branch):
             handler.send_json({'error': 'invalid branch name'}, 400)
             return
         try:
-            res = subprocess.run(['git', 'checkout', '-b', branch], cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(['git', 'checkout', '-b', branch], cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git branch create timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
@@ -249,6 +410,123 @@ def handle_post(handler, path, data):
         try:
             res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
             handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/worktree/add':
+        worktree_path = data.get('worktree_path')
+        branch = data.get('branch')
+        new_branch = data.get('new_branch', False)
+        base_commit = data.get('base_commit')
+        
+        if not worktree_path or not branch:
+            handler.send_json({'error': 'missing worktree_path or branch'}, 400)
+            return
+
+        # Security validations to prevent argument injection
+        if not _is_valid_branch_name(branch):
+            handler.send_json({'error': 'invalid branch name'}, 400)
+            return
+
+        path_err = _validate_worktree_path(worktree_path)
+        if path_err:
+            handler.send_json({'error': path_err}, 400)
+            return
+
+        if base_commit:
+            # Revspec, not a branch name: a broader char set (~^@{}#) is allowed
+            # on purpose (see _BRANCH_NAME_RE). The leading-dash / '..' guards still apply.
+            if base_commit.startswith('-') or '..' in base_commit or not re.fullmatch(r'[a-zA-Z0-9_./~^@{}#-]+', base_commit):
+                handler.send_json({'error': 'invalid base commit/branch'}, 400)
+                return
+
+        # Prune stale worktrees before adding to avoid conflict with manually deleted worktrees
+        try:
+            subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
+        except Exception as e:
+            logger.debug("worktree prune (pre-add) failed: %s", e)
+
+        cmd = ['git', 'worktree', 'add']
+        if new_branch:
+            cmd.extend(['-b', branch, worktree_path])
+            if base_commit:
+                cmd.append(base_commit)
+        else:
+            cmd.extend([worktree_path, branch])
+
+        try:
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True, timeout=120)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git worktree add timed out'}, 504)
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/worktree/remove':
+        worktree_path = data.get('worktree_path')
+        force = data.get('force', False)
+        if not worktree_path:
+            handler.send_json({'error': 'missing worktree_path'}, 400)
+            return
+
+        path_err = _validate_worktree_path(worktree_path)
+        if path_err:
+            handler.send_json({'error': path_err}, 400)
+            return
+
+        cmd = ['git', 'worktree', 'remove']
+        if force:
+            cmd.append('--force')
+        cmd.append(worktree_path)
+
+        try:
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True, timeout=60)
+            # Prune after removal
+            try:
+                subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
+            except Exception as e:
+                logger.debug("worktree prune (post-remove) failed: %s", e)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git worktree remove timed out'}, 504)
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/branch/delete':
+        branch = data.get('branch')
+        force = data.get('force', False)
+        if not branch:
+            handler.send_json({'error': 'missing branch name'}, 400)
+            return
+
+        if not _is_valid_branch_name(branch):
+            handler.send_json({'error': 'invalid branch name'}, 400)
+            return
+            
+        cmd = ['git', 'branch', '-D' if force else '-d', branch]
+        try:
+            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git branch delete timed out'}, 504)
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/fetch':
+        try:
+            # Set environment variables to prevent git fetch from hanging on authentication prompt
+            env = os.environ.copy()
+            env['GIT_TERMINAL_PROMPT'] = '0'
+            env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
+            
+            res = subprocess.run(['git', 'fetch', '--prune'], cwd=repo_path, env=env, capture_output=True, text=True, check=True, timeout=30)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git fetch timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
