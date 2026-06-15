@@ -36,7 +36,13 @@ TERMINAL = SETTINGS.get('terminal', {})
 #      外部サイトは CORS で HTML を読めずトークンを取得できず、カスタムヘッダ必須化により
 #      プリフライト不要の "simple request" にもできない (OPTIONS ハンドラを持たないため失敗する)。
 #  (C) Sec-Fetch-Site -> ブラウザが付与し JS から偽装できない。cross-site/same-site を拒否。
-TOKEN = secrets.token_urlsafe(32)
+#
+# トークンは「devhub を実際に起動するたび」に新規生成するが、アプリ内の再起動
+# (/api/restart) をまたいでは保持する。再起動は子プロセスを再 exec するため、環境変数
+# DEVHUB_API_TOKEN で引き継ぐ。これにより既に開いているタブ (旧 HTML にトークンを保持)
+# が「再起動のみ」後も 401 にならず継続動作できる。読み取り後は os.environ から除去し、
+# devhub が起動する端末/エディタ等の無関係な子プロセスにトークンを漏らさない。
+TOKEN = os.environ.pop('DEVHUB_API_TOKEN', None) or secrets.token_urlsafe(32)
 ALLOWED_HOSTS = {
     f'localhost:{PORT}',
     f'127.0.0.1:{PORT}',
@@ -46,6 +52,10 @@ ALLOWED_HOSTS = {
 # 配信 HTML に注入するブートストラップ。トークンを公開し、同一オリジンの /api/ 宛て
 # fetch に自動で X-Devhub-Token を付与する。各ツールの fetch 呼び出しを個別に書き換え
 # なくて済むよう window.fetch をラップする。<head> 直後に挿入され最初に実行される。
+#
+# 不変条件: すべての /api/ アクセスは window.fetch を経由すること。新しいツールが
+# XMLHttpRequest / EventSource 等を使うと本シムを通らず 401 になる。その場合は
+# window.__DEVHUB_TOKEN__ を読み、X-Devhub-Token ヘッダを手動付与すること。
 _FETCH_SHIM_JS = '''(function(){
 var T=%s;
 window.__DEVHUB_TOKEN__=T;
@@ -115,12 +125,17 @@ class Handler(BaseHTTPRequestHandler):
         return secrets.compare_digest(self.headers.get('X-Devhub-Token', ''), TOKEN)
 
     def inject_token(self, body):
-        """配信 HTML の <head> 直後にトークン配布スクリプトを挿入する。"""
-        marker = b'<head>'
-        idx = body.find(marker)
+        """配信 HTML の <head ...> 開始タグ直後にトークン配布スクリプトを挿入する。
+
+        大文字小文字・属性付き (<HEAD>, <head lang="ja"> 等) も許容する。
+        <head> が無い場合は先頭に挿入する。
+        """
+        idx = body.lower().find(b'<head')
         if idx != -1:
-            pos = idx + len(marker)
-            return body[:pos] + TOKEN_SCRIPT + body[pos:]
+            close = body.find(b'>', idx)
+            if close != -1:
+                pos = close + 1
+                return body[:pos] + TOKEN_SCRIPT + body[pos:]
         return TOKEN_SCRIPT + body
 
     def do_GET(self):
@@ -242,8 +257,10 @@ class Handler(BaseHTTPRequestHandler):
                         self.server.server_close()
                     except Exception:
                         pass
+                    # 再起動後の新プロセスへ現トークンを引き継ぎ、既存タブの 401 を防ぐ。
+                    child_env = {**os.environ, 'DEVHUB_API_TOKEN': TOKEN}
                     if platform.system() == 'Windows':
-                        subprocess.Popen([sys.executable] + sys.argv, close_fds=True)
+                        subprocess.Popen([sys.executable] + sys.argv, close_fds=True, env=child_env)
                         os._exit(0)
                     else:
                         args = ' '.join(shlex.quote(a) for a in sys.argv)
@@ -252,7 +269,7 @@ class Handler(BaseHTTPRequestHandler):
                             f'sleep 0.3; '
                             f'exec {shlex.quote(sys.executable)} {args}'
                         )
-                        subprocess.Popen(['sh', '-c', cmd], close_fds=True)
+                        subprocess.Popen(['sh', '-c', cmd], close_fds=True, env=child_env)
                 threading.Thread(target=do_restart, daemon=True).start()
                 return
 
