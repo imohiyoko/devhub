@@ -714,6 +714,9 @@ async function refreshData(withSuggestion = true) {
         gitData.branches = branches.output || '';
         gitData.stash = stash.output || '';
         if (withSuggestion) gitData.worktrees = worktrees.worktrees || [];
+        // has_remote rides along on the suggest cadence; once we learn a repo has
+        // no remote, adjustDynamicPolling stops arming the failing fetch timer.
+        if ('has_remote' in status) gitData.hasRemote = status.has_remote;
 
         // Dynamic polling adjustment
         const localIsAuto = gitConfig.local_poll_interval === 'auto';
@@ -1409,7 +1412,10 @@ function adjustDynamicPolling(targetLocal, targetRemote) {
             }, targetLocal * 1000);
         }
         
-        if (targetRemote > 0) {
+        // Skip the origin-fetch timer when the repo has no remote (gitData.hasRemote
+        // === false) — otherwise it would fire a guaranteed-to-fail `git fetch`
+        // every cycle. Undefined (not yet known) still arms, to be conservative.
+        if (targetRemote > 0 && gitData.hasRemote !== false) {
             remotePollTimer = setInterval(() => {
                 if (currentRepo) {
                     fetch('/api/git/fetch', {
@@ -1792,7 +1798,7 @@ function renderAddWorktreeForm(preselectedBranch = '') {
             } else {
                 showRepoMsg('Worktree created successfully', 'success');
                 await refreshData();
-                const index = gitData.worktrees.findIndex(w => w.path === wtPath);
+                const index = gitData.worktrees.findIndex(w => normalizePath(w.path) === normalizePath(wtPath));
                 selectedItemIndex = index !== -1 ? index + 1 : 0;
                 renderTabContent();
             }
