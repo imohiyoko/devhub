@@ -22,7 +22,8 @@ from backend.storage import load_settings
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS = load_settings()
-PORT = SETTINGS.get('port', 8765)
+# DEVHUB_PORT があれば設定より優先 (設定ファイルを書き換えずにポートを変えられる。テスト等で利用)。
+PORT = int(os.environ.get('DEVHUB_PORT') or SETTINGS.get('port', 8765))
 EDITOR = SETTINGS.get('editor', 'code')
 TERMINAL = SETTINGS.get('terminal', {})
 
@@ -48,25 +49,33 @@ ALLOWED_HOSTS = {
     f'127.0.0.1:{PORT}',
     f'[::1]:{PORT}',
 }
+# 80/443 ではブラウザが Host からポートを省略するため、ポート無しの表記も許可する。
+if PORT in (80, 443):
+    ALLOWED_HOSTS |= {'localhost', '127.0.0.1', '[::1]'}
 
 # 配信 HTML に注入するブートストラップ。トークンを公開し、同一オリジンの /api/ 宛て
-# fetch に自動で X-Devhub-Token を付与する。各ツールの fetch 呼び出しを個別に書き換え
-# なくて済むよう window.fetch をラップする。<head> 直後に挿入され最初に実行される。
+# リクエストに自動で X-Devhub-Token を付与する。各ツールの呼び出しを個別に書き換え
+# なくて済むよう window.fetch と XMLHttpRequest.open をラップする。<head> 直後に挿入
+# され最初に実行される。
 #
-# 不変条件: すべての /api/ アクセスは window.fetch を経由すること。新しいツールが
-# XMLHttpRequest / EventSource 等を使うと本シムを通らず 401 になる。その場合は
-# window.__DEVHUB_TOKEN__ を読み、X-Devhub-Token ヘッダを手動付与すること。
+# 不変条件: すべての /api/ アクセスは fetch / XMLHttpRequest を経由すること。EventSource /
+# WebSocket は任意ヘッダを付与できず本シムでは保護できないため、もし使う場合は
+# window.__DEVHUB_TOKEN__ を読みクエリ等の別手段でトークンを渡す設計にすること。
 _FETCH_SHIM_JS = '''(function(){
 var T=%s;
 window.__DEVHUB_TOKEN__=T;
+function isApi(url){
+try{var u=new URL(url,window.location.href);
+return u.origin===window.location.origin&&u.pathname.indexOf('/api/')===0;}
+catch(e){return false;}
+}
 var orig=window.fetch?window.fetch.bind(window):null;
-if(!orig)return;
+if(orig){
 window.fetch=function(input,init){
 init=init||{};
 try{
 var url=(typeof input==='string')?input:(input&&input.url)||'';
-var u=new URL(url,window.location.href);
-if(u.origin===window.location.origin&&u.pathname.indexOf('/api/')===0){
+if(isApi(url)){
 var h=new Headers((init&&init.headers)||(typeof input!=='string'&&input&&input.headers)||{});
 h.set('X-Devhub-Token',T);
 init.headers=h;
@@ -74,6 +83,15 @@ init.headers=h;
 }catch(e){}
 return orig(input,init);
 };
+}
+var XO=window.XMLHttpRequest&&window.XMLHttpRequest.prototype.open;
+if(XO){
+window.XMLHttpRequest.prototype.open=function(method,url){
+var r=XO.apply(this,arguments);
+try{if(isApi(url))this.setRequestHeader('X-Devhub-Token',T);}catch(e){}
+return r;
+};
+}
 })();'''
 TOKEN_SCRIPT = ('<script>' + (_FETCH_SHIM_JS % json.dumps(TOKEN)) + '</script>').encode()
 
