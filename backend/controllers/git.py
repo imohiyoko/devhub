@@ -113,6 +113,22 @@ def _validate_worktree_path(p):
         return 'invalid worktree path'
     return None
 
+# Discrete poll-interval buckets (seconds) for the local status timer.
+# Snapping the computed interval to a bucket gives two properties:
+#  1. A sane floor (30s) — nothing meaningful changes in 10-30s, so polling
+#     faster than this just wastes work.
+#  2. Hysteresis — the suggested value only changes when commit cadence crosses
+#     a bucket boundary, instead of jittering every poll (e.g. 45->50->42).
+#     That keeps the frontend timers stable so the slower remote/fetch timer
+#     actually reaches its deadline instead of being torn down each local poll.
+_POLL_BUCKETS = [30, 60, 120, 300, 600]
+
+def _bucketize_interval(seconds):
+    for b in _POLL_BUCKETS:
+        if seconds <= b:
+            return b
+    return _POLL_BUCKETS[-1]
+
 def handle_get(handler, path, params):
     repo_path = _validated_repo_path(params)
     if not repo_path:
@@ -134,7 +150,7 @@ def handle_get(handler, path, params):
                 if len(timestamps) >= 2:
                     intervals = [timestamps[i] - timestamps[i+1] for i in range(len(timestamps)-1)]
                     avg_interval = sum(intervals) / len(intervals)
-                    dynamic_interval = max(10, min(600, int(avg_interval / 4)))
+                    dynamic_interval = _bucketize_interval(int(avg_interval / 4))
                 else:
                     # Fewer than 2 commits in the last hour: not enough data to
                     # estimate cadence, so fall back to the max (slow) interval.
