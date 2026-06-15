@@ -128,7 +128,7 @@ def handle_get(handler, path, params):
             try:
                 log_res = subprocess.run(
                     ['git', 'log', '--since=1 hour ago', '--format=%ct'],
-                    cwd=repo_path, capture_output=True, text=True
+                    cwd=repo_path, capture_output=True, text=True, timeout=10
                 )
                 timestamps = [int(t) for t in log_res.stdout.splitlines() if t.strip().isdigit()]
                 if len(timestamps) >= 2:

@@ -1354,8 +1354,14 @@ let currentRunningLocalInterval = null;
 let currentRunningRemoteInterval = null;
 
 function startPolling() {
-    const localSec = gitConfig.local_poll_interval === 'auto' ? 10 : gitConfig.local_poll_interval;
-    const remoteSec = gitConfig.remote_poll_interval === 'auto' ? 30 : gitConfig.remote_poll_interval;
+    // In auto mode, refreshData() already armed the timers with the server-suggested
+    // intervals. Reuse those running values if present so we don't tear them down and
+    // briefly re-poll at the aggressive auto floor (10/30); fall back to the floor only
+    // on cold start (before the first refresh sets a running interval).
+    const localSec = gitConfig.local_poll_interval === 'auto'
+        ? (currentRunningLocalInterval || 10) : gitConfig.local_poll_interval;
+    const remoteSec = gitConfig.remote_poll_interval === 'auto'
+        ? (currentRunningRemoteInterval || 30) : gitConfig.remote_poll_interval;
     adjustDynamicPolling(localSec, remoteSec);
 }
 
