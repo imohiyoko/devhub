@@ -138,32 +138,39 @@ def handle_get(handler, path, params):
     if path == '/api/git/status':
         try:
             res = subprocess.run(['git', 'status', '--porcelain=v1', '-u'], cwd=repo_path, capture_output=True, text=True, check=True)
-            
-            # Dynamic poll interval calculation based on commits in the last hour
-            dynamic_interval = 600
-            try:
-                log_res = subprocess.run(
-                    ['git', 'log', '--since=1 hour ago', '--format=%ct'],
-                    cwd=repo_path, capture_output=True, text=True, timeout=10
-                )
-                timestamps = [int(t) for t in log_res.stdout.splitlines() if t.strip().isdigit()]
-                if len(timestamps) >= 2:
-                    intervals = [timestamps[i] - timestamps[i+1] for i in range(len(timestamps)-1)]
-                    avg_interval = sum(intervals) / len(intervals)
-                    dynamic_interval = _bucketize_interval(int(avg_interval / 4))
-                else:
-                    # Fewer than 2 commits in the last hour: not enough data to
-                    # estimate cadence, so fall back to the max (slow) interval.
-                    dynamic_interval = 600
-            except Exception as e:
-                # Best-effort: a failure here must not break the status response.
-                logger.debug("Failed to calculate dynamic poll interval: %s", e)
+            payload = {'output': res.stdout}
 
-            handler.send_json({
-                'output': res.stdout,
-                'suggested_local_interval': dynamic_interval,
-                'suggested_remote_interval': dynamic_interval * 3
-            })
+            # The dynamic poll interval spawns an extra `git log` subprocess, so it
+            # is only computed when the client explicitly asks (?suggest=1). The
+            # frontend requests it on the slower remote cadence, not on every
+            # high-frequency local status poll.
+            if params.get('suggest'):
+                dynamic_interval = 600
+                try:
+                    log_res = subprocess.run(
+                        ['git', 'log', '--since=1 hour ago', '--format=%ct'],
+                        cwd=repo_path, capture_output=True, text=True, timeout=10
+                    )
+                    timestamps = [int(t) for t in log_res.stdout.splitlines() if t.strip().isdigit()]
+                    if len(timestamps) >= 2:
+                        # abs(): git log is normally reverse-chronological, but a
+                        # rebase/cherry-pick can skew committer dates and yield a
+                        # negative delta, which would drag the average down.
+                        intervals = [abs(timestamps[i] - timestamps[i+1]) for i in range(len(timestamps)-1)]
+                        avg_interval = sum(intervals) / len(intervals)
+                        dynamic_interval = _bucketize_interval(int(avg_interval / 4))
+                    else:
+                        # Fewer than 2 commits in the last hour: not enough data to
+                        # estimate cadence, so fall back to the max (slow) interval.
+                        dynamic_interval = 600
+                except Exception as e:
+                    # Best-effort: a failure here must not break the status response.
+                    logger.debug("Failed to calculate dynamic poll interval: %s", e)
+
+                payload['suggested_local_interval'] = dynamic_interval
+                payload['suggested_remote_interval'] = dynamic_interval * 3
+
+            handler.send_json(payload)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
