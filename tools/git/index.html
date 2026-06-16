@@ -2517,8 +2517,12 @@ async function _pruneMissingWorktrees(items, repoAtShow) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: repoAtShow })
     }).then(r => r.json());
-    if (res.error) { showError(`クリーンアップに失敗: ${res.error}`); }
-    else { showRepoMsg(`${items.length} 件の不要な worktree を整理しました`, 'success'); }
+    if (res.error) { showError(`クリーンアップに失敗: ${res.error}`); return; }
+    // prune は repo 全体の prunable をまとめて消すため、提案一覧 (items) の件数とは
+    // 一致しないことがある。実際に消えた件数は `prune -v` の "Removing ..." 行から数える
+    // （取れない場合は件数を出さず汎用メッセージにする）。
+    const removed = (res.output || '').split('\n').filter(l => /^Removing\b/.test(l)).length;
+    showRepoMsg(removed ? `${removed} 件の不要な worktree を整理しました` : '不要な worktree を整理しました', 'success');
 }
 
 function showCleanupToast(category, items) {
