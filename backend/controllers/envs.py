@@ -11,6 +11,7 @@ import re
 import secrets
 from datetime import datetime
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from backend.storage import load_envs, save_envs, load_settings, load_launches, save_launches
 import backend.controllers.ports as ports_controller
 import backend.controllers.workspace as workspace_controller
@@ -591,13 +592,25 @@ def handle_get(handler, path, params):
         # env-launcher UI can pick an existing (repo, branch) -> worktree
         # instead of having the user hand-type a path. git is the source of
         # truth; a repo whose `git worktree list` fails is skipped, not fatal.
-        repos = []
-        for repo in git_controller.all_repos():
+        #
+        # Hidden repos are excluded (visible_repos): the user opted them out, so
+        # we don't pay a git subprocess for them. Each remaining repo needs its
+        # own `git worktree list` (~50-150ms); running them serially across many
+        # repos dominated the env-launcher load, so fan them out concurrently.
+        candidates = git_controller.visible_repos()
+
+        def _inventory(repo):
             try:
                 worktrees = git_controller.list_worktrees(repo['path'])
             except (subprocess.CalledProcessError, OSError):
-                continue
-            repos.append({'name': repo['name'], 'path': repo['path'], 'worktrees': worktrees})
+                return None
+            return {'name': repo['name'], 'path': repo['path'], 'worktrees': worktrees}
+
+        repos = []
+        if candidates:
+            with ThreadPoolExecutor(max_workers=min(16, len(candidates))) as ex:
+                # ex.map preserves input order, so the UI list stays stable.
+                repos = [r for r in ex.map(_inventory, candidates) if r is not None]
         handler.send_json({'repos': repos})
         return
     handler.send_json({'error': 'not found'}, 404)

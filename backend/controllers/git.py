@@ -66,6 +66,21 @@ def all_repos():
                     repos.append({'name': os.path.basename(expanded), 'path': expanded})
     return repos
 
+def visible_repos():
+    """all_repos() minus the user's hidden_repos.
+
+    all_repos() deliberately keeps hidden repos so path validation can still
+    resolve them. Cross-repo fan-out work (e.g. the env-launcher worktree
+    inventory) should instead skip anything the user hid, so we don't spend a
+    git subprocess per hidden repo on every load.
+    """
+    hidden = {
+        os.path.normcase(os.path.normpath(os.path.abspath(os.path.expanduser(p))))
+        for p in load_config().get('hidden_repos', [])
+    }
+    return [r for r in all_repos()
+            if os.path.normcase(os.path.normpath(r['path'])) not in hidden]
+
 def _get_validated_path(raw_path):
     if not raw_path:
         return None
