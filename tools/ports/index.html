@@ -240,6 +240,7 @@ main {
 <script>
 let ports = [];
 let protectedPorts = [];
+let launchPortMap = {};
 
 const main = document.getElementById('main');
 const statusEl = document.getElementById('status');
@@ -281,6 +282,17 @@ async function loadPorts() {
     const data = await apiJson('/api/ports');
     ports = data.ports || [];
     protectedPorts = normalizePortList(data.protected_ports || []);
+    // env-launcher launch registry: annotate ports declared by a launched env.
+    try {
+      const ld = await apiJson('/api/envs/launches');
+      launchPortMap = {};
+      (ld.launches || []).forEach(l => {
+        (l.processes || []).forEach(p => {
+          const label = `${l.env_name || l.env_id} / ${p.label || p.id}`;
+          parsePortSpec(p.port).forEach(port => { launchPortMap[port] = label; });
+        });
+      });
+    } catch (e) { launchPortMap = {}; }
     syncProtectedInput();
     render();
     setStatus(`${ports.length} ports`, 'ok');
@@ -301,6 +313,22 @@ function matches(item, query) {
     item.host,
   ].join(' ').toLowerCase();
   return target.includes(query);
+}
+
+// Expand a launched process's declared port field (single "3000" or range
+// "3000-3010") into concrete port numbers, matching the backend parser.
+function parsePortSpec(spec) {
+  if (spec === undefined || spec === null || spec === '') return [];
+  if (typeof spec === 'number') return Number.isInteger(spec) ? [spec] : [];
+  const s = String(spec).trim();
+  const m = s.match(/^(\d+)\s*-\s*(\d+)$/);
+  if (m) {
+    const lo = Math.min(+m[1], +m[2]), hi = Math.max(+m[1], +m[2]);
+    const out = [];
+    for (let p = lo; p <= hi && out.length < 1000; p++) out.push(p);
+    return out;
+  }
+  return /^\d+$/.test(s) ? [Number(s)] : [];
 }
 
 function normalizePortList(values) {
@@ -410,6 +438,14 @@ function render() {
 function rowHtml(item) {
   const killDisabled = item.self || item.protected;
   const killTitle = item.self ? 'devhub process' : item.protected ? 'protected port' : 'kill process';
+  // env-launcher が宣言したポートには、手動ラベルが無ければ環境名を自動表示する。
+  // 自動値は data-auto を立てておき、ユーザーが編集するまで保存しない（手動ラベルは常に優先）。
+  const envLabel = launchPortMap[item.port] || '';
+  const isAuto = !item.label && !!envLabel;
+  const labelValue = item.label || envLabel;
+  const autoAttrs = isAuto
+    ? ' data-auto="1" style="color: var(--accent);" title="env-launcher 由来（自動・未保存）"'
+    : '';
   return `
     <tr>
       <td class="mono port-cell">
@@ -417,8 +453,9 @@ function rowHtml(item) {
         ${item.protected ? '<span class="self-badge protected-badge">protected</span>' : ''}
       </td>
       <td>
-        <input class="label-input" value="${escapeHtml(item.label)}" placeholder="label"
-               data-port="${escapeHtml(item.port)}"
+        <input class="label-input" value="${escapeHtml(labelValue)}" placeholder="label"
+               data-port="${escapeHtml(item.port)}"${autoAttrs}
+               oninput="this.removeAttribute('data-auto'); this.style.color='';"
                onkeydown="if(event.key==='Enter') this.blur()"
                onblur="saveLabel(this)">
       </td>
@@ -443,6 +480,8 @@ function rowHtml(item) {
 }
 
 async function saveLabel(input) {
+  // 自動表示中（env-launcher 由来）で未編集なら保存しない。
+  if (input.dataset.auto) return;
   const port = Number(input.dataset.port);
   const label = input.value.trim();
   const item = ports.find(p => p.port === port);

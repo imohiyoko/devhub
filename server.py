@@ -175,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(git_controller.all_repos())
                 return
 
-            if path == '/api/envs':
+            if path == '/api/envs' or path.startswith('/api/envs/'):
                 envs_controller.handle_get(self, path, params)
                 return
 
