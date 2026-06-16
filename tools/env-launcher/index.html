@@ -142,7 +142,7 @@ main {
 }
 .process-info { flex: 1; }
 .process-label { font-weight: 600; font-size: 14px; }
-.process-cmd { font-family: monospace; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.process-cmd { font-family: monospace; color: var(--muted); font-size: 12px; margin-top: 4px; white-space: pre-wrap; word-break: break-all; }
 .process-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .process-actions { display: flex; gap: 8px; }
 
@@ -222,8 +222,8 @@ main {
         <input type="text" id="procLabel" class="form-control" placeholder="Rails API">
       </div>
       <div class="form-group">
-        <label>コマンド</label>
-        <input type="text" id="procCmd" class="form-control" placeholder="bundle exec rails s">
+        <label>コマンド <span style="font-size: 11px; color: var(--muted);">※複数行可（各行が順に実行されます）</span></label>
+        <textarea id="procCmd" class="form-control" rows="3" style="font-family: monospace; resize: vertical;" placeholder="bundle exec rails s"></textarea>
       </div>
       <div class="form-group">
         <label>作業ディレクトリ (CWD)</label>
@@ -242,7 +242,17 @@ main {
       <div class="form-group">
         <label>環境変数 (Env Vars) <span style="font-size: 11px; color: var(--red);">※ 平文で保存されます。本番のクレデンシャル等は入力しないでください</span></label>
         <div id="procEnvVars"></div>
-        <button class="btn" style="margin-top: 8px;" onclick="addEnvVar()">＋ 追加</button>
+        <div style="margin-top: 8px; display: flex; gap: 8px;">
+          <button class="btn" onclick="addEnvVar()">＋ 追加</button>
+          <button class="btn" onclick="toggleBulkEnv()">一括貼り付け</button>
+        </div>
+        <div id="bulkEnvArea" style="display: none; margin-top: 8px;">
+          <textarea id="bulkEnvText" class="form-control" rows="6" style="font-family: monospace; resize: vertical;" placeholder="export KEY=value または KEY=value を貼り付け&#10;# 行頭コメント・空行は無視（行末の # コメントは値の一部になります）"></textarea>
+          <div style="display: flex; gap: 8px; margin-top: 6px;">
+            <button class="btn btn-primary" onclick="applyBulkEnv()">反映</button>
+            <button class="btn" onclick="toggleBulkEnv()">閉じる</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -527,6 +537,63 @@ function updateEnvVarKey(i, val, valueInputEl) {
 function updateEnvVarValue(i, val) { tempEnvVars[i].value = val; }
 function removeEnvVar(i) { tempEnvVars.splice(i, 1); renderEnvVars(); }
 
+function toggleBulkEnv() {
+  const area = document.getElementById('bulkEnvArea');
+  const open = area.style.display === 'none';
+  area.style.display = open ? 'block' : 'none';
+  if (open) document.getElementById('bulkEnvText').focus();
+}
+
+// export ブロック / .env 形式のテキストを {key, value} 配列にパースする。
+// - `export ` プレフィックスは除去
+// - 空行と `#` 始まりのコメント行は無視
+// - 値を囲む対の "..." / '...' は除去
+// - キーが識別子として不正な行はスキップ
+function parseEnvBlock(text) {
+  const out = [];
+  text.split(/\r?\n/).forEach(raw => {
+    let line = raw.trim();
+    if (!line || line.startsWith('#')) return;
+    // `export` の後続区切りはスペース1個に限らず、タブや複数スペースも許容する。
+    line = line.replace(/^export\s+/, '');
+    const eq = line.indexOf('=');
+    if (eq <= 0) return;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return;
+    if (val.length >= 2 &&
+        ((val[0] === '"' && val.endsWith('"')) || (val[0] === "'" && val.endsWith("'")))) {
+      val = val.slice(1, -1);
+    }
+    out.push({ key, value: val });
+  });
+  return out;
+}
+
+function applyBulkEnv() {
+  const text = document.getElementById('bulkEnvText').value;
+  const parsed = parseEnvBlock(text);
+  if (parsed.length === 0) {
+    alert('パースできる環境変数がありませんでした。`KEY=value` 形式で貼り付けてください。');
+    return;
+  }
+  // 既存キーは上書き、新規キーは追加（重複キーは一意化）。
+  // find による先頭一致のみの更新だと既存の重複行が残り、保存時の後勝ちで
+  // 古い値に巻き戻るため、トリム済みキーで Map に正規化してから組み立てる。
+  const merged = new Map();
+  tempEnvVars.forEach(({ key, value }) => {
+    const normalized = key.trim();
+    if (normalized) merged.set(normalized, { key: normalized, value });
+  });
+  parsed.forEach(({ key, value }) => {
+    merged.set(key, { key, value });
+  });
+  tempEnvVars = Array.from(merged.values());
+  document.getElementById('bulkEnvText').value = '';
+  toggleBulkEnv();
+  renderEnvVars();
+}
+
 function openProcessModal(envIndex, procIndex = -1) {
   currentEnvIndex = envIndex;
   currentProcIndex = procIndex;
@@ -564,6 +631,8 @@ function openProcessModal(envIndex, procIndex = -1) {
     tempEnvVars = [];
   }
 
+  document.getElementById('bulkEnvArea').style.display = 'none';
+  document.getElementById('bulkEnvText').value = '';
   renderEnvVars();
   document.getElementById('processModalOverlay').classList.add('open');
 }
