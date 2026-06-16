@@ -19,6 +19,7 @@
           "label": "Rails API",
           "command": "bundle exec rails s",
           "cwd": "~/projects/myapp",
+          "port": 3000,
           "env": {
             "RAILS_ENV": "development"
           },
