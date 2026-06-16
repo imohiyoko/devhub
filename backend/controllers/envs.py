@@ -559,7 +559,19 @@ def handle_post(handler, path, data):
         launch_id = data.get('launch_id')
         if not launch_id:
             raise ValueError('launch_id is required')
-        remove_launch(launch_id, force=bool(data.get('force')))
+        force_raw = data.get('force')
+        if isinstance(force_raw, bool):
+            force = force_raw
+        elif isinstance(force_raw, str):
+            if force_raw.lower() == 'true':
+                force = True
+            elif force_raw.lower() == 'false':
+                force = False
+            else:
+                force = False
+        else:
+            force = False
+        remove_launch(launch_id, force=force)
         handler.send_json({'ok': True})
         return
 

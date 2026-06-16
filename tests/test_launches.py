@@ -6,6 +6,7 @@
 """
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -47,7 +48,7 @@ class PortValidationTest(unittest.TestCase):
 
     def test_missing_port_accepted(self):
         env = {'id': 'e1', 'processes': [{'id': 'p'}]}
-        handler, saver = self._post_envs(env)
+        handler, _ = self._post_envs(env)
         self.assertEqual(handler.json, {'ok': True})
 
     def test_out_of_range_port_rejected(self):
@@ -196,13 +197,14 @@ class RecordLaunchTest(unittest.TestCase):
             'processes': [{'id': 'be', 'label': 'Backend', 'command': 'run', 'port': 3000}],
         }
         store = {'launches': []}
+        worktree_path = os.path.join(tempfile.gettempdir(), 'devhub-env-e1-abc')
         with mock.patch.object(envs, 'load_launches', return_value=store), \
              mock.patch.object(envs, 'save_launches') as saver:
-            rec = envs._record_launch(env_def, '/tmp/devhub-env-e1-abc')
+            rec = envs._record_launch(env_def, worktree_path)
 
         self.assertEqual(rec['env_id'], 'e1')
         self.assertEqual(rec['env_name'], 'Env One')
-        self.assertEqual(rec['worktree_path'], '/tmp/devhub-env-e1-abc')
+        self.assertEqual(rec['worktree_path'], worktree_path)
         self.assertEqual(rec['branch'], 'feat/x')
         self.assertEqual(rec['repo_path'], os.path.expanduser('~/repo'))
         self.assertEqual(rec['processes'][0]['port'], 3000)
