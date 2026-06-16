@@ -28,3 +28,4 @@ docs/
 | ADR | 概要 |
 |-----|------|
 | [root/0001](root/0001-reversible-hide-hidden-repos-vs-excludes.md) | git の「非表示」は `excludes` ではなく `hidden_repos`（取り消し可能・フロントフィルタ）を用いる |
+| [git/0001](git/0001-worktree-cleanup-suggestions.md) | worktree／マージ済みローカルブランチのクリーンアップを理由別トーストで提案する（マージ済み worktree・ディレクトリ欠落・マージ済みブランチ） |
