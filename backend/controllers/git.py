@@ -213,6 +213,62 @@ def _merged_branch_set(repo_path, base_ref):
     names.discard(base_ref.split('/', 1)[1] if '/' in base_ref else base_ref)
     return names
 
+def _parse_worktree_porcelain(text):
+    """Parse `git worktree list --porcelain` output into records.
+
+    Each record: {path, head?, branch?, detached?, bare?}. The first record is
+    the main worktree. Pure string parsing — kept separate so it is unit-testable
+    without spawning git.
+    """
+    worktrees = []
+    current = {}
+    for line in text.splitlines():
+        if not line.strip():
+            if current:
+                worktrees.append(current)
+                current = {}
+            continue
+        parts = line.split(' ', 1)
+        if len(parts) == 2:
+            key, val = parts
+            if key == 'worktree':
+                if current:
+                    worktrees.append(current)
+                current = {'path': val}
+            elif key == 'HEAD':
+                current['head'] = val
+            elif key == 'branch':
+                branch_ref = val
+                if branch_ref.startswith('refs/heads/'):
+                    current['branch'] = branch_ref[len('refs/heads/'):]
+                else:
+                    current['branch'] = branch_ref
+        elif line.strip() == 'detached':
+            current['detached'] = True
+        elif line.strip() == 'bare':
+            # bare main worktree: no branch/HEAD lines are emitted for it
+            current['bare'] = True
+    if current:
+        worktrees.append(current)
+    return worktrees
+
+def list_worktrees(repo_path):
+    """Return the worktrees registered for repo_path (source of truth = git).
+
+    Runs `git worktree list --porcelain` and annotates each record with
+    `is_main` (the first/primary worktree) and `exists` (the directory is still
+    present on disk). Raises subprocess.CalledProcessError if git fails.
+    """
+    res = subprocess.run(
+        ['git', 'worktree', 'list', '--porcelain'],
+        cwd=repo_path, capture_output=True, text=True, check=True,
+    )
+    worktrees = _parse_worktree_porcelain(res.stdout)
+    for i, wt in enumerate(worktrees):
+        wt['is_main'] = (i == 0)
+        wt['exists'] = bool(wt.get('path')) and os.path.isdir(wt['path'])
+    return worktrees
+
 def handle_get(handler, path, params):
     repo_path = _validated_repo_path(params)
     if not repo_path:
@@ -318,52 +374,14 @@ def handle_get(handler, path, params):
 
     if path == '/api/git/worktrees':
         try:
-            res = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=repo_path, capture_output=True, text=True, check=True)
-            lines = res.stdout.splitlines()
-            worktrees = []
-            current = {}
-            for line in lines:
-                if not line.strip():
-                    if current:
-                        worktrees.append(current)
-                        current = {}
-                    continue
-                parts = line.split(' ', 1)
-                if len(parts) == 2:
-                    key, val = parts
-                    if key == 'worktree':
-                        if current:
-                            worktrees.append(current)
-                        current = {'path': val}
-                    elif key == 'HEAD':
-                        current['head'] = val
-                    elif key == 'branch':
-                        branch_ref = val
-                        if branch_ref.startswith('refs/heads/'):
-                            current['branch'] = branch_ref[len('refs/heads/'):]
-                        else:
-                            current['branch'] = branch_ref
-                elif line.strip() == 'detached':
-                    current['detached'] = True
-                elif line.strip() == 'bare':
-                    # bare main worktree: no branch/HEAD lines are emitted for it
-                    current['bare'] = True
-            if current:
-                worktrees.append(current)
-
-            # Annotate each worktree for the frontend cleanup suggestions:
-            #  - exists: the worktree directory is still on disk. A missing dir
-            #    means the user deleted it by hand, leaving a stale admin entry
-            #    that `git worktree list` still reports (prune candidate). We use
-            #    os.path.isdir rather than porcelain's `prunable` line so the
-            #    check is git-version independent and maps directly to the dir.
-            #  - merged: the worktree's branch is already merged into the base
-            #    branch (origin/main fallback local main/master), so the worktree
-            #    is safe to remove.
+            # list_worktrees() already annotates `exists` and `is_main`.
+            worktrees = list_worktrees(repo_path)
+            # Additional cleanup-suggestion annotation: `merged` marks a worktree
+            # whose branch is already merged into the base branch (origin/main,
+            # falling back to local main/master), so it is safe to remove.
             base_ref = _base_merge_ref(repo_path)
             merged = _merged_branch_set(repo_path, base_ref)
             for wt in worktrees:
-                wt['exists'] = os.path.isdir(wt['path'])
                 wt['merged'] = bool(wt.get('branch') and wt['branch'] in merged)
             # merged_branches lets the frontend additionally propose deleting
             # merged LOCAL branches that have no worktree (a branch checked out
