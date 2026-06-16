@@ -15,7 +15,6 @@ from backend.storage import load_envs, save_envs, load_settings, load_launches, 
 import backend.controllers.ports as ports_controller
 import backend.controllers.workspace as workspace_controller
 import backend.controllers.git as git_controller
-from backend.controllers.git import _validate_worktree_path
 
 def _applescript_escape(s):
     """AppleScript の二重引用符文字列リテラル用に文字列をエスケープする。
@@ -439,6 +438,11 @@ def _assign_ports(env_def, port_index):
     Reserves each assigned port within this batch so two offset processes that
     share the same base don't both receive the same number. Operates on a copy
     of port_index so the caller's live-port snapshot is left intact.
+
+    Scope is a single launch: separate launch_environment() calls take their own
+    _live_port_index() snapshots, so two concurrent launches whose processes have
+    not bound yet could still pick the same port. Acceptable for a local
+    single-user tool; not a global guarantee.
     """
     port_index = dict(port_index)
     assigned = {}
@@ -449,10 +453,16 @@ def _assign_ports(env_def, port_index):
             ports = _parse_port_spec(p.get('port'))
         except ValueError:
             ports = []
-        if ports:
-            port = _assign_port(ports[0], port_index)
-            assigned[p.get('id')] = port
-            port_index[port] = {'pid': None}  # reserve within this batch
+        if not ports:
+            # offset with no base port: nothing to assign, so the env var is not
+            # injected. /api/envs validation blocks this on save; warn for legacy
+            # or hand-edited records (mirrors _assign_port's exhaustion log).
+            print(f"launch: offset process '{p.get('id')}' has no base port; "
+                  f"skipping port assignment", file=sys.stderr)
+            continue
+        port = _assign_port(ports[0], port_index)
+        assigned[p.get('id')] = port
+        port_index[port] = {'pid': None}  # reserve within this batch
     return assigned
 
 def _find_launch(launches, launch_id):

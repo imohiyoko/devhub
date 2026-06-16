@@ -19,8 +19,9 @@ TOOLS_SETTINGS_DIR = os.path.join(SETTINGS_DIR, 'tools')
 # Single SQLite file backs all app state (config / settings / envs / launches /
 # tool settings). It is local runtime state, gitignored via *.db. Config-shaped
 # documents live as JSON in the `kv` table (whole-document round-trip, mirroring
-# the old JSON files); launches are stored one row each so concurrent appends
-# don't rewrite the whole list.
+# the old JSON files). Launches use one row per record (so a record carries its
+# own JSON), but save_launches() replaces the whole table in a single
+# transaction; callers still serialize load->mutate->save under _REGISTRY_LOCK.
 DB_PATH = os.path.join(SETTINGS_DIR, 'devhub.db')
 
 # DB paths that have already had init_db()+migration applied this process, keyed
