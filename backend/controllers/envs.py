@@ -179,12 +179,15 @@ def open_terminal_in_dir(cwd):
     else:
         _editor_fallback()
 
-def launch_process(process_def, cwd_override=None):
+def launch_process(process_def, cwd_override=None, extra_env=None):
     raw_cwd = process_def.get('cwd')
     cwd = cwd_override if cwd_override else (os.path.expanduser(raw_cwd) if raw_cwd else None)
     if cwd == '':
         cwd = None
     env = process_def.get('env', {})
+    if extra_env:
+        # extra_env (e.g. an offset-assigned port) overrides the declared env.
+        env = {**env, **extra_env}
     open_in_terminal(cwd, process_def.get('command', ''), env)
 
 def _resolve_worktree(repo_path, branch):
@@ -252,14 +255,16 @@ def _resolve_cwds(env_def, env_cwd_override=None):
             cwds[p.get('id')] = env_cwd_override
     return cwds
 
-def _run_processes(env_def, cwd_by_pid=None, cwd_override=None):
+def _run_processes(env_def, cwd_by_pid=None, cwd_override=None, env_by_pid=None):
     """Topologically sort an environment's processes and launch them on a thread.
 
     Each process runs in cwd_by_pid[pid] when present (its resolved worktree),
-    otherwise cwd_override, otherwise its own declared cwd. Does NOT touch the
+    otherwise cwd_override, otherwise its own declared cwd. env_by_pid[pid] holds
+    extra env vars to inject (e.g. an offset-assigned port). Does NOT touch the
     worktree or the launch registry — the caller owns that.
     """
     cwd_by_pid = cwd_by_pid or {}
+    env_by_pid = env_by_pid or {}
     processes = env_def.get('processes', [])
 
     # Topological sort
@@ -292,7 +297,8 @@ def _run_processes(env_def, cwd_by_pid=None, cwd_override=None):
         try:
             for i, pid in enumerate(sorted_pids):
                 p_def = pid_to_def[pid]
-                launch_process(p_def, cwd_override=cwd_by_pid.get(pid, cwd_override))
+                launch_process(p_def, cwd_override=cwd_by_pid.get(pid, cwd_override),
+                               extra_env=env_by_pid.get(pid))
                 if i < len(sorted_pids) - 1:
                     try:
                         raw = p_def.get('delay_seconds')
@@ -310,14 +316,17 @@ def _run_processes(env_def, cwd_by_pid=None, cwd_override=None):
 # concurrent launches/removals could clobber each other's record.
 _REGISTRY_LOCK = threading.Lock()
 
-def _record_launch(env_def, worktree_path, cwds=None):
+def _record_launch(env_def, worktree_path, cwds=None, assigned=None):
     """Append a launch record to the registry. Returns the created record.
 
     cwds is the {process_id: resolved worktree path} map from _resolve_cwds, so
     each process records the worktree/branch it was actually launched in.
+    assigned is the {process_id: offset-assigned port} map (offset processes
+    only).
     """
     wt = env_def.get('worktree', {}) or {}
     cwds = cwds or {}
+    assigned = assigned or {}
     record = {
         'launch_id': datetime.now().strftime('%Y%m%d-%H%M%S-') + secrets.token_hex(3),
         'env_id': env_def.get('id'),
@@ -335,6 +344,7 @@ def _record_launch(env_def, worktree_path, cwds=None):
                 'worktree_path': cwds.get(p.get('id')),
                 'repo_path': (p.get('binding') or {}).get('repo_path', ''),
                 'branch': (p.get('binding') or {}).get('branch', ''),
+                'assigned_port': assigned.get(p.get('id')),
             }
             for p in env_def.get('processes', [])
         ],
@@ -356,11 +366,16 @@ def launch_environment(env_id):
     env_cwd = setup_worktree(env_id, env_def.get('worktree', {}))
     cwds = _resolve_cwds(env_def, env_cwd_override=env_cwd)
 
-    # Free any declared ports first so processes bind their preferred port and
-    # stale duplicates from a previous launch don't linger.
-    _kill_ports_for(env_def.get('processes', []))
-    _record_launch(env_def, env_cwd, cwds=cwds)
-    _run_processes(env_def, cwd_by_pid=cwds, cwd_override=env_cwd)
+    processes = env_def.get('processes', [])
+    # baton processes take their fixed port by force (kill the current holder);
+    # offset processes are left alone and instead get a free port assigned.
+    _kill_ports_for([p for p in processes if not _is_offset(p)])
+    assigned = _assign_ports(env_def, _live_port_index())
+    env_by_pid = {pid: {p['port_env_var']: str(assigned[pid])}
+                  for p in processes if (pid := p.get('id')) in assigned}
+
+    _record_launch(env_def, env_cwd, cwds=cwds, assigned=assigned)
+    _run_processes(env_def, cwd_by_pid=cwds, cwd_override=env_cwd, env_by_pid=env_by_pid)
 
 def _parse_port_spec(spec):
     """Expand a process 'port' field into a sorted list of concrete ports.
@@ -398,6 +413,38 @@ def _parse_port_spec(spec):
         raise ValueError('port range too large')
     return ports
 
+def _is_offset(proc):
+    """True when a process opts into parallel offset ports (needs an env var to
+    carry the assigned port). Everything else is baton (mutual exclusion)."""
+    return proc.get('port_strategy') == 'offset' and bool(proc.get('port_env_var'))
+
+def _assign_port(base, port_index, limit=200):
+    """First free port >= base that nothing is currently listening on.
+
+    Used by the offset strategy so parallel worktrees each get their own port
+    instead of fighting over a fixed one. Falls back to base if the window is
+    exhausted (the launch still proceeds)."""
+    port = base
+    while port <= 65535 and (port - base) < limit:
+        if port not in port_index:
+            return port
+        port += 1
+    return base
+
+def _assign_ports(env_def, port_index):
+    """Map {process_id: assigned_port} for offset processes only."""
+    assigned = {}
+    for p in env_def.get('processes', []):
+        if not _is_offset(p):
+            continue
+        try:
+            ports = _parse_port_spec(p.get('port'))
+        except ValueError:
+            ports = []
+        if ports:
+            assigned[p.get('id')] = _assign_port(ports[0], port_index)
+    return assigned
+
 def _find_launch(launches, launch_id):
     return next((l for l in launches if l.get('launch_id') == launch_id), None)
 
@@ -428,10 +475,15 @@ def enrich_launches():
         procs = []
         for proc in rec.get('processes', []):
             proc = dict(proc)
-            try:
-                spec_ports = _parse_port_spec(proc.get('port'))
-            except ValueError:
-                spec_ports = []
+            # An offset launch actually bound its assigned_port, so prefer it
+            # over the declared port/range when checking live status.
+            if proc.get('assigned_port'):
+                spec_ports = [proc['assigned_port']]
+            else:
+                try:
+                    spec_ports = _parse_port_spec(proc.get('port'))
+                except ValueError:
+                    spec_ports = []
             live = [
                 {'port': p, 'pid': port_index[p]['pid']}
                 for p in spec_ports if p in port_index
@@ -570,6 +622,18 @@ def handle_post(handler, path, data):
                     if bool(brepo) != bool(bbranch):
                         raise ValueError(f"Process '{pid}' binding needs both repo_path and branch in environment '{eid}'")
 
+                # Optional port strategy: 'baton' (default, mutual exclusion) or
+                # 'offset' (parallel — assign a free port, inject via env var).
+                strategy = proc.get('port_strategy')
+                if strategy is not None and strategy not in ('baton', 'offset'):
+                    raise ValueError(f"Process '{pid}' port_strategy must be 'baton' or 'offset' in environment '{eid}'")
+                if strategy == 'offset':
+                    env_var = proc.get('port_env_var')
+                    if not env_var or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', env_var):
+                        raise ValueError(f"Process '{pid}' offset strategy needs a valid port_env_var (e.g. PORT) in environment '{eid}'")
+                    if not _parse_port_spec(proc.get('port')):
+                        raise ValueError(f"Process '{pid}' offset strategy needs a base port in environment '{eid}'")
+
             # Verify dependencies and circular references
             processes = env.get('processes', [])
             in_degree = {p['id']: 0 for p in processes}
@@ -624,8 +688,14 @@ def handle_post(handler, path, data):
         # worktree) before any side effect — raises if it doesn't exist.
         env_cwd = setup_worktree(env_id, env_def.get('worktree', {}))
         cwds = _resolve_cwds({'processes': [process_def]}, env_cwd_override=env_cwd)
-        _kill_ports_for([process_def])
-        launch_process(process_def, cwd_override=cwds.get(process_id))
+        extra_env = None
+        if _is_offset(process_def):
+            ap = _assign_ports({'processes': [process_def]}, _live_port_index()).get(process_id)
+            if ap is not None:
+                extra_env = {process_def['port_env_var']: str(ap)}
+        else:
+            _kill_ports_for([process_def])
+        launch_process(process_def, cwd_override=cwds.get(process_id), extra_env=extra_env)
         handler.send_json({'ok': True})
         return
 

@@ -256,6 +256,47 @@ class ResolveWorktreeTest(unittest.TestCase):
         self.assertEqual(envs._resolve_cwds(env_def, env_cwd_override='/env'), {'p': '/env'})
 
 
+class PortStrategyTest(unittest.TestCase):
+    def test_is_offset_requires_strategy_and_env_var(self):
+        self.assertTrue(envs._is_offset({'port_strategy': 'offset', 'port_env_var': 'PORT'}))
+        self.assertFalse(envs._is_offset({'port_strategy': 'offset'}))      # no env var
+        self.assertFalse(envs._is_offset({'port_env_var': 'PORT'}))         # default baton
+        self.assertFalse(envs._is_offset({}))
+
+    def test_assign_port_picks_first_free(self):
+        port_index = {3000: {}, 3001: {}}  # both busy
+        self.assertEqual(envs._assign_port(3000, port_index), 3002)
+        self.assertEqual(envs._assign_port(4000, {}), 4000)
+
+    def test_assign_ports_only_offset_processes(self):
+        env_def = {'processes': [
+            {'id': 'a', 'port': 3000, 'port_strategy': 'offset', 'port_env_var': 'PORT'},
+            {'id': 'b', 'port': 3000},  # baton -> not assigned
+        ]}
+        assigned = envs._assign_ports(env_def, {3000: {}})
+        self.assertEqual(assigned, {'a': 3001})
+
+    def test_kill_ports_skipped_for_offset_in_launch(self):
+        env_def = {
+            'id': 'e', 'processes': [
+                {'id': 'a', 'port': 3000, 'port_strategy': 'offset', 'port_env_var': 'PORT'},
+            ],
+        }
+        with mock.patch.object(envs, 'load_envs', return_value={'environments': [env_def]}), \
+             mock.patch.object(envs, 'setup_worktree', return_value=None), \
+             mock.patch.object(envs, '_resolve_cwds', return_value={'a': None}), \
+             mock.patch.object(envs, '_live_port_index', return_value={3000: {'pid': 1}}), \
+             mock.patch.object(envs, '_kill_ports_for') as killer, \
+             mock.patch.object(envs, '_record_launch') as recorder, \
+             mock.patch.object(envs, '_run_processes') as runner:
+            envs.launch_environment('e')
+        # offset process -> kill list is empty, port assigned & injected as env
+        self.assertEqual(killer.call_args.args[0], [])
+        env_by_pid = runner.call_args.kwargs['env_by_pid']
+        self.assertEqual(env_by_pid, {'a': {'PORT': '3001'}})
+        self.assertEqual(recorder.call_args.kwargs['assigned'], {'a': 3001})
+
+
 class RemoveLaunchTest(unittest.TestCase):
     """Removing a launch only clears the record; worktrees are never deleted."""
 
