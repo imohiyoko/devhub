@@ -429,10 +429,18 @@ def _assign_port(base, port_index, limit=200):
         if port not in port_index:
             return port
         port += 1
+    print(f"launch: no free port within {limit} of base {base}; "
+          f"falling back to {base} (may collide)", file=sys.stderr)
     return base
 
 def _assign_ports(env_def, port_index):
-    """Map {process_id: assigned_port} for offset processes only."""
+    """Map {process_id: assigned_port} for offset processes only.
+
+    Reserves each assigned port within this batch so two offset processes that
+    share the same base don't both receive the same number. Operates on a copy
+    of port_index so the caller's live-port snapshot is left intact.
+    """
+    port_index = dict(port_index)
     assigned = {}
     for p in env_def.get('processes', []):
         if not _is_offset(p):
@@ -442,7 +450,9 @@ def _assign_ports(env_def, port_index):
         except ValueError:
             ports = []
         if ports:
-            assigned[p.get('id')] = _assign_port(ports[0], port_index)
+            port = _assign_port(ports[0], port_index)
+            assigned[p.get('id')] = port
+            port_index[port] = {'pid': None}  # reserve within this batch
     return assigned
 
 def _find_launch(launches, launch_id):
