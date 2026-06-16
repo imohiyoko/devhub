@@ -289,7 +289,10 @@ async function loadPorts() {
       (ld.launches || []).forEach(l => {
         (l.processes || []).forEach(p => {
           const label = `${l.env_name || l.env_id} / ${p.label || p.id}`;
-          parsePortSpec(p.port).forEach(port => { launchPortMap[port] = label; });
+          // offset launches actually bound assigned_port; map that one. Otherwise
+          // map every declared port/range so the badge follows the real binding.
+          const targets = p.assigned_port ? [p.assigned_port] : parsePortSpec(p.port);
+          targets.forEach(port => { launchPortMap[port] = label; });
         });
       });
     } catch (e) { launchPortMap = {}; }
