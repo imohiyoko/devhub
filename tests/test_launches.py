@@ -212,51 +212,68 @@ class RecordLaunchTest(unittest.TestCase):
         self.assertTrue(rec['launched_at'])
         saver.assert_called_once()
 
+    def test_per_process_worktree_recorded_from_cwds(self):
+        env_def = {
+            'id': 'e1',
+            'processes': [
+                {'id': 'fe', 'binding': {'repo_path': '~/repo', 'branch': 'feat/a'}},
+                {'id': 'be'},
+            ],
+        }
+        store = {'launches': []}
+        with mock.patch.object(envs, 'load_launches', return_value=store), \
+             mock.patch.object(envs, 'save_launches'):
+            rec = envs._record_launch(env_def, None, cwds={'fe': '/wt/a', 'be': None})
+        procs = {p['id']: p for p in rec['processes']}
+        self.assertEqual(procs['fe']['worktree_path'], '/wt/a')
+        self.assertEqual(procs['fe']['branch'], 'feat/a')
+        self.assertIsNone(procs['be']['worktree_path'])
+
+
+class ResolveWorktreeTest(unittest.TestCase):
+    def test_returns_existing_branch_worktree(self):
+        wts = [
+            {'path': '/repo', 'branch': 'main', 'exists': True},
+            {'path': '/repo-a', 'branch': 'feat/a', 'exists': True},
+        ]
+        with mock.patch.object(envs.git_controller, 'list_worktrees', return_value=wts):
+            self.assertEqual(envs._resolve_worktree('/repo', 'feat/a'), '/repo-a')
+
+    def test_returns_none_when_missing_or_gone(self):
+        wts = [{'path': '/repo-a', 'branch': 'feat/a', 'exists': False}]
+        with mock.patch.object(envs.git_controller, 'list_worktrees', return_value=wts):
+            self.assertIsNone(envs._resolve_worktree('/repo', 'feat/a'))   # exists=False
+            self.assertIsNone(envs._resolve_worktree('/repo', 'feat/none'))  # no branch
+
+    def test_resolve_cwds_raises_for_missing_binding(self):
+        env_def = {'processes': [{'id': 'p', 'binding': {'repo_path': '/r', 'branch': 'x'}}]}
+        with mock.patch.object(envs, '_resolve_worktree', return_value=None):
+            with self.assertRaises(ValueError):
+                envs._resolve_cwds(env_def)
+
+    def test_resolve_cwds_falls_back_to_env_override(self):
+        env_def = {'processes': [{'id': 'p'}]}  # no binding
+        self.assertEqual(envs._resolve_cwds(env_def, env_cwd_override='/env'), {'p': '/env'})
+
 
 class RemoveLaunchTest(unittest.TestCase):
-    def _run_remove(self, force):
+    """Removing a launch only clears the record; worktrees are never deleted."""
+
+    def test_drops_record_without_touching_git(self):
         rec = {'launch_id': 'L1', 'worktree_path': '/tmp/wt', 'repo_path': '/repo', 'processes': []}
-        ok = mock.Mock(returncode=0, stderr='')
-        with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
-             mock.patch.object(envs, 'save_launches') as saver, \
-             mock.patch.object(envs.os.path, 'isdir', return_value=True), \
-             mock.patch.object(envs, '_validate_worktree_path', return_value=None), \
-             mock.patch.object(envs.subprocess, 'run', return_value=ok) as run:
-            envs.remove_launch('L1', force=force)
-        return run, saver
-
-    def test_force_appends_flag_and_drops_record(self):
-        run, saver = self._run_remove(force=True)
-        cmd = run.call_args_list[0].args[0]
-        self.assertEqual(cmd[:4], ['git', 'worktree', 'remove', '--force'])
-        self.assertIn('/tmp/wt', cmd)
-        self.assertEqual(saver.call_args.args[0]['launches'], [])
-
-    def test_no_force_omits_flag(self):
-        run, _ = self._run_remove(force=False)
-        cmd = run.call_args_list[0].args[0]
-        self.assertEqual(cmd, ['git', 'worktree', 'remove', '/tmp/wt'])
-
-    def test_git_failure_raises_and_keeps_record(self):
-        rec = {'launch_id': 'L1', 'worktree_path': '/tmp/wt', 'repo_path': '/repo', 'processes': []}
-        fail = mock.Mock(returncode=1, stderr='contains modified files')
-        with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
-             mock.patch.object(envs, 'save_launches') as saver, \
-             mock.patch.object(envs.os.path, 'isdir', return_value=True), \
-             mock.patch.object(envs, '_validate_worktree_path', return_value=None), \
-             mock.patch.object(envs.subprocess, 'run', return_value=fail):
-            with self.assertRaises(ValueError):
-                envs.remove_launch('L1', force=False)
-        saver.assert_not_called()
-
-    def test_missing_worktree_just_drops_record(self):
-        rec = {'launch_id': 'L1', 'worktree_path': None, 'repo_path': '', 'processes': []}
         with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
              mock.patch.object(envs, 'save_launches') as saver, \
              mock.patch.object(envs.subprocess, 'run') as run:
-            envs.remove_launch('L1')
+            envs.remove_launch('L1', force=True)  # force is a no-op now
         run.assert_not_called()
         self.assertEqual(saver.call_args.args[0]['launches'], [])
+
+    def test_unknown_launch_raises(self):
+        with mock.patch.object(envs, 'load_launches', return_value={'launches': []}), \
+             mock.patch.object(envs, 'save_launches') as saver:
+            with self.assertRaises(ValueError):
+                envs.remove_launch('nope')
+        saver.assert_not_called()
 
 
 if __name__ == '__main__':

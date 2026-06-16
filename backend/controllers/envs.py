@@ -3,7 +3,6 @@ import platform
 import sys
 import subprocess
 import shlex
-import tempfile
 import shutil
 import time
 import threading
@@ -188,38 +187,79 @@ def launch_process(process_def, cwd_override=None):
     env = process_def.get('env', {})
     open_in_terminal(cwd, process_def.get('command', ''), env)
 
+def _resolve_worktree(repo_path, branch):
+    """Resolve (repo, branch) to an EXISTING worktree path, or None.
+
+    git is the source of truth: we look up the branch among the repo's
+    registered worktrees and never create one. Worktrees are long-lived,
+    user-owned parallel-dev checkouts (managed in the git tool), so env-launcher
+    only references them.
+    """
+    repo = os.path.expanduser(repo_path or '')
+    if not repo or not branch:
+        return None
+    try:
+        worktrees = git_controller.list_worktrees(repo)
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    for wt in worktrees:
+        if wt.get('branch') == branch and wt.get('exists'):
+            return wt.get('path')
+    return None
+
 def setup_worktree(env_id, worktree_def):
-    # Note: Because open_in_terminal executes via system terminal emulators,
-    # devhub cannot track when the user actually closes the terminal process.
-    # Therefore, the worktree temporary directories cannot be automatically
-    # cleaned up on process exit and must be cleaned up manually.
+    """Resolve the env-level worktree binding to an existing worktree path.
+
+    Returns None when no env-level worktree is configured. Raises ValueError when
+    one is configured but no matching worktree exists — we never auto-create
+    (the user makes worktrees in the git tool).
+    """
     if not worktree_def or not worktree_def.get('enabled'):
         return None
-    repo_path = os.path.expanduser(worktree_def.get('repo_path', ''))
+    repo_path = worktree_def.get('repo_path', '')
     branch = worktree_def.get('branch', '')
     if not repo_path or not branch:
         return None
+    wt = _resolve_worktree(repo_path, branch)
+    if not wt:
+        raise ValueError(
+            f"branch '{branch}' の worktree が見つかりません（{repo_path}）。"
+            "git tool で作成してください。"
+        )
+    return wt
 
-    tmp_path = tempfile.mkdtemp(prefix=f"devhub-env-{env_id}-")
-    try:
-        subprocess.run(['git', 'worktree', 'add', tmp_path, branch], cwd=repo_path, check=True, capture_output=True, text=True)
-        return tmp_path
-    except subprocess.CalledProcessError as e:
-        shutil.rmtree(tmp_path, ignore_errors=True)
-        err_msg = e.stderr.strip() if e.stderr else str(e)
-        if 'already checked out' in err_msg:
-            raise ValueError(f"Git worktree creation failed: branch '{branch}' is already checked out at another location. ({err_msg})")
-        raise ValueError(f"Git worktree creation failed: {err_msg}")
-    except Exception:
-        shutil.rmtree(tmp_path, ignore_errors=True)
-        raise
+def _resolve_cwds(env_def, env_cwd_override=None):
+    """Build a {process_id: cwd} map by resolving each process's binding.
 
-def _run_processes(env_def, cwd_override=None):
+    A process with a binding {repo_path, branch} runs in that branch's existing
+    worktree (ValueError if it doesn't exist — fail fast, before any side
+    effect). A process without a binding falls back to env_cwd_override (the
+    env-level worktree) or None (its own declared cwd, applied in launch_process).
+    """
+    cwds = {}
+    for p in env_def.get('processes', []):
+        binding = p.get('binding') or {}
+        repo, branch = binding.get('repo_path'), binding.get('branch')
+        if repo and branch:
+            wt = _resolve_worktree(repo, branch)
+            if not wt:
+                raise ValueError(
+                    f"process '{p.get('id')}': branch '{branch}' の worktree が"
+                    f"見つかりません（{repo}）。git tool で作成してください。"
+                )
+            cwds[p.get('id')] = wt
+        else:
+            cwds[p.get('id')] = env_cwd_override
+    return cwds
+
+def _run_processes(env_def, cwd_by_pid=None, cwd_override=None):
     """Topologically sort an environment's processes and launch them on a thread.
 
-    Used by launch_environment. Does NOT touch the worktree or the launch
-    registry — the caller owns that.
+    Each process runs in cwd_by_pid[pid] when present (its resolved worktree),
+    otherwise cwd_override, otherwise its own declared cwd. Does NOT touch the
+    worktree or the launch registry — the caller owns that.
     """
+    cwd_by_pid = cwd_by_pid or {}
     processes = env_def.get('processes', [])
 
     # Topological sort
@@ -252,7 +292,7 @@ def _run_processes(env_def, cwd_override=None):
         try:
             for i, pid in enumerate(sorted_pids):
                 p_def = pid_to_def[pid]
-                launch_process(p_def, cwd_override=cwd_override)
+                launch_process(p_def, cwd_override=cwd_by_pid.get(pid, cwd_override))
                 if i < len(sorted_pids) - 1:
                     try:
                         raw = p_def.get('delay_seconds')
@@ -270,9 +310,14 @@ def _run_processes(env_def, cwd_override=None):
 # concurrent launches/removals could clobber each other's record.
 _REGISTRY_LOCK = threading.Lock()
 
-def _record_launch(env_def, worktree_path):
-    """Append a launch record to the registry. Returns the created record."""
+def _record_launch(env_def, worktree_path, cwds=None):
+    """Append a launch record to the registry. Returns the created record.
+
+    cwds is the {process_id: resolved worktree path} map from _resolve_cwds, so
+    each process records the worktree/branch it was actually launched in.
+    """
     wt = env_def.get('worktree', {}) or {}
+    cwds = cwds or {}
     record = {
         'launch_id': datetime.now().strftime('%Y%m%d-%H%M%S-') + secrets.token_hex(3),
         'env_id': env_def.get('id'),
@@ -287,6 +332,9 @@ def _record_launch(env_def, worktree_path):
                 'label': p.get('label') or p.get('id'),
                 'command': p.get('command', ''),
                 'port': p.get('port'),
+                'worktree_path': cwds.get(p.get('id')),
+                'repo_path': (p.get('binding') or {}).get('repo_path', ''),
+                'branch': (p.get('binding') or {}).get('branch', ''),
             }
             for p in env_def.get('processes', [])
         ],
@@ -303,12 +351,16 @@ def launch_environment(env_id):
     if not env_def:
         raise ValueError(f"Environment '{env_id}' not found")
 
+    # Resolve every process's worktree binding up front so a missing worktree
+    # aborts the launch BEFORE any side effect (port kills, record, processes).
+    env_cwd = setup_worktree(env_id, env_def.get('worktree', {}))
+    cwds = _resolve_cwds(env_def, env_cwd_override=env_cwd)
+
     # Free any declared ports first so processes bind their preferred port and
     # stale duplicates from a previous launch don't linger.
     _kill_ports_for(env_def.get('processes', []))
-    cwd_override = setup_worktree(env_id, env_def.get('worktree', {}))
-    _record_launch(env_def, cwd_override)
-    _run_processes(env_def, cwd_override=cwd_override)
+    _record_launch(env_def, env_cwd, cwds=cwds)
+    _run_processes(env_def, cwd_by_pid=cwds, cwd_override=env_cwd)
 
 def _parse_port_spec(spec):
     """Expand a process 'port' field into a sorted list of concrete ports.
@@ -386,6 +438,10 @@ def enrich_launches():
             ]
             proc['live_ports'] = live
             proc['running'] = bool(live)
+            # Per-process worktree status (binding-based launches run each
+            # process in its own worktree).
+            pwt = proc.get('worktree_path')
+            proc['worktree_exists'] = bool(pwt) and os.path.isdir(pwt)
             procs.append(proc)
         rec['processes'] = procs
         enriched.append(rec)
@@ -419,31 +475,16 @@ def _kill_ports_for(procs):
         time.sleep(0.5)
 
 def remove_launch(launch_id, force=False):
+    """Drop a launch record from the runtime registry.
+
+    Worktrees are long-lived, user-owned parallel-dev checkouts, so removing a
+    launch only clears the tracking record — it NEVER deletes the worktree.
+    Worktree removal lives in the git tool. (force is accepted for API
+    compatibility but unused: there is nothing destructive to force.)
+    """
     rec = _find_launch(load_launches().get('launches', []), launch_id)
     if not rec:
         raise ValueError('launch record not found')
-
-    wt = rec.get('worktree_path')
-    repo = rec.get('repo_path')
-    # Only attempt a git worktree removal when the directory still exists and we
-    # have a repo to run it from. The path is devhub-generated, but re-validate
-    # it as defense-in-depth before handing it to git. Done outside the registry
-    # lock since it shells out and can be slow.
-    if wt and os.path.isdir(wt) and repo:
-        path_err = _validate_worktree_path(wt)
-        if path_err:
-            raise ValueError(path_err)
-        cmd = ['git', 'worktree', 'remove']
-        if force:
-            cmd.append('--force')
-        cmd.append(wt)
-        res = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, timeout=60)
-        if res.returncode != 0:
-            raise ValueError(res.stderr.strip() or 'git worktree remove failed')
-        try:
-            subprocess.run(['git', 'worktree', 'prune'], cwd=repo, capture_output=True, text=True, timeout=30)
-        except Exception:
-            pass
 
     # Re-read under the lock so we don't clobber a record appended concurrently.
     with _REGISTRY_LOCK:
@@ -515,6 +556,20 @@ def handle_post(handler, path, data):
                 except ValueError:
                     raise ValueError(f"Process '{pid}' port must be a port (3000) or range (3000-3010) within 1-65535 in environment '{eid}'")
 
+                # Optional per-process worktree binding {repo_path, branch}: the
+                # process runs in that branch's existing worktree. Both fields go
+                # together; partial bindings are rejected to fail loudly.
+                binding = proc.get('binding')
+                if binding is not None:
+                    if not isinstance(binding, dict):
+                        raise ValueError(f"Process '{pid}' binding must be an object in environment '{eid}'")
+                    brepo = binding.get('repo_path', '')
+                    bbranch = binding.get('branch', '')
+                    if not isinstance(brepo, str) or not isinstance(bbranch, str):
+                        raise ValueError(f"Process '{pid}' binding repo_path/branch must be strings in environment '{eid}'")
+                    if bool(brepo) != bool(bbranch):
+                        raise ValueError(f"Process '{pid}' binding needs both repo_path and branch in environment '{eid}'")
+
             # Verify dependencies and circular references
             processes = env.get('processes', [])
             in_degree = {p['id']: 0 for p in processes}
@@ -565,8 +620,12 @@ def handle_post(handler, path, data):
         if not process_def:
             raise ValueError(f"Process '{process_id}' not found")
 
+        # Resolve this process's worktree (its binding, else the env-level
+        # worktree) before any side effect — raises if it doesn't exist.
+        env_cwd = setup_worktree(env_id, env_def.get('worktree', {}))
+        cwds = _resolve_cwds({'processes': [process_def]}, env_cwd_override=env_cwd)
         _kill_ports_for([process_def])
-        launch_process(process_def)
+        launch_process(process_def, cwd_override=cwds.get(process_id))
         handler.send_json({'ok': True})
         return
 
