@@ -2,5 +2,6 @@
   "scan_roots": [],
   "excludes": [],
   "pinned_repos": [],
-  "repo_order": []
+  "repo_order": [],
+  "hidden_repos": []
 }
