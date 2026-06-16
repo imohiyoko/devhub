@@ -576,12 +576,18 @@ function applyBulkEnv() {
     alert('パースできる環境変数がありませんでした。`KEY=value` 形式で貼り付けてください。');
     return;
   }
-  // 既存キーは上書き、新規キーは追加（マージ）。
-  parsed.forEach(({ key, value }) => {
-    const existing = tempEnvVars.find(v => v.key.trim() === key);
-    if (existing) existing.value = value;
-    else tempEnvVars.push({ key, value });
+  // 既存キーは上書き、新規キーは追加（重複キーは一意化）。
+  // find による先頭一致のみの更新だと既存の重複行が残り、保存時の後勝ちで
+  // 古い値に巻き戻るため、トリム済みキーで Map に正規化してから組み立てる。
+  const merged = new Map();
+  tempEnvVars.forEach(({ key, value }) => {
+    const normalized = key.trim();
+    if (normalized) merged.set(normalized, { key: normalized, value });
   });
+  parsed.forEach(({ key, value }) => {
+    merged.set(key, { key, value });
+  });
+  tempEnvVars = Array.from(merged.values());
   document.getElementById('bulkEnvText').value = '';
   toggleBulkEnv();
   renderEnvVars();
