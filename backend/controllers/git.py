@@ -257,11 +257,16 @@ def list_worktrees(repo_path):
 
     Runs `git worktree list --porcelain` and annotates each record with
     `is_main` (the first/primary worktree) and `exists` (the directory is still
-    present on disk). Raises subprocess.CalledProcessError if git fails.
+    present on disk). Raises subprocess.CalledProcessError if git fails, or
+    subprocess.TimeoutExpired if the call hangs past the timeout.
+
+    The timeout bounds a single repo's git call: callers fan this out across
+    many repos and block on all of them, so an unbounded hang on one repo would
+    otherwise wedge the whole batch (e.g. the env-launcher worktree inventory).
     """
     res = subprocess.run(
         ['git', 'worktree', 'list', '--porcelain'],
-        cwd=repo_path, capture_output=True, text=True, check=True,
+        cwd=repo_path, capture_output=True, text=True, check=True, timeout=15,
     )
     worktrees = _parse_worktree_porcelain(res.stdout)
     for i, wt in enumerate(worktrees):
