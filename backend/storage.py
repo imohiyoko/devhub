@@ -7,6 +7,7 @@ CONFIG_PATH = os.path.join(SETTINGS_DIR, 'config.json')
 CONFIG_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'config.example.json')
 ENVS_PATH = os.path.join(SETTINGS_DIR, 'envs.json')
 ENVS_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'envs.example.json')
+LAUNCHES_PATH = os.path.join(SETTINGS_DIR, 'launches.json')
 TOOLS_SETTINGS_DIR = os.path.join(SETTINGS_DIR, 'tools')
 
 def load_settings():
@@ -99,3 +100,30 @@ def save_envs(data):
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write('\n')
     os.replace(tmp, ENVS_PATH)
+
+def load_launches():
+    """Runtime registry of environments launched via env-launcher.
+
+    Records what devhub created at launch time (the temporary worktree path it
+    generated, the env/process metadata) so the worktree and the launched
+    processes can be tracked, re-opened, restarted, and cleaned up afterwards.
+    This is local runtime state (gitignored), not user configuration.
+    """
+    try:
+        with open(LAUNCHES_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get('launches'), list):
+                return data
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    return {'launches': []}
+
+def save_launches(data):
+    os.makedirs(SETTINGS_DIR, exist_ok=True)
+    tmp = LAUNCHES_PATH + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+    os.replace(tmp, LAUNCHES_PATH)
