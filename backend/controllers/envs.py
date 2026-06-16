@@ -11,6 +11,7 @@ import re
 import secrets
 from datetime import datetime
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from backend.storage import load_envs, save_envs, load_settings, load_launches, save_launches
 import backend.controllers.ports as ports_controller
 import backend.controllers.workspace as workspace_controller
@@ -75,7 +76,12 @@ def open_in_terminal(cwd, command, env=None):
 
     if sys_name == 'Darwin':
         if emulator == 'ghostty':
-            cmd = ['ghostty', f'--working-directory={cwd}', '-e', shell] + shell_args + ['-c', command]
+            # --wait-after-command を付けないと、起動コマンドが終了/クラッシュした瞬間に
+            # ghostty が窓を閉じてしまい（既定 wait-after-command=false）、起動失敗の
+            # エラーが読めないまま消える。-e より前に置く必要がある（-e 以降はすべて
+            # 実行コマンド扱いになるため）。
+            cmd = ['ghostty', f'--working-directory={cwd}', '--wait-after-command=true',
+                   '-e', shell] + shell_args + ['-c', command]
             subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'Terminal.app':
             sh_cmd = f"cd {shlex.quote(cwd)} && {cmd_with_env}"
@@ -591,13 +597,28 @@ def handle_get(handler, path, params):
         # env-launcher UI can pick an existing (repo, branch) -> worktree
         # instead of having the user hand-type a path. git is the source of
         # truth; a repo whose `git worktree list` fails is skipped, not fatal.
-        repos = []
-        for repo in git_controller.all_repos():
+        #
+        # Each repo needs its own `git worktree list` (~50-150ms); running them
+        # serially across many repos dominated the env-launcher load, so fan
+        # them out concurrently.
+        candidates = git_controller.all_repos()
+
+        def _inventory(repo):
             try:
                 worktrees = git_controller.list_worktrees(repo['path'])
-            except (subprocess.CalledProcessError, OSError):
-                continue
-            repos.append({'name': repo['name'], 'path': repo['path'], 'worktrees': worktrees})
+            # TimeoutExpired included on purpose: list_worktrees bounds each git
+            # call with a timeout, and ex.map() below blocks on every task, so a
+            # single hung repo must degrade to "skipped" rather than wedge the
+            # whole endpoint.
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+                return None
+            return {'name': repo['name'], 'path': repo['path'], 'worktrees': worktrees}
+
+        repos = []
+        if candidates:
+            with ThreadPoolExecutor(max_workers=min(16, len(candidates))) as ex:
+                # ex.map preserves input order, so the UI list stays stable.
+                repos = [r for r in ex.map(_inventory, candidates) if r is not None]
         handler.send_json({'repos': repos})
         return
     handler.send_json({'error': 'not found'}, 404)
