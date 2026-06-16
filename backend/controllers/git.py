@@ -345,8 +345,20 @@ def handle_get(handler, path, params):
         return
 
     if path == '/api/git/branches':
+        # Tab-separated columns, sorted newest-commit-first (--sort=-committerdate).
+        # Columns: refname, short-name, HEAD-marker, committer-name,
+        # committer-date (relative, for display), committer-date (ISO, for tooltip).
+        # The leading three columns are kept in their original positions so the
+        # frontend's HEAD detection (parts[2] === '*') keeps working.
+        fmt = (
+            '%(refname)\t%(refname:short)\t%(HEAD)\t'
+            '%(committername)\t%(committerdate:relative)\t%(committerdate:iso)'
+        )
         try:
-            res = subprocess.run(['git', 'branch', '-a', '--format=%(refname)\t%(refname:short)\t%(HEAD)'], cwd=repo_path, capture_output=True, text=True, check=True)
+            res = subprocess.run(
+                ['git', 'branch', '-a', '--sort=-committerdate', f'--format={fmt}'],
+                cwd=repo_path, capture_output=True, text=True, check=True,
+            )
             handler.send_json({'output': res.stdout})
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
