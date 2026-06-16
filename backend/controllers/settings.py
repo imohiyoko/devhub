@@ -29,7 +29,7 @@ def handle_get(handler, path):
 def handle_post(handler, path, data):
     if path == '/api/config':
         cfg = load_config()
-        for key in ('scan_roots', 'excludes', 'pinned_repos', 'repo_order'):
+        for key in ('scan_roots', 'excludes', 'pinned_repos', 'repo_order', 'hidden_repos'):
             if key in data:
                 cfg[key] = data[key]
         save_config(cfg)

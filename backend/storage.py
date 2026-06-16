@@ -66,7 +66,7 @@ def load_config():
             pass
     except Exception:
         pass
-    return {'scan_roots': [], 'excludes': [], 'pinned_repos': [], 'repo_order': []}
+    return {'scan_roots': [], 'excludes': [], 'pinned_repos': [], 'repo_order': [], 'hidden_repos': []}
 
 def save_config(cfg):
     os.makedirs(SETTINGS_DIR, exist_ok=True)

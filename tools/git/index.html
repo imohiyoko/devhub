@@ -61,6 +61,134 @@ select {
   border-radius: 4px;
 }
 
+/* ── Repo switcher (search / reorder / hide) ───────── */
+.repo-switcher { position: relative; }
+.repo-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  max-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.repo-switcher-btn:hover { border-color: var(--accent); }
+.repo-switcher-btn #repo-current-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.repo-switcher-btn .caret { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+.repo-switcher.open .caret { color: var(--text); }
+
+.repo-switcher-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 380px;
+  max-width: 80vw;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  z-index: 100;
+  flex-direction: column;
+  overflow: hidden;
+}
+.repo-switcher.open .repo-switcher-panel { display: flex; }
+
+#repo-search {
+  background: var(--bg);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 12px;
+  font-size: 13px;
+  outline: none;
+}
+#repo-search:focus { border-bottom-color: var(--accent); }
+
+.repo-switcher-list { max-height: 360px; overflow-y: auto; padding: 4px 0; }
+
+.repo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.repo-row:hover { background: var(--border); }
+.repo-row.active { background: rgba(56,139,253,0.18); }
+.repo-row.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+.repo-row .drag-handle {
+  color: var(--muted);
+  cursor: grab;
+  flex-shrink: 0;
+  font-size: 13px;
+  user-select: none;
+}
+.repo-row .repo-name {
+  color: var(--text);
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-row .repo-path {
+  color: var(--muted);
+  font-size: 11px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-row .repo-hide-btn,
+.repo-row .repo-unhide-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.repo-row:hover .repo-hide-btn,
+.repo-row:hover .repo-unhide-btn { opacity: 1; }
+.repo-row .repo-hide-btn:hover { color: var(--red); border-color: var(--red); }
+.repo-row .repo-unhide-btn { color: var(--green); border-color: var(--green); opacity: 1; }
+
+.repo-switcher-empty { padding: 16px 12px; color: var(--muted); font-size: 12px; text-align: center; }
+
+.repo-hidden-wrap { border-top: 1px solid var(--border); }
+.repo-hidden-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--muted);
+  text-align: left;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.repo-hidden-toggle:hover { color: var(--text); background: var(--bg); }
+.repo-hidden-list { max-height: 200px; overflow-y: auto; padding: 2px 0 4px; }
+.repo-hidden-list .repo-row .repo-name { color: var(--muted); }
+
 .btn-icon {
   background: none;
   border: 1px solid var(--border);
@@ -267,6 +395,20 @@ select {
   font-weight: bold;
 }
 .toast .close:hover { color: var(--text); }
+/* Neutral (non-error) toast used for undoable actions like hiding a repo. */
+.toast.info { border-color: var(--border); }
+.toast .toast-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.toast .toast-undo {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.toast .toast-undo:hover { background: var(--accent); color: #fff; }
 
 /* ── Add Repo Panel ─────────────────────────────── */
 .add-repo-panel {
@@ -419,8 +561,18 @@ select {
   <div class="divider"></div>
   <h1>git</h1>
   <div class="header-controls">
-    <select id="repo-select"></select>
-    <button class="btn-icon danger" id="btn-remove-repo" title="このリポジトリを解除">✕</button>
+    <div class="repo-switcher" id="repo-switcher">
+      <button class="repo-switcher-btn" id="repo-switcher-btn" type="button" title="リポジトリを選択 / 検索 / 並び替え / 非表示">
+        <span id="repo-current-name">Select Repo...</span>
+        <span class="caret">▾</span>
+      </button>
+      <div class="repo-switcher-panel" id="repo-switcher-panel">
+        <input type="text" id="repo-search" placeholder="リポジトリを検索..." spellcheck="false" autocomplete="off">
+        <div class="repo-switcher-list" id="repo-switcher-list"></div>
+        <div class="repo-hidden-wrap" id="repo-hidden-wrap"></div>
+      </div>
+    </div>
+    <button class="btn-icon" id="btn-remove-repo" title="このリポジトリを非表示にする（後で『非表示』から戻せます）">✕</button>
     <button class="btn-icon" id="btn-add-repo" title="リポジトリを追加">＋</button>
     <button class="btn-icon" id="btn-refresh" title="Refresh">↻</button>
     <button class="btn-icon" id="btn-settings" title="Settings">⚙</button>
@@ -543,6 +695,27 @@ function showError(msg) {
   setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
 }
 
+// A neutral toast with a one-click action (e.g. "元に戻す") for undoable
+// operations. The action button dismisses the toast and runs onAction().
+function showUndoToast(msg, actionLabel, onAction) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast info';
+
+  const text = document.createElement('span'); text.textContent = msg;
+
+  const actions = document.createElement('div'); actions.className = 'toast-actions';
+  const undoBtn = document.createElement('button'); undoBtn.className = 'toast-undo'; undoBtn.type = 'button'; undoBtn.textContent = actionLabel;
+  undoBtn.onclick = () => { toast.remove(); onAction(); };
+  const closeBtn = document.createElement('span'); closeBtn.className = 'close'; closeBtn.textContent = '×';
+  closeBtn.onclick = () => toast.remove();
+  actions.appendChild(undoBtn); actions.appendChild(closeBtn);
+
+  toast.appendChild(text); toast.appendChild(actions);
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 6000);
+}
+
 function deepMerge(target, source) {
   for (const key of Object.keys(source)) {
     if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key]) && key in target) {
@@ -589,29 +762,36 @@ function applyLayout() {
 
 async function fetchRepos() {
   try {
-    allRepos = await fetch('/api/repos').then(r => r.json());
-    const select = document.getElementById('repo-select');
+    const repos = await fetch('/api/repos').then(r => r.json());
+    allRepos = applyRepoOrder(repos);
+
+    // The settings "Default Repo" select lists every repo (incl. hidden ones) so
+    // any can still be chosen as the default.
     const settingSelect = document.getElementById('setting-default-repo');
-    select.innerHTML = ''; settingSelect.innerHTML = '';
-
+    settingSelect.innerHTML = '';
     const emptyOpt = document.createElement('option'); emptyOpt.value = ''; emptyOpt.textContent = 'Select Repo...';
-    settingSelect.appendChild(emptyOpt.cloneNode(true));
-
+    settingSelect.appendChild(emptyOpt);
     allRepos.forEach(r => {
       const opt = document.createElement('option'); opt.value = r.path; opt.textContent = r.name;
-      select.appendChild(opt.cloneNode(true));
       settingSelect.appendChild(opt);
     });
 
-    if (gitConfig.default_repo && allRepos.find(r => r.path === gitConfig.default_repo)) {
+    // Pick the current repo: the configured default (if present and not hidden),
+    // otherwise the first visible repo, otherwise the first repo / none.
+    const visible = allRepos.filter(r => !isHidden(r.path));
+    if (gitConfig.default_repo
+        && allRepos.find(r => r.path === gitConfig.default_repo)
+        && !isHidden(gitConfig.default_repo)) {
       currentRepo = gitConfig.default_repo;
+    } else if (visible.length > 0) {
+      currentRepo = visible[0].path;
     } else if (allRepos.length > 0) {
       currentRepo = allRepos[0].path;
+    } else {
+      currentRepo = '';
     }
 
-    if(currentRepo) select.value = currentRepo;
-
-    // Empty state
+    renderRepoSwitcher();
     renderEmptyState();
   } catch (e) {
     showError('Failed to fetch repositories.');
@@ -965,13 +1145,51 @@ async function doCommit(msg) {
     await doPost('/api/git/commit', { message: msg });
 }
 
-// Interactions
-document.getElementById('repo-select').addEventListener('change', (e) => {
-    currentRepo = e.target.value;
-    // Don't carry the previous repo's remote state into the new one; the next
-    // suggest refresh re-establishes it and adjustDynamicPolling re-arms.
-    gitData.hasRemote = undefined;
-    refreshData();
+// Interactions — custom repo switcher (search / reorder / hide)
+const repoSwitcher = document.getElementById('repo-switcher');
+
+function openRepoSwitcher() {
+    // Close the other header panels so only one is open at a time.
+    document.getElementById('settings-panel').classList.remove('open');
+    document.getElementById('btn-settings').classList.remove('active');
+    closeAddRepoPanel();
+    repoSwitcher.classList.add('open');
+    renderRepoSwitcher();
+    setTimeout(() => {
+        const s = document.getElementById('repo-search');
+        s.focus(); s.select();
+    }, 30);
+}
+
+function closeRepoSwitcher() {
+    repoSwitcher.classList.remove('open');
+}
+
+document.getElementById('repo-switcher-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (repoSwitcher.classList.contains('open')) closeRepoSwitcher();
+    else openRepoSwitcher();
+});
+
+// Close when clicking outside the switcher.
+document.addEventListener('click', (e) => {
+    if (repoSwitcher.classList.contains('open') && !repoSwitcher.contains(e.target)) {
+        closeRepoSwitcher();
+    }
+});
+
+document.getElementById('repo-search').addEventListener('input', () => renderRepoSwitcher());
+document.getElementById('repo-search').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        e.stopPropagation();
+        if (e.target.value) { e.target.value = ''; renderRepoSwitcher(); }
+        else closeRepoSwitcher();
+    }
+});
+
+// Reset row opacity after a drag ends (mirrors the workspace tool).
+document.addEventListener('dragend', (e) => {
+    if (e.target.classList && e.target.classList.contains('repo-row')) e.target.style.opacity = '';
 });
 
 document.getElementById('btn-refresh').addEventListener('click', refreshData);
@@ -1139,9 +1357,11 @@ document.addEventListener('keydown', (e) => {
 // ── Repo Addition (directory browser / path input) ───
 let userHome = '';
 let isWindows = false;
-let appConfig = { scan_roots: [], excludes: [], pinned_repos: [] };
+let appConfig = { scan_roots: [], excludes: [], pinned_repos: [], repo_order: [], hidden_repos: [] };
 let browsingPath = '~';
 let browsingParent = null;
+let repoHiddenExpanded = false;
+let repoDragSrc = null;
 
 async function loadSystemInfo() {
   try {
@@ -1157,6 +1377,8 @@ async function loadAppConfig() {
     appConfig.scan_roots = cfg.scan_roots || [];
     appConfig.excludes   = cfg.excludes   || [];
     appConfig.pinned_repos = cfg.pinned_repos || [];
+    appConfig.repo_order   = cfg.repo_order   || [];
+    appConfig.hidden_repos = cfg.hidden_repos || [];
   } catch(e) { console.error(e); }
 }
 
@@ -1168,6 +1390,8 @@ async function saveAppConfig() {
       scan_roots:   appConfig.scan_roots,
       excludes:     appConfig.excludes,
       pinned_repos: appConfig.pinned_repos,
+      repo_order:   appConfig.repo_order,
+      hidden_repos: appConfig.hidden_repos,
     }),
   });
 }
@@ -1193,6 +1417,206 @@ function pathMatch(a, b) {
 function isInPinned(path) {
   const t = toDisplayPath(path);
   return appConfig.pinned_repos.some(p => pathMatch(p, path) || pathMatch(p, t));
+}
+
+// ── Repo switcher: ordering / hiding / rendering ──────
+function isHidden(path) {
+  const t = toDisplayPath(path);
+  return appConfig.hidden_repos.some(p => pathMatch(p, path) || pathMatch(p, t));
+}
+
+// Sort repos by the saved repo_order (unordered items go to the end), mirroring
+// the workspace tool's loadRepos().
+function applyRepoOrder(repos) {
+  const order = appConfig.repo_order || [];
+  if (!order.length) return repos;
+  return repos.slice().sort((a, b) => {
+    const ai = order.indexOf(a.path);
+    const bi = order.indexOf(b.path);
+    if (ai === -1 && bi === -1) return 0;
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+}
+
+function repoMatchesQuery(r, q) {
+  if (!q) return true;
+  return r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q);
+}
+
+function renderRepoSwitcher() {
+  const q = (document.getElementById('repo-search').value || '').trim().toLowerCase();
+  const list = document.getElementById('repo-switcher-list');
+  const hiddenWrap = document.getElementById('repo-hidden-wrap');
+
+  // Button label reflects the current repo.
+  const cur = allRepos.find(r => pathMatch(r.path, currentRepo));
+  document.getElementById('repo-current-name').textContent = cur ? cur.name : 'Select Repo...';
+
+  const visible = allRepos.filter(r => !isHidden(r.path) && repoMatchesQuery(r, q));
+  const hidden  = allRepos.filter(r => isHidden(r.path)  && repoMatchesQuery(r, q));
+
+  list.innerHTML = '';
+  if (visible.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'repo-switcher-empty';
+    empty.textContent = q ? '一致するリポジトリがありません' : '表示中のリポジトリがありません';
+    list.appendChild(empty);
+  } else {
+    visible.forEach(r => list.appendChild(buildRepoRow(r, false)));
+  }
+
+  hiddenWrap.innerHTML = '';
+  if (hidden.length > 0) {
+    const toggle = document.createElement('button');
+    toggle.className = 'repo-hidden-toggle';
+    toggle.type = 'button';
+    toggle.textContent = `${repoHiddenExpanded ? '▾' : '▸'} 非表示 (${hidden.length})`;
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      repoHiddenExpanded = !repoHiddenExpanded;
+      renderRepoSwitcher();
+    });
+    hiddenWrap.appendChild(toggle);
+    if (repoHiddenExpanded) {
+      const hlist = document.createElement('div');
+      hlist.className = 'repo-hidden-list';
+      hidden.forEach(r => hlist.appendChild(buildRepoRow(r, true)));
+      hiddenWrap.appendChild(hlist);
+    }
+  }
+}
+
+function buildRepoRow(r, isHiddenRow) {
+  const row = document.createElement('div');
+  row.className = 'repo-row' + (!isHiddenRow && pathMatch(r.path, currentRepo) ? ' active' : '');
+  row.dataset.path = r.path;
+  // A hidden row re-pops (unhides) on click instead of silently selecting a repo
+  // that stays hidden; a visible row selects it.
+  row.addEventListener('click', () => isHiddenRow ? unhideRepo(r.path) : selectRepo(r.path));
+
+  // Visible rows are draggable for reordering — but not while a search filter is
+  // active, because the drop reorders the full allRepos list by index and moving
+  // a filtered subset there is unintuitive.
+  const searching = !!(document.getElementById('repo-search').value || '').trim();
+  if (!isHiddenRow && !searching) {
+    row.draggable = true;
+    row.addEventListener('dragstart', (e) => onRepoDragStart(e, r.path));
+    row.addEventListener('dragover', onRepoDragOver);
+    row.addEventListener('dragleave', onRepoDragLeave);
+    row.addEventListener('drop', (e) => onRepoDrop(e, r.path));
+    const handle = document.createElement('span');
+    handle.className = 'drag-handle';
+    handle.textContent = '⠿';
+    handle.title = 'ドラッグで並び替え';
+    handle.addEventListener('click', (e) => e.stopPropagation());
+    row.appendChild(handle);
+  }
+
+  const name = document.createElement('span');
+  name.className = 'repo-name';
+  name.textContent = r.name;
+  name.title = r.name;
+  row.appendChild(name);
+
+  const pathEl = document.createElement('span');
+  pathEl.className = 'repo-path';
+  pathEl.textContent = toDisplayPath(r.path);
+  pathEl.title = r.path;
+  row.appendChild(pathEl);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  if (isHiddenRow) {
+    btn.className = 'repo-unhide-btn';
+    btn.textContent = '戻す';
+    btn.title = '表示に戻す';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); unhideRepo(r.path); });
+  } else {
+    btn.className = 'repo-hide-btn';
+    btn.textContent = '✕';
+    btn.title = '非表示にする';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); hideRepo(r.path); });
+  }
+  row.appendChild(btn);
+  return row;
+}
+
+function selectRepo(path) {
+  if (!path) return;
+  currentRepo = path;
+  // Don't carry the previous repo's remote state into the new one; the next
+  // suggest refresh re-establishes it and adjustDynamicPolling re-arms.
+  gitData.hasRemote = undefined;
+  closeRepoSwitcher();
+  renderRepoSwitcher();
+  refreshData();
+}
+
+async function hideRepo(path) {
+  if (!path) return;
+  if (!isHidden(path)) appConfig.hidden_repos.push(path);
+  await saveAppConfig();
+
+  // Offer an immediate one-click undo so a repo hidden by mistake is trivial
+  // to bring back, without having to open the 非表示 section.
+  const repo = allRepos.find(r => pathMatch(r.path, path));
+  const repoName = repo ? repo.name : (path.split(/[\\/]/).filter(Boolean).pop() || path);
+  showUndoToast(`「${repoName}」を非表示にしました`, '元に戻す', () => unhideRepo(path));
+
+  // If the active repo was just hidden, switch to the first remaining visible
+  // one — or clear the selection (label back to "Select Repo...") if everything
+  // is now hidden, so the header never shows a hidden repo as current.
+  if (pathMatch(path, currentRepo)) {
+    const next = allRepos.find(r => !isHidden(r.path));
+    currentRepo = next ? next.path : '';
+    gitData.hasRemote = undefined;
+    renderRepoSwitcher();
+    if (currentRepo) refreshData();
+    return;
+  }
+  renderRepoSwitcher();
+}
+
+async function unhideRepo(path) {
+  const t = toDisplayPath(path);
+  appConfig.hidden_repos = appConfig.hidden_repos.filter(p => !pathMatch(p, path) && !pathMatch(p, t));
+  await saveAppConfig();
+  renderRepoSwitcher();
+}
+
+// Persist the current order of allRepos (visible + hidden) to repo_order.
+async function saveRepoOrder() {
+  appConfig.repo_order = allRepos.map(r => r.path);
+  await saveAppConfig();
+}
+
+function onRepoDragStart(e, path) {
+  repoDragSrc = path;
+  e.dataTransfer.effectAllowed = 'move';
+  e.currentTarget.style.opacity = '0.4';
+}
+function onRepoDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drag-over');
+}
+function onRepoDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+function onRepoDrop(e, targetPath) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  if (!repoDragSrc || repoDragSrc === targetPath) { repoDragSrc = null; return; }
+  const si = allRepos.findIndex(r => r.path === repoDragSrc);
+  const ti = allRepos.findIndex(r => r.path === targetPath);
+  if (si === -1 || ti === -1) { repoDragSrc = null; return; }
+  const [moved] = allRepos.splice(si, 1);
+  allRepos.splice(ti, 0, moved);
+  repoDragSrc = null;
+  saveRepoOrder();
+  renderRepoSwitcher();
 }
 
 function showRepoMsg(text, type) {
@@ -1360,27 +1784,12 @@ document.getElementById('path-input').addEventListener('blur', (e) => {
 
 document.getElementById('btn-path-add').addEventListener('click', () => handlePathAdd());
 
-document.getElementById('btn-remove-repo').addEventListener('click', async () => {
+document.getElementById('btn-remove-repo').addEventListener('click', () => {
   if (!currentRepo) return;
-  const repoName = currentRepo.split(/[\\/]/).filter(Boolean).pop() || currentRepo;
-  if (!confirm(`「${repoName}」をリポジトリ一覧から削除しますか？\n(ローカルのファイルは削除されません)`)) return;
-
-  const t = toDisplayPath(currentRepo);
-  // Remove from pinned_repos if present
-  appConfig.pinned_repos = appConfig.pinned_repos.filter(p => !pathMatch(p, currentRepo) && !pathMatch(p, t));
-  // Add to excludes to hide from scan_roots discovery
-  if (!appConfig.excludes.some(p => pathMatch(p, currentRepo) || pathMatch(p, t))) {
-    appConfig.excludes.push(currentRepo);
-  }
-  await saveAppConfig();
-  currentRepo = '';
-  await fetchRepos();
-  if (allRepos.length > 0) {
-    currentRepo = allRepos[0].path;
-    document.getElementById('repo-select').value = currentRepo;
-  }
-  await refreshData();
-  showRepoMsg(`${repoName} を削除しました`, 'success');
+  // Reversible hide — same as the per-row ✕. The repo moves to the 非表示
+  // section and an "元に戻す" toast appears, so it is trivial to bring back
+  // (no destructive exclude / re-add round-trip).
+  hideRepo(currentRepo);
 });
 
 // (フォルダ選択ボタンは廃止)
