@@ -15,6 +15,7 @@ from collections import deque
 from backend.storage import load_envs, save_envs, load_settings, load_launches, save_launches
 import backend.controllers.ports as ports_controller
 import backend.controllers.workspace as workspace_controller
+import backend.controllers.git as git_controller
 from backend.controllers.git import _validate_worktree_path
 
 def _applescript_escape(s):
@@ -471,6 +472,20 @@ def handle_get(handler, path, params):
         return
     if path == '/api/envs/launches':
         handler.send_json(enrich_launches())
+        return
+    if path == '/api/envs/worktrees':
+        # Cross-repo worktree inventory sourced from git itself, so the
+        # env-launcher UI can pick an existing (repo, branch) -> worktree
+        # instead of having the user hand-type a path. git is the source of
+        # truth; a repo whose `git worktree list` fails is skipped, not fatal.
+        repos = []
+        for repo in git_controller.all_repos():
+            try:
+                worktrees = git_controller.list_worktrees(repo['path'])
+            except (subprocess.CalledProcessError, OSError):
+                continue
+            repos.append({'name': repo['name'], 'path': repo['path'], 'worktrees': worktrees})
+        handler.send_json({'repos': repos})
         return
     handler.send_json({'error': 'not found'}, 404)
 
