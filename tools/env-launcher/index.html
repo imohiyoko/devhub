@@ -247,7 +247,7 @@ main {
           <button class="btn" onclick="toggleBulkEnv()">一括貼り付け</button>
         </div>
         <div id="bulkEnvArea" style="display: none; margin-top: 8px;">
-          <textarea id="bulkEnvText" class="form-control" rows="6" style="font-family: monospace; resize: vertical;" placeholder="export KEY=value または KEY=value を貼り付け&#10;# コメント行・空行は無視されます"></textarea>
+          <textarea id="bulkEnvText" class="form-control" rows="6" style="font-family: monospace; resize: vertical;" placeholder="export KEY=value または KEY=value を貼り付け&#10;# 行頭コメント・空行は無視（行末の # コメントは値の一部になります）"></textarea>
           <div style="display: flex; gap: 8px; margin-top: 6px;">
             <button class="btn btn-primary" onclick="applyBulkEnv()">反映</button>
             <button class="btn" onclick="toggleBulkEnv()">閉じる</button>
@@ -554,7 +554,8 @@ function parseEnvBlock(text) {
   text.split(/\r?\n/).forEach(raw => {
     let line = raw.trim();
     if (!line || line.startsWith('#')) return;
-    if (line.startsWith('export ')) line = line.slice(7).trim();
+    // `export` の後続区切りはスペース1個に限らず、タブや複数スペースも許容する。
+    line = line.replace(/^export\s+/, '');
     const eq = line.indexOf('=');
     if (eq <= 0) return;
     const key = line.slice(0, eq).trim();
