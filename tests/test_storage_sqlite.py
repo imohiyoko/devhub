@@ -89,10 +89,10 @@ class RoundTripTest(_IsolatedStorage):
         ]})
         got = storage.load_launches()['launches']
         # launched_at 昇順で返る
-        self.assertEqual([l['launch_id'] for l in got], ['a', 'b'])
+        self.assertEqual([launch['launch_id'] for launch in got], ['a', 'b'])
         # save は全置換
         storage.save_launches({'launches': [{'launch_id': 'c', 'launched_at': '2026-01-03'}]})
-        self.assertEqual([l['launch_id'] for l in storage.load_launches()['launches']], ['c'])
+        self.assertEqual([launch['launch_id'] for launch in storage.load_launches()['launches']], ['c'])
 
     def test_config_falls_back_to_default_shape(self):
         cfg = storage.load_config()
@@ -138,6 +138,21 @@ class MigrationTest(_IsolatedStorage):
         self._write(storage.CONFIG_PATH, {'scan_roots': ['/changed']})
         storage.migrate_json_to_sqlite()
         self.assertEqual(storage.load_config()['scan_roots'], ['/old'])
+
+    def test_bad_launch_record_does_not_drop_config(self):
+        # A malformed launch record must be skipped, not roll back the config /
+        # envs migration (launches import is a separate transaction).
+        self._write(storage.CONFIG_PATH, {'scan_roots': ['/keep']})
+        self._write(storage.LAUNCHES_PATH, {'launches': [
+            {'no_id': True},                                  # invalid -> skipped
+            {'launch_id': 'ok', 'launched_at': '2026-01-01'},  # valid
+        ]})
+        storage.init_db()
+        storage.migrate_json_to_sqlite()
+        # config survived despite the bad launch record
+        self.assertEqual(storage.load_config()['scan_roots'], ['/keep'])
+        ids = [r['launch_id'] for r in storage.load_launches()['launches']]
+        self.assertEqual(ids, ['ok'])
 
 
 if __name__ == '__main__':

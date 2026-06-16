@@ -70,10 +70,11 @@ def _ensure_db():
     try:
         migrate_json_to_sqlite()
     except Exception as e:
-        # Migration is best-effort: a failure must not block app startup. Worst
-        # case the user re-enters settings; the legacy JSON files are untouched.
-        # Surface it to stderr so a migration bug is at least visible.
+        # Migration is best-effort: a failure must not block app startup. Surface
+        # it to stderr and return WITHOUT marking the DB initialized, so a later
+        # call retries (the migration is idempotent and rolls back on failure).
         print(f"storage: JSON->SQLite migration failed: {e}", file=sys.stderr)
+        return
     _initialized.add(DB_PATH)
 
 
@@ -106,6 +107,9 @@ def migrate_json_to_sqlite():
         done = conn.execute("SELECT value FROM meta WHERE key = 'migrated'").fetchone()
         if done:
             return
+        # 1) Config-shaped state (config/settings/envs/tools) + the migrated flag
+        #    commit together. Launches are imported separately below so one bad
+        #    launch record can't roll back the config migration.
         with conn:
             for key, path in (
                 ('config', CONFIG_PATH),
@@ -126,16 +130,26 @@ def migrate_json_to_sqlite():
                             pass
             except OSError:
                 pass
-            try:
-                legacy = _read_json_file(LAUNCHES_PATH)
-                for rec in (legacy.get('launches', []) if isinstance(legacy, dict) else []):
+            conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated', '1')")
+
+        # 2) Launches: separate transaction, skip individual bad records so one
+        #    malformed entry doesn't drop the rest.
+        try:
+            legacy = _read_json_file(LAUNCHES_PATH)
+            launches = legacy.get('launches', []) if isinstance(legacy, dict) else []
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            launches = []
+        with conn:
+            for rec in launches:
+                if not isinstance(rec, dict) or not rec.get('launch_id'):
+                    continue
+                try:
                     conn.execute(
                         'INSERT OR REPLACE INTO launches (launch_id, data, launched_at) VALUES (?, ?, ?)',
                         (rec.get('launch_id'), json.dumps(rec, ensure_ascii=False), rec.get('launched_at')),
                     )
-            except (FileNotFoundError, OSError, json.JSONDecodeError):
-                pass
-            conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated', '1')")
+                except sqlite3.DatabaseError:
+                    continue
 
 
 # --- settings (server.json equivalent) --------------------------------------
