@@ -44,16 +44,18 @@ class _FakeHandler:
 
 class HiddenReposConfigTest(unittest.TestCase):
     def setUp(self):
-        # storage を隔離した一時ディレクトリへ向ける (実 settings/config.json は不変)。
+        # storage を隔離した一時 DB へ向ける (実 settings/devhub.db は不変)。
         self._tmp = tempfile.mkdtemp()
-        self._orig = (storage.SETTINGS_DIR, storage.CONFIG_PATH, storage.CONFIG_EXAMPLE_PATH)
-        storage.SETTINGS_DIR = self._tmp
-        storage.CONFIG_PATH = os.path.join(self._tmp, 'config.json')
+        self._orig = (storage.DB_PATH, storage.CONFIG_EXAMPLE_PATH, set(storage._initialized))
+        storage.DB_PATH = os.path.join(self._tmp, 'devhub.db')
         # 存在しない example を指してフォールバックのデフォルトを使わせる。
         storage.CONFIG_EXAMPLE_PATH = os.path.join(self._tmp, 'no-example.json')
+        storage.init_db()
+        # 隔離 DB は init 済み扱いにして、実 settings/*.json からの移行を走らせない。
+        storage._initialized.add(storage.DB_PATH)
 
     def tearDown(self):
-        storage.SETTINGS_DIR, storage.CONFIG_PATH, storage.CONFIG_EXAMPLE_PATH = self._orig
+        storage.DB_PATH, storage.CONFIG_EXAMPLE_PATH, storage._initialized = self._orig
         shutil.rmtree(self._tmp, ignore_errors=True)
 
     # (C) デフォルトに hidden_repos が含まれる
