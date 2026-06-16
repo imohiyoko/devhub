@@ -264,6 +264,11 @@ def _run_processes(env_def, cwd_override=None):
 
     threading.Thread(target=run_all, daemon=True).start()
 
+# Serializes read-modify-write of launches.json. save_launches() is atomic on
+# its own (os.replace), but load -> mutate -> save is not; without this lock two
+# concurrent launches/removals could clobber each other's record.
+_REGISTRY_LOCK = threading.Lock()
+
 def _record_launch(env_def, worktree_path):
     """Append a launch record to the registry. Returns the created record."""
     wt = env_def.get('worktree', {}) or {}
@@ -285,9 +290,10 @@ def _record_launch(env_def, worktree_path):
             for p in env_def.get('processes', [])
         ],
     }
-    data = load_launches()
-    data['launches'].append(record)
-    save_launches(data)
+    with _REGISTRY_LOCK:
+        data = load_launches()
+        data['launches'].append(record)
+        save_launches(data)
     return record
 
 def launch_environment(env_id):
@@ -412,9 +418,7 @@ def _kill_ports_for(procs):
         time.sleep(0.5)
 
 def remove_launch(launch_id, force=False):
-    data = load_launches()
-    launches = data.get('launches', [])
-    rec = _find_launch(launches, launch_id)
+    rec = _find_launch(load_launches().get('launches', []), launch_id)
     if not rec:
         raise ValueError('launch record not found')
 
@@ -422,7 +426,8 @@ def remove_launch(launch_id, force=False):
     repo = rec.get('repo_path')
     # Only attempt a git worktree removal when the directory still exists and we
     # have a repo to run it from. The path is devhub-generated, but re-validate
-    # it as defense-in-depth before handing it to git.
+    # it as defense-in-depth before handing it to git. Done outside the registry
+    # lock since it shells out and can be slow.
     if wt and os.path.isdir(wt) and repo:
         path_err = _validate_worktree_path(wt)
         if path_err:
@@ -439,8 +444,11 @@ def remove_launch(launch_id, force=False):
         except Exception:
             pass
 
-    data['launches'] = [l for l in launches if l.get('launch_id') != launch_id]
-    save_launches(data)
+    # Re-read under the lock so we don't clobber a record appended concurrently.
+    with _REGISTRY_LOCK:
+        data = load_launches()
+        data['launches'] = [l for l in data.get('launches', []) if l.get('launch_id') != launch_id]
+        save_launches(data)
 
 def open_launch(launch_id, target):
     data = load_launches()

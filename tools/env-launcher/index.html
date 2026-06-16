@@ -240,7 +240,8 @@ main {
   <div class="launched-wrap" id="launchedWrap" style="display: none;">
     <div class="section-title">
       起動中の環境 <span class="count" id="launchedCount">0</span>
-      <button class="btn btn-sm" style="margin-left:auto" onclick="fetchLaunches()">再読込</button>
+      <button class="btn btn-sm" id="clearDeadBtn" style="margin-left:auto; display:none" onclick="clearDeadLaunches()">停止中をクリア</button>
+      <button class="btn btn-sm" onclick="fetchLaunches()">再読込</button>
     </div>
     <div id="launched"></div>
   </div>
@@ -430,10 +431,20 @@ async function fetchLaunches() {
   }
 }
 
+// A record is "dead" once nothing it created is still observable: no live
+// worktree and no declared port currently listening. Safe to drop the record.
+function isDeadLaunch(l) {
+  const worktreeAlive = l.worktree_path && l.worktree_exists;
+  const anyRunning = (l.processes || []).some(p => (p.live_ports || []).length);
+  return !worktreeAlive && !anyRunning;
+}
+
 function renderLaunches() {
   const wrap = document.getElementById('launchedWrap');
   const container = document.getElementById('launched');
   document.getElementById('launchedCount').textContent = launches.length;
+  document.getElementById('clearDeadBtn').style.display =
+    launches.some(isDeadLaunch) ? '' : 'none';
   if (!launches.length) {
     wrap.style.display = 'none';
     container.innerHTML = '';
@@ -545,6 +556,18 @@ async function openLaunch(id, target) {
   const r = await postLaunchAction('/api/envs/launches/open', { launch_id: id, target },
     target === 'editor' ? 'エディタで開きました' : 'ターミナルで開きました');
   if (r && r.error) alert('Error: ' + r.error);
+}
+
+async function clearDeadLaunches() {
+  const dead = launches.filter(isDeadLaunch);
+  if (!dead.length) return;
+  if (!confirm(`停止中の記録 ${dead.length} 件を削除します。よろしいですか？`)) return;
+  for (const l of dead) {
+    const r = await postLaunchAction('/api/envs/launches/remove', { launch_id: l.launch_id }, null);
+    if (r && r.error) console.error('clearDead', l.launch_id, r.error);
+  }
+  showToast('停止中の記録をクリアしました');
+  fetchLaunches();
 }
 
 document.getElementById('launched').addEventListener('click', e => {
@@ -910,6 +933,10 @@ function saveProcess() {
       const a = Number(rangeMatch[1]), b = Number(rangeMatch[2]);
       if (!inRange(a) || !inRange(b)) {
         alert('ポート範囲は 1〜65535 で指定してください。');
+        return;
+      }
+      if (Math.abs(b - a) + 1 > 1000) {
+        alert('ポート範囲が広すぎます（最大 1000 ポート）。');
         return;
       }
       port = `${Math.min(a, b)}-${Math.max(a, b)}`;

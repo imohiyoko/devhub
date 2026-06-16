@@ -211,5 +211,51 @@ class RecordLaunchTest(unittest.TestCase):
         saver.assert_called_once()
 
 
+class RemoveLaunchTest(unittest.TestCase):
+    def _run_remove(self, force):
+        rec = {'launch_id': 'L1', 'worktree_path': '/tmp/wt', 'repo_path': '/repo', 'processes': []}
+        ok = mock.Mock(returncode=0, stderr='')
+        with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
+             mock.patch.object(envs, 'save_launches') as saver, \
+             mock.patch.object(envs.os.path, 'isdir', return_value=True), \
+             mock.patch.object(envs, '_validate_worktree_path', return_value=None), \
+             mock.patch.object(envs.subprocess, 'run', return_value=ok) as run:
+            envs.remove_launch('L1', force=force)
+        return run, saver
+
+    def test_force_appends_flag_and_drops_record(self):
+        run, saver = self._run_remove(force=True)
+        cmd = run.call_args_list[0].args[0]
+        self.assertEqual(cmd[:4], ['git', 'worktree', 'remove', '--force'])
+        self.assertIn('/tmp/wt', cmd)
+        self.assertEqual(saver.call_args.args[0]['launches'], [])
+
+    def test_no_force_omits_flag(self):
+        run, _ = self._run_remove(force=False)
+        cmd = run.call_args_list[0].args[0]
+        self.assertEqual(cmd, ['git', 'worktree', 'remove', '/tmp/wt'])
+
+    def test_git_failure_raises_and_keeps_record(self):
+        rec = {'launch_id': 'L1', 'worktree_path': '/tmp/wt', 'repo_path': '/repo', 'processes': []}
+        fail = mock.Mock(returncode=1, stderr='contains modified files')
+        with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
+             mock.patch.object(envs, 'save_launches') as saver, \
+             mock.patch.object(envs.os.path, 'isdir', return_value=True), \
+             mock.patch.object(envs, '_validate_worktree_path', return_value=None), \
+             mock.patch.object(envs.subprocess, 'run', return_value=fail):
+            with self.assertRaises(ValueError):
+                envs.remove_launch('L1', force=False)
+        saver.assert_not_called()
+
+    def test_missing_worktree_just_drops_record(self):
+        rec = {'launch_id': 'L1', 'worktree_path': None, 'repo_path': '', 'processes': []}
+        with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
+             mock.patch.object(envs, 'save_launches') as saver, \
+             mock.patch.object(envs.subprocess, 'run') as run:
+            envs.remove_launch('L1')
+        run.assert_not_called()
+        self.assertEqual(saver.call_args.args[0]['launches'], [])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
