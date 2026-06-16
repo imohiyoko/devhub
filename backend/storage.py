@@ -116,8 +116,15 @@ def load_launches():
                 return data
     except FileNotFoundError:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        # Back up corrupted file before returning empty dict
+        import shutil
+        backup_path = LAUNCHES_PATH + '.corrupted'
+        try:
+            shutil.copy2(LAUNCHES_PATH, backup_path)
+        except Exception:
+            pass
+        raise
     return {'launches': []}
 
 def save_launches(data):
