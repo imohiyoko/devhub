@@ -697,6 +697,10 @@ let allRepos = [];
 let currentRepo = '';
 let activeTab = 'files';
 
+// Branches-tab filter state (persisted across re-renders of the tab).
+let branchSearch = '';
+let branchCommitterFilter = '';
+
 let gitData = {
     status: '',
     log: '',
@@ -1047,23 +1051,92 @@ function renderTabContent() {
         }
 
     } else if (activeTab === 'branches') {
-        const lines = gitData.branches.trim().split('\n').filter(l=>l);
-        lines.forEach((line) => {
-            const parts = line.split('\t');
-            if(parts.length < 3) return;
-            const refname = parts[0];
-            // Skip the refs/remotes/<remote>/HEAD symref — it's not a real,
-            // checkout-able branch, just a pointer to the remote's default.
-            if (refname.endsWith('/HEAD')) return;
-            const name = parts[1];
-            const isHead = parts[2] === '*';
-            const el = document.createElement('div'); el.className = 'list-item';
-            
-            const wtEntry = (gitData.worktrees || []).find(w => w.branch === name);
-            el.textContent = `${isHead ? '* ' : '  '}${name}${wtEntry ? ' [worktree]' : ''}`;
-            if(isHead) el.style.color = 'var(--green)';
+        // --- Filter bar: branch-name search + committer dropdown ---------------
+        const committers = getBranchCommitters();
+        // Drop a stale committer filter (e.g. after switching repos) so it can't
+        // hide every branch with no way back to "all".
+        if (branchCommitterFilter && !committers.includes(branchCommitterFilter)) {
+            branchCommitterFilter = '';
+        }
 
-            const isRemote = refname.startsWith('refs/remotes/');
+        const bar = document.createElement('div');
+        bar.style.cssText = 'display:flex; gap:6px; padding:6px 8px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg); z-index:1;';
+
+        const search = document.createElement('input');
+        search.id = 'branch-search-input';
+        search.type = 'text';
+        search.placeholder = 'ブランチ名で検索…';
+        search.value = branchSearch;
+        search.style.cssText = 'flex:1; min-width:0; background:var(--surface); border:1px solid var(--border); color:var(--text); padding:5px 8px; border-radius:4px; font-size:12px;';
+        search.addEventListener('input', (e) => {
+            const caret = e.target.selectionStart;
+            branchSearch = e.target.value;
+            selectedItemIndex = 0;
+            renderTabContent();
+            const ni = document.getElementById('branch-search-input');
+            if (ni) { ni.focus(); try { ni.setSelectionRange(caret, caret); } catch (_) {} }
+        });
+        bar.appendChild(search);
+
+        const sel = document.createElement('select');
+        sel.id = 'branch-committer-select';
+        sel.style.cssText = 'max-width:45%; background:var(--surface); border:1px solid var(--border); color:var(--text); padding:5px 6px; border-radius:4px; font-size:12px;';
+        const optAll = document.createElement('option');
+        optAll.value = ''; optAll.textContent = `全 committer (${committers.length})`;
+        sel.appendChild(optAll);
+        committers.forEach(c => {
+            const o = document.createElement('option');
+            o.value = c; o.textContent = c;
+            if (c === branchCommitterFilter) o.selected = true;
+            sel.appendChild(o);
+        });
+        sel.addEventListener('change', (e) => {
+            branchCommitterFilter = e.target.value;
+            selectedItemIndex = 0;
+            renderTabContent();
+            const ns = document.getElementById('branch-committer-select');
+            if (ns) ns.focus();
+        });
+        bar.appendChild(sel);
+        container.appendChild(bar);
+
+        // --- Filtered, pre-sorted (newest-commit-first) branch rows -----------
+        const q = branchSearch.trim().toLowerCase();
+        const branches = parseBranchLines().filter(b => {
+            if (branchCommitterFilter && b.committer !== branchCommitterFilter) return false;
+            if (q && !b.shortName.toLowerCase().includes(q)) return false;
+            return true;
+        });
+
+        if (branches.length === 0) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'padding:14px 10px; color:var(--muted); font-size:12px;';
+            empty.textContent = '一致するブランチがありません';
+            container.appendChild(empty);
+        }
+
+        branches.forEach((b) => {
+            const name = b.shortName;
+            const isHead = b.isHead;
+            const isRemote = b.isRemote;
+            const el = document.createElement('div'); el.className = 'list-item';
+
+            const wtEntry = (gitData.worktrees || []).find(w => w.branch === name);
+
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = `${isHead ? '* ' : '  '}${name}${wtEntry ? ' [worktree]' : ''}`;
+            if (isHead) nameSpan.style.color = 'var(--green)';
+            el.appendChild(nameSpan);
+
+            const meta = document.createElement('span');
+            meta.style.cssText = 'margin-left:auto; padding-left:10px; color:var(--muted); font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+            const metaBits = [b.dateRel, b.committer].filter(Boolean);
+            meta.textContent = metaBits.join(' · ');
+            if (b.dateIso) meta.title = `${b.dateIso}${b.committer ? '\n' + b.committer : ''}`;
+            el.appendChild(meta);
+            el.style.display = 'flex';
+            el.style.alignItems = 'baseline';
+
             const itemObj = { type: 'branch', el, data: name, isHead, wtEntry, isRemote };
             el.onclick = () => { selectedItemIndex = currentListItems.indexOf(itemObj); renderTabContent(); };
 
@@ -1164,8 +1237,8 @@ function renderTabContent() {
         container.appendChild(el);
     } else if (activeTab === 'status') {
          const el = document.createElement('div'); el.style.padding = '10px';
-         const headLine = gitData.branches.trim().split('\n').find(l=>l.endsWith('\t*'));
-         const branch = headLine ? headLine.split('\t')[1] : 'Unknown';
+         const headBranch = parseBranchLines().find(b => b.isHead);
+         const branch = headBranch ? headBranch.shortName : 'Unknown';
          const { staged, unstaged } = parseStatus(gitData.status);
          el.innerHTML = `<strong>Branch:</strong> ${escapeHtml(branch)}<br><br><strong>Staged files:</strong> ${staged.length}<br><strong>Unstaged files:</strong> ${unstaged.length}`;
          container.appendChild(el);
@@ -1614,6 +1687,9 @@ function selectRepo(path) {
   // Don't carry the previous repo's remote state into the new one; the next
   // suggest refresh re-establishes it and adjustDynamicPolling re-arms.
   gitData.hasRemote = undefined;
+  // Reset branch filters so they don't carry across repos.
+  branchSearch = '';
+  branchCommitterFilter = '';
   closeRepoSwitcher();
   renderRepoSwitcher();
   refreshData();
@@ -1942,9 +2018,10 @@ document.getElementById('setting-remote-poll-auto').addEventListener('change', (
 });
 
 // Shared parser for the tab-separated branch listing. Each line is
-// "<refname>\t<short-name>[\t<HEAD-marker>]" (e.g. "refs/heads/main\tmain\t*"
-// or "refs/remotes/origin/main\torigin/main"). Both helpers below derive from
-// this so the tab-split parsing lives in one place.
+// "<refname>\t<short-name>\t<HEAD-marker>\t<committer>\t<date-relative>\t<date-iso>"
+// (e.g. "refs/heads/main\tmain\t*\tDaiki\t2 hours ago\t2026-06-16 10:00:00 +0900").
+// Lines are pre-sorted newest-commit-first by the backend. All helpers below
+// derive from this so the tab-split parsing lives in one place.
 function parseBranchLines() {
     if (!gitData.branches) return [];
     return gitData.branches.trim().split('\n').filter(l=>l)
@@ -1952,8 +2029,26 @@ function parseBranchLines() {
         .filter(l => !l.split('\t')[0].endsWith('/HEAD'))
         .map(line => {
             const parts = line.split('\t');
-            return { refname: parts[0], shortName: parts.length >= 2 ? parts[1] : parts[0] };
+            return {
+                refname: parts[0],
+                shortName: parts.length >= 2 ? parts[1] : parts[0],
+                isHead: parts[2] === '*',
+                isRemote: parts[0].startsWith('refs/remotes/'),
+                committer: parts[3] || '',
+                dateRel: parts[4] || '',
+                dateIso: parts[5] || '',
+            };
         });
+}
+
+// Distinct committer names across all branches, in first-appearance order
+// (which, given the backend sort, is roughly most-recent-activity-first).
+function getBranchCommitters() {
+    const seen = [];
+    parseBranchLines().forEach(b => {
+        if (b.committer && !seen.includes(b.committer)) seen.push(b.committer);
+    });
+    return seen;
 }
 
 function getLocalBranches() {
