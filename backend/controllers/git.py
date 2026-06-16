@@ -66,21 +66,6 @@ def all_repos():
                     repos.append({'name': os.path.basename(expanded), 'path': expanded})
     return repos
 
-def visible_repos():
-    """all_repos() minus the user's hidden_repos.
-
-    all_repos() deliberately keeps hidden repos so path validation can still
-    resolve them. Cross-repo fan-out work (e.g. the env-launcher worktree
-    inventory) should instead skip anything the user hid, so we don't spend a
-    git subprocess per hidden repo on every load.
-    """
-    hidden = {
-        os.path.normcase(os.path.normpath(os.path.abspath(os.path.expanduser(p))))
-        for p in load_config().get('hidden_repos', [])
-    }
-    return [r for r in all_repos()
-            if os.path.normcase(os.path.normpath(r['path'])) not in hidden]
-
 def _get_validated_path(raw_path):
     if not raw_path:
         return None
@@ -272,11 +257,16 @@ def list_worktrees(repo_path):
 
     Runs `git worktree list --porcelain` and annotates each record with
     `is_main` (the first/primary worktree) and `exists` (the directory is still
-    present on disk). Raises subprocess.CalledProcessError if git fails.
+    present on disk). Raises subprocess.CalledProcessError if git fails, or
+    subprocess.TimeoutExpired if the call hangs past the timeout.
+
+    The timeout bounds a single repo's git call: callers fan this out across
+    many repos and block on all of them, so an unbounded hang on one repo would
+    otherwise wedge the whole batch (e.g. the env-launcher worktree inventory).
     """
     res = subprocess.run(
         ['git', 'worktree', 'list', '--porcelain'],
-        cwd=repo_path, capture_output=True, text=True, check=True,
+        cwd=repo_path, capture_output=True, text=True, check=True, timeout=15,
     )
     worktrees = _parse_worktree_porcelain(res.stdout)
     for i, wt in enumerate(worktrees):
