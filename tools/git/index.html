@@ -1492,10 +1492,15 @@ function buildRepoRow(r, isHiddenRow) {
   const row = document.createElement('div');
   row.className = 'repo-row' + (!isHiddenRow && pathMatch(r.path, currentRepo) ? ' active' : '');
   row.dataset.path = r.path;
-  row.addEventListener('click', () => selectRepo(r.path));
+  // A hidden row re-pops (unhides) on click instead of silently selecting a repo
+  // that stays hidden; a visible row selects it.
+  row.addEventListener('click', () => isHiddenRow ? unhideRepo(r.path) : selectRepo(r.path));
 
-  // Only visible rows are draggable for reordering.
-  if (!isHiddenRow) {
+  // Visible rows are draggable for reordering — but not while a search filter is
+  // active, because the drop reorders the full allRepos list by index and moving
+  // a filtered subset there is unintuitive.
+  const searching = !!(document.getElementById('repo-search').value || '').trim();
+  if (!isHiddenRow && !searching) {
     row.draggable = true;
     row.addEventListener('dragstart', (e) => onRepoDragStart(e, r.path));
     row.addEventListener('dragover', onRepoDragOver);
@@ -1560,16 +1565,16 @@ async function hideRepo(path) {
   const repoName = repo ? repo.name : (path.split(/[\\/]/).filter(Boolean).pop() || path);
   showUndoToast(`「${repoName}」を非表示にしました`, '元に戻す', () => unhideRepo(path));
 
-  // If the active repo was just hidden, switch to the first remaining visible one.
+  // If the active repo was just hidden, switch to the first remaining visible
+  // one — or clear the selection (label back to "Select Repo...") if everything
+  // is now hidden, so the header never shows a hidden repo as current.
   if (pathMatch(path, currentRepo)) {
     const next = allRepos.find(r => !isHidden(r.path));
-    if (next) {
-      currentRepo = next.path;
-      gitData.hasRemote = undefined;
-      renderRepoSwitcher();
-      refreshData();
-      return;
-    }
+    currentRepo = next ? next.path : '';
+    gitData.hasRemote = undefined;
+    renderRepoSwitcher();
+    if (currentRepo) refreshData();
+    return;
   }
   renderRepoSwitcher();
 }
