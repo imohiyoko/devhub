@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_DIR = os.path.join(BASE, 'settings')
@@ -112,20 +113,21 @@ def load_launches():
     try:
         with open(LAUNCHES_PATH, encoding='utf-8') as f:
             data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get('launches'), list):
-                return data
     except FileNotFoundError:
-        pass
-    except Exception as e:
-        # Back up corrupted file before returning empty dict
-        import shutil
-        backup_path = LAUNCHES_PATH + '.corrupted'
+        # No registry yet — a fresh empty one is the correct state.
+        return {'launches': []}
+    except (json.JSONDecodeError, OSError) as err:
+        # Do NOT fall back to empty: callers do load -> mutate -> save, so an
+        # empty fallback would overwrite and lose the existing records. Back up
+        # the unreadable file (best-effort) and surface the error instead.
         try:
-            shutil.copy2(LAUNCHES_PATH, backup_path)
-        except Exception:
+            shutil.copy2(LAUNCHES_PATH, LAUNCHES_PATH + '.corrupted')
+        except OSError:
             pass
-        raise
-    return {'launches': []}
+        raise ValueError(f"failed to read launches registry: {LAUNCHES_PATH}") from err
+    if isinstance(data, dict) and isinstance(data.get('launches'), list):
+        return data
+    raise ValueError(f"unexpected launches registry shape: {LAUNCHES_PATH}")
 
 def save_launches(data):
     os.makedirs(SETTINGS_DIR, exist_ok=True)
