@@ -157,6 +157,62 @@ def _bucketize_interval(seconds):
             return b
     return _POLL_BUCKETS[-1]
 
+def _base_merge_ref(repo_path):
+    """Return the ref to use as the merge base for 'merged' worktree detection.
+
+    Prefers origin/HEAD (e.g. 'origin/main') so branches merged via a PR on the
+    remote are detected even when the local main is stale; falls back to a local
+    'main' then 'master'. Returns None if none of these exist (merged detection
+    is then skipped). Best-effort: never raises.
+    """
+    try:
+        res = subprocess.run(
+            ['git', 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
+            cwd=repo_path, capture_output=True, text=True, timeout=10
+        )
+        ref = res.stdout.strip()
+        if res.returncode == 0 and ref:
+            return ref
+    except Exception as e:
+        logger.debug("origin/HEAD lookup failed: %s", e)
+
+    for name in ('main', 'master'):
+        try:
+            res = subprocess.run(
+                ['git', 'rev-parse', '--verify', '--quiet', name],
+                cwd=repo_path, capture_output=True, text=True, timeout=10
+            )
+            if res.returncode == 0:
+                return name
+        except Exception as e:
+            logger.debug("rev-parse %s failed: %s", name, e)
+    return None
+
+def _merged_branch_set(repo_path, base_ref):
+    """Set of local branch short-names already merged into base_ref.
+
+    The base branch itself is excluded — both the full base_ref ('origin/main')
+    and its local short name ('main') — so the base is never proposed for removal.
+    Returns an empty set if base_ref is None or the git call fails (best-effort).
+    """
+    if not base_ref:
+        return set()
+    try:
+        res = subprocess.run(
+            ['git', 'branch', '--merged', base_ref, '--format=%(refname:short)'],
+            cwd=repo_path, capture_output=True, text=True, timeout=15
+        )
+        if res.returncode != 0:
+            return set()
+        names = {line.strip() for line in res.stdout.splitlines() if line.strip()}
+    except Exception as e:
+        logger.debug("git branch --merged failed: %s", e)
+        return set()
+    # Drop the base branch's own name(s) so it is never flagged as cleanable.
+    names.discard(base_ref)
+    names.discard(base_ref.split('/', 1)[1] if '/' in base_ref else base_ref)
+    return names
+
 def handle_get(handler, path, params):
     repo_path = _validated_repo_path(params)
     if not repo_path:
@@ -294,7 +350,30 @@ def handle_get(handler, path, params):
                     current['bare'] = True
             if current:
                 worktrees.append(current)
-            handler.send_json({'worktrees': worktrees})
+
+            # Annotate each worktree for the frontend cleanup suggestions:
+            #  - exists: the worktree directory is still on disk. A missing dir
+            #    means the user deleted it by hand, leaving a stale admin entry
+            #    that `git worktree list` still reports (prune candidate). We use
+            #    os.path.isdir rather than porcelain's `prunable` line so the
+            #    check is git-version independent and maps directly to the dir.
+            #  - merged: the worktree's branch is already merged into the base
+            #    branch (origin/main fallback local main/master), so the worktree
+            #    is safe to remove.
+            base_ref = _base_merge_ref(repo_path)
+            merged = _merged_branch_set(repo_path, base_ref)
+            for wt in worktrees:
+                wt['exists'] = os.path.isdir(wt['path'])
+                wt['merged'] = bool(wt.get('branch') and wt['branch'] in merged)
+            # merged_branches lets the frontend additionally propose deleting
+            # merged LOCAL branches that have no worktree (a branch checked out
+            # in a worktree must have its worktree removed first). The frontend
+            # subtracts the worktree branches from this set.
+            handler.send_json({
+                'worktrees': worktrees,
+                'base_branch': base_ref,
+                'merged_branches': sorted(merged),
+            })
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
@@ -491,6 +570,20 @@ def handle_post(handler, path, data):
             handler.send_json({'ok': True, 'output': res.stdout})
         except subprocess.TimeoutExpired:
             handler.send_json({'error': 'git worktree remove timed out'}, 504)
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/worktree/prune':
+        # Removes admin entries for worktrees whose directories no longer exist.
+        # `git worktree remove` cannot do this (it fails with "is not a working
+        # tree" once the dir is gone), so prune is the correct tool. It clears
+        # all prunable entries at once, matching the batch cleanup UX.
+        try:
+            res = subprocess.run(['git', 'worktree', 'prune', '-v'], cwd=repo_path, capture_output=True, text=True, check=True, timeout=30)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git worktree prune timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
         return
