@@ -559,18 +559,11 @@ def handle_post(handler, path, data):
         launch_id = data.get('launch_id')
         if not launch_id:
             raise ValueError('launch_id is required')
-        force_raw = data.get('force')
-        if isinstance(force_raw, bool):
-            force = force_raw
-        elif isinstance(force_raw, str):
-            if force_raw.lower() == 'true':
-                force = True
-            elif force_raw.lower() == 'false':
-                force = False
-            else:
-                force = False
-        else:
-            force = False
+        force = data.get('force', False)
+        # Explicit bool check: bool("false") is True, so a stray string from an
+        # external client must not silently become a force-remove.
+        if not isinstance(force, bool):
+            raise ValueError('force must be a boolean')
         remove_launch(launch_id, force=force)
         handler.send_json({'ok': True})
         return
