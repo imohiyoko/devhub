@@ -12,6 +12,21 @@ import re
 from collections import deque
 from backend.storage import load_envs, save_envs, load_settings
 
+def _applescript_escape(s):
+    """AppleScript の二重引用符文字列リテラル用に文字列をエスケープする。
+
+    バックスラッシュとダブルクォートを退避し、改行は AppleScript が解釈できる
+    ``\\n`` (バックスラッシュ + n) に変換する。生の改行を文字列リテラル内に
+    置くと osascript の構文エラーになるため、複数行コマンドを Terminal.app /
+    iTerm に渡すにはこの変換が必須。CR は除去して CRLF の二重改行を防ぐ。
+    """
+    return (
+        s.replace('\\', '\\\\')
+         .replace('"', '\\"')
+         .replace('\r', '')
+         .replace('\n', '\\n')
+    )
+
 def open_in_terminal(cwd, command, env=None):
     if not cwd:
         cwd = os.getcwd()
@@ -60,12 +75,12 @@ def open_in_terminal(cwd, command, env=None):
             subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'Terminal.app':
             sh_cmd = f"cd {shlex.quote(cwd)} && {cmd_with_env}"
-            safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
+            safe_sh_cmd = _applescript_escape(sh_cmd)
             script = f'tell application "Terminal" to do script "{safe_sh_cmd}"'
             subprocess.Popen(['osascript', '-e', script])
         elif emulator == 'iTerm':
             sh_cmd = f"cd {shlex.quote(cwd)} && {cmd_with_env}"
-            safe_sh_cmd = sh_cmd.replace('\\', '\\\\').replace('"', '\\"')
+            safe_sh_cmd = _applescript_escape(sh_cmd)
             script = f'''
             tell application "iTerm"
                 create window with default profile
