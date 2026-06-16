@@ -907,8 +907,10 @@ async function refreshData(withSuggestion = true) {
         ];
         if (withSuggestion) {
             reqs.push(fetch(`/api/git/worktrees?path=${encodeURIComponent(currentRepo)}`).then(r=>r.json()));
+            // env-launcher launch registry: used to badge worktrees devhub created.
+            reqs.push(fetch('/api/envs/launches').then(r=>r.json()).catch(()=>({launches:[]})));
         }
-        const [status, log, branches, stash, worktrees] = await Promise.all(reqs);
+        const [status, log, branches, stash, worktrees, launches] = await Promise.all(reqs);
 
         gitData.status = status.output || '';
         gitData.log = log.output || '';
@@ -918,6 +920,12 @@ async function refreshData(withSuggestion = true) {
             gitData.worktrees = worktrees.worktrees || [];
             gitData.baseBranch = worktrees.base_branch || null;
             gitData.mergedBranches = worktrees.merged_branches || [];
+            // env-launcher launch registry: used to badge worktrees devhub created.
+            const map = {};
+            ((launches && launches.launches) || []).forEach(l => {
+                if (l.worktree_path) map[normalizePath(l.worktree_path)] = l.env_name || l.env_id;
+            });
+            gitData.launchedByPath = map;
             // Worktrees were just refreshed (slow cadence): re-evaluate whether
             // any merged / missing-directory worktrees are worth suggesting for
             // cleanup. Skipped on the high-frequency local poll, which leaves
@@ -1105,7 +1113,21 @@ function renderTabContent() {
             
             el.appendChild(branchSpan);
             el.appendChild(pathSpan);
-            
+
+            const envName = (gitData.launchedByPath || {})[normalizePath(wt.path)];
+            if (envName) {
+                const envBadge = document.createElement('span');
+                envBadge.textContent = `🚀 ${envName}`;
+                envBadge.title = 'env-launcher で起動した worktree';
+                envBadge.style.marginLeft = '8px';
+                envBadge.style.fontSize = '10px';
+                envBadge.style.color = 'var(--accent)';
+                envBadge.style.border = '1px solid var(--accent)';
+                envBadge.style.borderRadius = '4px';
+                envBadge.style.padding = '0 5px';
+                el.appendChild(envBadge);
+            }
+
             const itemObj = { type: 'worktree', el, data: wt, isMain };
             el.onclick = () => {
                 selectedItemIndex = idx + 1;
@@ -2316,7 +2338,14 @@ function renderWorktreeDetails(wt, isMain) {
         card.appendChild(makeInfoRow('Commit SHA',
             `<span style="font-family: monospace; font-size: 13px; color: var(--blue);">${escapeHtml(wt.head)}</span>`));
     }
-    
+
+    const envName = (gitData.launchedByPath || {})[normalizePath(wt.path)];
+    if (envName) {
+        card.appendChild(makeInfoRow('env-launcher',
+            `🚀 <span style="color: var(--accent);">${escapeHtml(envName)}</span> で起動 — ` +
+            `<a href="/env-launcher" style="color: var(--accent);">env launcher で管理</a>`));
+    }
+
     container.appendChild(card);
     
     const btnRow = document.createElement('div');

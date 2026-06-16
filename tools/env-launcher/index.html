@@ -142,7 +142,7 @@ main {
 }
 .process-info { flex: 1; }
 .process-label { font-weight: 600; font-size: 14px; }
-.process-cmd { font-family: monospace; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.process-cmd { font-family: monospace; color: var(--muted); font-size: 12px; margin-top: 4px; white-space: pre-wrap; word-break: break-all; }
 .process-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .process-actions { display: flex; gap: 8px; }
 
@@ -152,6 +152,79 @@ main {
 
 /* Empty state */
 .empty-state { text-align: center; color: var(--muted); padding: 40px; }
+
+/* Launched (running environments) section */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin: 0 0 12px;
+}
+.section-title .count {
+  background: var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.launched-wrap { margin-bottom: 28px; }
+.launch-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.launch-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.launch-head h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.launch-tag {
+  font-size: 11px;
+  background: var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text);
+}
+.launch-time { font-size: 11px; color: var(--muted); margin-left: auto; }
+.launch-meta {
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0;
+  word-break: break-all;
+}
+.launch-meta.gone { color: var(--red); }
+.launch-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.launch-procs { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.launch-proc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.launch-proc .proc-name { font-weight: 600; }
+.launch-proc .proc-port { font-family: "SF Mono", ui-monospace, monospace; color: var(--muted); font-size: 12px; }
+.launch-proc .spacer { flex: 1; }
+.run-badge {
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.run-badge.up { border-color: var(--green); color: var(--green); }
+.run-badge.down { border-color: var(--muted); color: var(--muted); }
+.btn-sm { padding: 4px 9px; font-size: 12px; }
+.btn-danger { border-color: var(--red); color: var(--red); background: var(--surface); }
+.btn-danger:hover { background: var(--red); color: #fff; }
 </style>
 </head>
 <body>
@@ -163,8 +236,18 @@ main {
   <button class="btn" onclick="openEnvModal()">＋ 環境を追加</button>
 </header>
 
-<main id="app">
-  <div class="empty-state">Loading...</div>
+<main>
+  <div class="launched-wrap" id="launchedWrap" style="display: none;">
+    <div class="section-title">
+      起動中の環境 <span class="count" id="launchedCount">0</span>
+      <button class="btn btn-sm" id="clearDeadBtn" style="margin-left:auto; display:none" onclick="clearDeadLaunches()">停止中をクリア</button>
+      <button class="btn btn-sm" onclick="fetchLaunches()">再読込</button>
+    </div>
+    <div id="launched"></div>
+  </div>
+  <div id="app">
+    <div class="empty-state">Loading...</div>
+  </div>
 </main>
 
 <!-- Env Modal -->
@@ -222,12 +305,16 @@ main {
         <input type="text" id="procLabel" class="form-control" placeholder="Rails API">
       </div>
       <div class="form-group">
-        <label>コマンド</label>
-        <input type="text" id="procCmd" class="form-control" placeholder="bundle exec rails s">
+        <label>コマンド <span style="font-size: 11px; color: var(--muted);">※複数行可（各行が順に実行されます）</span></label>
+        <textarea id="procCmd" class="form-control" rows="3" style="font-family: monospace; resize: vertical;" placeholder="bundle exec rails s"></textarea>
       </div>
       <div class="form-group">
         <label>作業ディレクトリ (CWD)</label>
         <input type="text" id="procCwd" class="form-control" placeholder="~/projects/myapp">
+      </div>
+      <div class="form-group">
+        <label>ポート (任意) <span style="font-size: 11px; color: var(--muted);">※ 稼働状況の表示・kill・再起動に使用。単一 (3000) または範囲 (3000-3010)。dev サーバが次の空きポートに採番する場合は範囲指定が便利です</span></label>
+        <input type="text" id="procPort" class="form-control" placeholder="3000 または 3000-3010">
       </div>
       <div class="form-group">
         <label>依存プロセス (Depends On)</label>
@@ -242,7 +329,17 @@ main {
       <div class="form-group">
         <label>環境変数 (Env Vars) <span style="font-size: 11px; color: var(--red);">※ 平文で保存されます。本番のクレデンシャル等は入力しないでください</span></label>
         <div id="procEnvVars"></div>
-        <button class="btn" style="margin-top: 8px;" onclick="addEnvVar()">＋ 追加</button>
+        <div style="margin-top: 8px; display: flex; gap: 8px;">
+          <button class="btn" onclick="addEnvVar()">＋ 追加</button>
+          <button class="btn" onclick="toggleBulkEnv()">一括貼り付け</button>
+        </div>
+        <div id="bulkEnvArea" style="display: none; margin-top: 8px;">
+          <textarea id="bulkEnvText" class="form-control" rows="6" style="font-family: monospace; resize: vertical;" placeholder="export KEY=value または KEY=value を貼り付け&#10;# 行頭コメント・空行は無視（行末の # コメントは値の一部になります）"></textarea>
+          <div style="display: flex; gap: 8px; margin-top: 6px;">
+            <button class="btn btn-primary" onclick="applyBulkEnv()">反映</button>
+            <button class="btn" onclick="toggleBulkEnv()">閉じる</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -294,7 +391,10 @@ async function launchEnv(envId) {
     });
     const result = await res.json();
     if (result.error) alert('Error: ' + result.error);
-    else showToast('起動を開始しました。ターミナルとエラーログを確認してください。');
+    else {
+      showToast('起動を開始しました。ターミナルとエラーログを確認してください。');
+      setTimeout(fetchLaunches, 1000);
+    }
   } catch(e) {
     alert('Failed to launch environment');
   }
@@ -314,6 +414,171 @@ async function launchProcess(envId, procId) {
     alert('Failed to launch process');
   }
 }
+
+// --- Launched (running environments) ---
+let launches = [];
+
+async function fetchLaunches() {
+  try {
+    const res = await fetch('/api/envs/launches');
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'failed');
+    launches = data.launches || [];
+    renderLaunches();
+  } catch(e) {
+    // Non-fatal: leave the previous list and keep polling.
+    console.error('fetchLaunches', e);
+  }
+}
+
+// A record is "dead" once nothing it created is still observable: no live
+// worktree and no declared port currently listening. Safe to drop the record.
+function isDeadLaunch(l) {
+  const worktreeAlive = l.worktree_path && l.worktree_exists;
+  const anyRunning = (l.processes || []).some(p => (p.live_ports || []).length);
+  return !worktreeAlive && !anyRunning;
+}
+
+function renderLaunches() {
+  const wrap = document.getElementById('launchedWrap');
+  const container = document.getElementById('launched');
+  document.getElementById('launchedCount').textContent = launches.length;
+  document.getElementById('clearDeadBtn').style.display =
+    launches.some(isDeadLaunch) ? '' : 'none';
+  if (!launches.length) {
+    wrap.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+  wrap.style.display = 'block';
+
+  container.innerHTML = launches.map(l => {
+    const lid = escapeHtml(l.launch_id);
+    const name = escapeHtml(l.env_name || l.env_id);
+    const branch = l.branch ? `<span class="launch-tag">${escapeHtml(l.branch)}</span>` : '';
+    const time = l.launched_at ? `<span class="launch-time">${escapeHtml(l.launched_at)}</span>` : '';
+
+    let meta = '';
+    if (l.worktree_path) {
+      meta = l.worktree_exists
+        ? `<div class="launch-meta">worktree: ${escapeHtml(l.worktree_path)}</div>`
+        : `<div class="launch-meta gone">worktree: ${escapeHtml(l.worktree_path)} (削除済み)</div>`;
+    } else {
+      meta = `<div class="launch-meta">worktree なし</div>`;
+    }
+
+    const procs = (l.processes || []).map(p => {
+      const pname = escapeHtml(p.label || p.id);
+      const hasPort = (p.port !== undefined && p.port !== null && p.port !== '');
+      const portTxt = hasPort ? `<span class="proc-port">:${escapeHtml(p.port)}</span>` : '';
+      const live = p.live_ports || [];
+      let badge = '';
+      let killBtns = '';
+      if (hasPort) {
+        if (live.length) {
+          // Show the port(s) the process actually bound (may differ from the
+          // declared port when the dev server auto-picked the next free one).
+          const actual = live.map(lp => lp.port).join(', ');
+          badge = `<span class="run-badge up">稼働中: ${escapeHtml(actual)}</span>`;
+          killBtns = live.map(lp =>
+            `<button class="btn btn-sm btn-danger" data-laction="kill" data-port="${escapeHtml(lp.port)}" data-pid="${escapeHtml(lp.pid)}">kill :${escapeHtml(lp.port)}</button>`
+          ).join('');
+        } else {
+          badge = `<span class="run-badge down">停止</span>`;
+        }
+      } else {
+        badge = `<span class="run-badge" title="ポート未宣言のため稼働状況を追跡できません">port未宣言</span>`;
+      }
+      return `<div class="launch-proc">
+        <span class="proc-name">${pname}</span>${portTxt}
+        <span class="spacer"></span>${badge}${killBtns}
+      </div>`;
+    }).join('');
+
+    const hasWt = l.worktree_path && l.worktree_exists;
+    const openBtns = hasWt ? `
+      <button class="btn btn-sm" data-laction="open-editor" data-id="${lid}">エディタで開く</button>
+      <button class="btn btn-sm" data-laction="open-terminal" data-id="${lid}">ターミナルで開く</button>` : '';
+    const removeLabel = hasWt ? 'worktree削除' : '記録を削除';
+
+    return `<div class="launch-card">
+      <div class="launch-head"><h3>${name}</h3>${branch}${time}</div>
+      ${meta}
+      ${procs ? `<div class="launch-procs">${procs}</div>` : ''}
+      <div class="launch-actions">
+        ${openBtns}
+        <button class="btn btn-sm btn-danger" data-laction="remove" data-id="${lid}">${removeLabel}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function postLaunchAction(url, body, okMsg) {
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'failed');
+    if (okMsg) showToast(okMsg);
+    return true;
+  } catch(e) {
+    return { error: e.message };
+  }
+}
+
+async function killLaunchProc(port, pid) {
+  if (!confirm(`port ${port} / pid ${pid} を終了しますか？`)) return;
+  const r = await postLaunchAction('/api/ports/kill', { port, pid }, 'kill しました');
+  if (r && r.error) alert('Error: ' + r.error);
+  setTimeout(fetchLaunches, 600);
+}
+
+async function removeLaunch(id) {
+  const card = launches.find(l => l.launch_id === id);
+  const hasWt = card && card.worktree_path && card.worktree_exists;
+  const msg = hasWt ? 'この worktree を削除します。よろしいですか？' : 'この起動記録を削除します。よろしいですか？';
+  if (!confirm(msg)) return;
+  let r = await postLaunchAction('/api/envs/launches/remove', { launch_id: id }, '削除しました');
+  if (r && r.error) {
+    // Likely uncommitted changes — offer a force removal.
+    if (hasWt && confirm(`削除に失敗しました:\n${r.error}\n\n変更を破棄して強制削除しますか？`)) {
+      r = await postLaunchAction('/api/envs/launches/remove', { launch_id: id, force: true }, '強制削除しました');
+    }
+    if (r && r.error) alert('Error: ' + r.error);
+  }
+  fetchLaunches();
+}
+
+async function openLaunch(id, target) {
+  const r = await postLaunchAction('/api/envs/launches/open', { launch_id: id, target },
+    target === 'editor' ? 'エディタで開きました' : 'ターミナルで開きました');
+  if (r && r.error) alert('Error: ' + r.error);
+}
+
+async function clearDeadLaunches() {
+  const dead = launches.filter(isDeadLaunch);
+  if (!dead.length) return;
+  if (!confirm(`停止中の記録 ${dead.length} 件を削除します。よろしいですか？`)) return;
+  for (const l of dead) {
+    const r = await postLaunchAction('/api/envs/launches/remove', { launch_id: l.launch_id }, null);
+    if (r && r.error) console.error('clearDead', l.launch_id, r.error);
+  }
+  showToast('停止中の記録をクリアしました');
+  fetchLaunches();
+}
+
+document.getElementById('launched').addEventListener('click', e => {
+  const btn = e.target.closest('[data-laction]');
+  if (!btn) return;
+  const a = btn.dataset.laction;
+  if (a === 'kill') killLaunchProc(Number(btn.dataset.port), Number(btn.dataset.pid));
+  else if (a === 'remove') removeLaunch(btn.dataset.id);
+  else if (a === 'open-editor') openLaunch(btn.dataset.id, 'editor');
+  else if (a === 'open-terminal') openLaunch(btn.dataset.id, 'terminal');
+});
 
 function showToast(message) {
   const toast = document.createElement('div');
@@ -396,6 +661,9 @@ function render() {
         const procDelay = typeof proc.delay_seconds !== 'undefined'
           ? ` | delay: ${escapeHtml(proc.delay_seconds)}s`
           : '';
+        const procPort = (proc.port !== undefined && proc.port !== null)
+          ? ` | port: ${escapeHtml(proc.port)}`
+          : '';
 
         html += `
           <div class="process-item">
@@ -404,6 +672,7 @@ function render() {
               <div class="process-cmd">${procCmd}</div>
               <div class="process-meta">
                 cwd: ${procCwd}
+                ${procPort}
                 ${procDepends}
                 ${procDelay}
               </div>
@@ -527,6 +796,63 @@ function updateEnvVarKey(i, val, valueInputEl) {
 function updateEnvVarValue(i, val) { tempEnvVars[i].value = val; }
 function removeEnvVar(i) { tempEnvVars.splice(i, 1); renderEnvVars(); }
 
+function toggleBulkEnv() {
+  const area = document.getElementById('bulkEnvArea');
+  const open = area.style.display === 'none';
+  area.style.display = open ? 'block' : 'none';
+  if (open) document.getElementById('bulkEnvText').focus();
+}
+
+// export ブロック / .env 形式のテキストを {key, value} 配列にパースする。
+// - `export ` プレフィックスは除去
+// - 空行と `#` 始まりのコメント行は無視
+// - 値を囲む対の "..." / '...' は除去
+// - キーが識別子として不正な行はスキップ
+function parseEnvBlock(text) {
+  const out = [];
+  text.split(/\r?\n/).forEach(raw => {
+    let line = raw.trim();
+    if (!line || line.startsWith('#')) return;
+    // `export` の後続区切りはスペース1個に限らず、タブや複数スペースも許容する。
+    line = line.replace(/^export\s+/, '');
+    const eq = line.indexOf('=');
+    if (eq <= 0) return;
+    const key = line.slice(0, eq).trim();
+    let val = line.slice(eq + 1).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return;
+    if (val.length >= 2 &&
+        ((val[0] === '"' && val.endsWith('"')) || (val[0] === "'" && val.endsWith("'")))) {
+      val = val.slice(1, -1);
+    }
+    out.push({ key, value: val });
+  });
+  return out;
+}
+
+function applyBulkEnv() {
+  const text = document.getElementById('bulkEnvText').value;
+  const parsed = parseEnvBlock(text);
+  if (parsed.length === 0) {
+    alert('パースできる環境変数がありませんでした。`KEY=value` 形式で貼り付けてください。');
+    return;
+  }
+  // 既存キーは上書き、新規キーは追加（重複キーは一意化）。
+  // find による先頭一致のみの更新だと既存の重複行が残り、保存時の後勝ちで
+  // 古い値に巻き戻るため、トリム済みキーで Map に正規化してから組み立てる。
+  const merged = new Map();
+  tempEnvVars.forEach(({ key, value }) => {
+    const normalized = key.trim();
+    if (normalized) merged.set(normalized, { key: normalized, value });
+  });
+  parsed.forEach(({ key, value }) => {
+    merged.set(key, { key, value });
+  });
+  tempEnvVars = Array.from(merged.values());
+  document.getElementById('bulkEnvText').value = '';
+  toggleBulkEnv();
+  renderEnvVars();
+}
+
 function openProcessModal(envIndex, procIndex = -1) {
   currentEnvIndex = envIndex;
   currentProcIndex = procIndex;
@@ -547,6 +873,7 @@ function openProcessModal(envIndex, procIndex = -1) {
     document.getElementById('procLabel').value = proc.label || '';
     document.getElementById('procCmd').value = proc.command || '';
     document.getElementById('procCwd').value = proc.cwd || '';
+    document.getElementById('procPort').value = (proc.port !== undefined && proc.port !== null) ? proc.port : '';
     document.getElementById('procDelay').value = typeof proc.delay_seconds !== 'undefined' ? proc.delay_seconds : 1;
 
     Array.from(dependsSelect.options).forEach(opt => {
@@ -559,11 +886,14 @@ function openProcessModal(envIndex, procIndex = -1) {
     document.getElementById('procLabel').value = '';
     document.getElementById('procCmd').value = '';
     document.getElementById('procCwd').value = '';
+    document.getElementById('procPort').value = '';
     document.getElementById('procDelay').value = 1;
     Array.from(dependsSelect.options).forEach(opt => opt.selected = false);
     tempEnvVars = [];
   }
 
+  document.getElementById('bulkEnvArea').style.display = 'none';
+  document.getElementById('bulkEnvText').value = '';
   renderEnvVars();
   document.getElementById('processModalOverlay').classList.add('open');
 }
@@ -594,6 +924,34 @@ function saveProcess() {
   });
 
   const delayVal = document.getElementById('procDelay').value.trim();
+  const portVal = document.getElementById('procPort').value.trim();
+  let port;
+  if (portVal !== '') {
+    const inRange = n => Number.isInteger(n) && n >= 1 && n <= 65535;
+    const rangeMatch = portVal.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (rangeMatch) {
+      const a = Number(rangeMatch[1]), b = Number(rangeMatch[2]);
+      if (!inRange(a) || !inRange(b)) {
+        alert('ポート範囲は 1〜65535 で指定してください。');
+        return;
+      }
+      if (Math.abs(b - a) + 1 > 1000) {
+        alert('ポート範囲が広すぎます（最大 1000 ポート）。');
+        return;
+      }
+      port = `${Math.min(a, b)}-${Math.max(a, b)}`;
+    } else if (/^\d+$/.test(portVal)) {
+      const n = Number(portVal);
+      if (!inRange(n)) {
+        alert('ポートは 1〜65535 で入力してください。');
+        return;
+      }
+      port = n;
+    } else {
+      alert('ポートは 3000 または 3000-3010 の形式で入力してください。');
+      return;
+    }
+  }
 
   const proc = {
     id: id,
@@ -604,6 +962,7 @@ function saveProcess() {
     depends_on: depends_on,
     env: envObj
   };
+  if (port !== undefined) proc.port = port;
 
   if (!proc.id) { alert('IDは必須です'); return; }
 
@@ -644,6 +1003,8 @@ document.getElementById('app').addEventListener('click', e => {
 
 // Init
 fetchEnvs();
+fetchLaunches();
+setInterval(fetchLaunches, 5000);
 </script>
 </body>
 </html>
