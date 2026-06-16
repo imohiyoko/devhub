@@ -923,7 +923,12 @@ async function refreshData(withSuggestion = true) {
             // env-launcher launch registry: used to badge worktrees devhub created.
             const map = {};
             ((launches && launches.launches) || []).forEach(l => {
-                if (l.worktree_path) map[normalizePath(l.worktree_path)] = l.env_name || l.env_id;
+                const envName = l.env_name || l.env_id;
+                // env-level worktree plus any per-process bound worktrees.
+                if (l.worktree_path) map[normalizePath(l.worktree_path)] = envName;
+                (l.processes || []).forEach(p => {
+                    if (p.worktree_path) map[normalizePath(p.worktree_path)] = envName;
+                });
             });
             gitData.launchedByPath = map;
             // Worktrees were just refreshed (slow cadence): re-evaluate whether
