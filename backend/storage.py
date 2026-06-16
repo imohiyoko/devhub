@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_DIR = os.path.join(BASE, 'settings')
@@ -7,6 +8,7 @@ CONFIG_PATH = os.path.join(SETTINGS_DIR, 'config.json')
 CONFIG_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'config.example.json')
 ENVS_PATH = os.path.join(SETTINGS_DIR, 'envs.json')
 ENVS_EXAMPLE_PATH = os.path.join(SETTINGS_DIR, 'envs.example.json')
+LAUNCHES_PATH = os.path.join(SETTINGS_DIR, 'launches.json')
 TOOLS_SETTINGS_DIR = os.path.join(SETTINGS_DIR, 'tools')
 
 def load_settings():
@@ -99,3 +101,38 @@ def save_envs(data):
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write('\n')
     os.replace(tmp, ENVS_PATH)
+
+def load_launches():
+    """Runtime registry of environments launched via env-launcher.
+
+    Records what devhub created at launch time (the temporary worktree path it
+    generated, the env/process metadata) so the worktree and the launched
+    processes can be tracked, re-opened, restarted, and cleaned up afterwards.
+    This is local runtime state (gitignored), not user configuration.
+    """
+    try:
+        with open(LAUNCHES_PATH, encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        # No registry yet — a fresh empty one is the correct state.
+        return {'launches': []}
+    except (json.JSONDecodeError, OSError) as err:
+        # Do NOT fall back to empty: callers do load -> mutate -> save, so an
+        # empty fallback would overwrite and lose the existing records. Back up
+        # the unreadable file (best-effort) and surface the error instead.
+        try:
+            shutil.copy2(LAUNCHES_PATH, LAUNCHES_PATH + '.corrupted')
+        except OSError:
+            pass
+        raise ValueError(f"failed to read launches registry: {LAUNCHES_PATH}") from err
+    if isinstance(data, dict) and isinstance(data.get('launches'), list):
+        return data
+    raise ValueError(f"unexpected launches registry shape: {LAUNCHES_PATH}")
+
+def save_launches(data):
+    os.makedirs(SETTINGS_DIR, exist_ok=True)
+    tmp = LAUNCHES_PATH + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+    os.replace(tmp, LAUNCHES_PATH)
