@@ -212,51 +212,123 @@ class RecordLaunchTest(unittest.TestCase):
         self.assertTrue(rec['launched_at'])
         saver.assert_called_once()
 
+    def test_per_process_worktree_recorded_from_cwds(self):
+        env_def = {
+            'id': 'e1',
+            'processes': [
+                {'id': 'fe', 'binding': {'repo_path': '~/repo', 'branch': 'feat/a'}},
+                {'id': 'be'},
+            ],
+        }
+        store = {'launches': []}
+        with mock.patch.object(envs, 'load_launches', return_value=store), \
+             mock.patch.object(envs, 'save_launches'):
+            rec = envs._record_launch(env_def, None, cwds={'fe': '/wt/a', 'be': None})
+        procs = {p['id']: p for p in rec['processes']}
+        self.assertEqual(procs['fe']['worktree_path'], '/wt/a')
+        self.assertEqual(procs['fe']['branch'], 'feat/a')
+        self.assertIsNone(procs['be']['worktree_path'])
+
+
+class ResolveWorktreeTest(unittest.TestCase):
+    def test_returns_existing_branch_worktree(self):
+        wts = [
+            {'path': '/repo', 'branch': 'main', 'exists': True},
+            {'path': '/repo-a', 'branch': 'feat/a', 'exists': True},
+        ]
+        with mock.patch.object(envs.git_controller, 'list_worktrees', return_value=wts):
+            self.assertEqual(envs._resolve_worktree('/repo', 'feat/a'), '/repo-a')
+
+    def test_returns_none_when_missing_or_gone(self):
+        wts = [{'path': '/repo-a', 'branch': 'feat/a', 'exists': False}]
+        with mock.patch.object(envs.git_controller, 'list_worktrees', return_value=wts):
+            self.assertIsNone(envs._resolve_worktree('/repo', 'feat/a'))   # exists=False
+            self.assertIsNone(envs._resolve_worktree('/repo', 'feat/none'))  # no branch
+
+    def test_resolve_cwds_raises_for_missing_binding(self):
+        env_def = {'processes': [{'id': 'p', 'binding': {'repo_path': '/r', 'branch': 'x'}}]}
+        with mock.patch.object(envs, '_resolve_worktree', return_value=None):
+            with self.assertRaises(ValueError):
+                envs._resolve_cwds(env_def)
+
+    def test_resolve_cwds_falls_back_to_env_override(self):
+        env_def = {'processes': [{'id': 'p'}]}  # no binding
+        self.assertEqual(envs._resolve_cwds(env_def, env_cwd_override='/env'), {'p': '/env'})
+
+
+class PortStrategyTest(unittest.TestCase):
+    def test_is_offset_requires_strategy_and_env_var(self):
+        self.assertTrue(envs._is_offset({'port_strategy': 'offset', 'port_env_var': 'PORT'}))
+        self.assertFalse(envs._is_offset({'port_strategy': 'offset'}))      # no env var
+        self.assertFalse(envs._is_offset({'port_env_var': 'PORT'}))         # default baton
+        self.assertFalse(envs._is_offset({}))
+
+    def test_assign_port_picks_first_free(self):
+        port_index = {3000: {}, 3001: {}}  # both busy
+        self.assertEqual(envs._assign_port(3000, port_index), 3002)
+        self.assertEqual(envs._assign_port(4000, {}), 4000)
+
+    def test_assign_ports_only_offset_processes(self):
+        env_def = {'processes': [
+            {'id': 'a', 'port': 3000, 'port_strategy': 'offset', 'port_env_var': 'PORT'},
+            {'id': 'b', 'port': 3000},  # baton -> not assigned
+        ]}
+        assigned = envs._assign_ports(env_def, {3000: {}})
+        self.assertEqual(assigned, {'a': 3001})
+
+    def test_assign_ports_no_double_assign_same_base(self):
+        # Two offset processes sharing a base must get DISTINCT ports.
+        env_def = {'processes': [
+            {'id': 'a', 'port': 3000, 'port_strategy': 'offset', 'port_env_var': 'PORT'},
+            {'id': 'b', 'port': 3000, 'port_strategy': 'offset', 'port_env_var': 'PORT'},
+        ]}
+        live = {}  # nothing listening
+        assigned = envs._assign_ports(env_def, live)
+        self.assertEqual(assigned['a'], 3000)
+        self.assertEqual(assigned['b'], 3001)
+        self.assertNotEqual(assigned['a'], assigned['b'])
+        # caller's live-port snapshot must not be mutated
+        self.assertEqual(live, {})
+
+    def test_kill_ports_skipped_for_offset_in_launch(self):
+        env_def = {
+            'id': 'e', 'processes': [
+                {'id': 'a', 'port': 3000, 'port_strategy': 'offset', 'port_env_var': 'PORT'},
+            ],
+        }
+        with mock.patch.object(envs, 'load_envs', return_value={'environments': [env_def]}), \
+             mock.patch.object(envs, 'setup_worktree', return_value=None), \
+             mock.patch.object(envs, '_resolve_cwds', return_value={'a': None}), \
+             mock.patch.object(envs, '_live_port_index', return_value={3000: {'pid': 1}}), \
+             mock.patch.object(envs, '_kill_ports_for') as killer, \
+             mock.patch.object(envs, '_record_launch') as recorder, \
+             mock.patch.object(envs, '_run_processes') as runner:
+            envs.launch_environment('e')
+        # offset process -> kill list is empty, port assigned & injected as env
+        self.assertEqual(killer.call_args.args[0], [])
+        env_by_pid = runner.call_args.kwargs['env_by_pid']
+        self.assertEqual(env_by_pid, {'a': {'PORT': '3001'}})
+        self.assertEqual(recorder.call_args.kwargs['assigned'], {'a': 3001})
+
 
 class RemoveLaunchTest(unittest.TestCase):
-    def _run_remove(self, force):
+    """Removing a launch only clears the record; worktrees are never deleted."""
+
+    def test_drops_record_without_touching_git(self):
         rec = {'launch_id': 'L1', 'worktree_path': '/tmp/wt', 'repo_path': '/repo', 'processes': []}
-        ok = mock.Mock(returncode=0, stderr='')
-        with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
-             mock.patch.object(envs, 'save_launches') as saver, \
-             mock.patch.object(envs.os.path, 'isdir', return_value=True), \
-             mock.patch.object(envs, '_validate_worktree_path', return_value=None), \
-             mock.patch.object(envs.subprocess, 'run', return_value=ok) as run:
-            envs.remove_launch('L1', force=force)
-        return run, saver
-
-    def test_force_appends_flag_and_drops_record(self):
-        run, saver = self._run_remove(force=True)
-        cmd = run.call_args_list[0].args[0]
-        self.assertEqual(cmd[:4], ['git', 'worktree', 'remove', '--force'])
-        self.assertIn('/tmp/wt', cmd)
-        self.assertEqual(saver.call_args.args[0]['launches'], [])
-
-    def test_no_force_omits_flag(self):
-        run, _ = self._run_remove(force=False)
-        cmd = run.call_args_list[0].args[0]
-        self.assertEqual(cmd, ['git', 'worktree', 'remove', '/tmp/wt'])
-
-    def test_git_failure_raises_and_keeps_record(self):
-        rec = {'launch_id': 'L1', 'worktree_path': '/tmp/wt', 'repo_path': '/repo', 'processes': []}
-        fail = mock.Mock(returncode=1, stderr='contains modified files')
-        with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
-             mock.patch.object(envs, 'save_launches') as saver, \
-             mock.patch.object(envs.os.path, 'isdir', return_value=True), \
-             mock.patch.object(envs, '_validate_worktree_path', return_value=None), \
-             mock.patch.object(envs.subprocess, 'run', return_value=fail):
-            with self.assertRaises(ValueError):
-                envs.remove_launch('L1', force=False)
-        saver.assert_not_called()
-
-    def test_missing_worktree_just_drops_record(self):
-        rec = {'launch_id': 'L1', 'worktree_path': None, 'repo_path': '', 'processes': []}
         with mock.patch.object(envs, 'load_launches', return_value={'launches': [dict(rec)]}), \
              mock.patch.object(envs, 'save_launches') as saver, \
              mock.patch.object(envs.subprocess, 'run') as run:
-            envs.remove_launch('L1')
+            envs.remove_launch('L1', force=True)  # force is a no-op now
         run.assert_not_called()
         self.assertEqual(saver.call_args.args[0]['launches'], [])
+
+    def test_unknown_launch_raises(self):
+        with mock.patch.object(envs, 'load_launches', return_value={'launches': []}), \
+             mock.patch.object(envs, 'save_launches') as saver:
+            with self.assertRaises(ValueError):
+                envs.remove_launch('nope')
+        saver.assert_not_called()
 
 
 if __name__ == '__main__':

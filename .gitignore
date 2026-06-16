@@ -18,4 +18,6 @@ settings/launches.json
 
 # SQLite
 *.db
+*.db-wal
+*.db-shm
 
