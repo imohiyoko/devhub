@@ -597,6 +597,32 @@ def handle_post(handler, path, data):
             handler.send_json({'error': e.stderr}, 400)
         return
 
+    if path == '/api/git/worktree/pull':
+        worktree_path = data.get('worktree_path')
+        if not worktree_path:
+            handler.send_json({'error': 'missing worktree_path'}, 400)
+            return
+
+        path_err = _validate_worktree_path(worktree_path)
+        if path_err:
+            handler.send_json({'error': path_err}, 400)
+            return
+
+        # Pull runs inside the worktree's own directory so it updates that
+        # worktree's branch (not the main repo's). Harden against credential
+        # prompts so a missing credential fails fast instead of hanging.
+        env = os.environ.copy()
+        env['GIT_TERMINAL_PROMPT'] = '0'
+        env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
+        try:
+            res = subprocess.run(['git', 'pull'], cwd=worktree_path, env=env, capture_output=True, text=True, check=True, timeout=60)
+            handler.send_json({'ok': True, 'output': res.stdout})
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'pull timed out'}, 504)
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+        return
+
     if path == '/api/git/worktree/prune':
         # Removes admin entries for worktrees whose directories no longer exist.
         # `git worktree remove` cannot do this (it fails with "is not a working
