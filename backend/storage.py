@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import sys
 from contextlib import closing
 from datetime import datetime
 
@@ -67,10 +68,11 @@ def _ensure_db():
     init_db()
     try:
         migrate_json_to_sqlite()
-    except Exception:
+    except Exception as e:
         # Migration is best-effort: a failure must not block app startup. Worst
         # case the user re-enters settings; the legacy JSON files are untouched.
-        pass
+        # Surface it to stderr so a migration bug is at least visible.
+        print(f"storage: JSON->SQLite migration failed: {e}", file=sys.stderr)
     _initialized.add(DB_PATH)
 
 

@@ -276,6 +276,20 @@ class PortStrategyTest(unittest.TestCase):
         assigned = envs._assign_ports(env_def, {3000: {}})
         self.assertEqual(assigned, {'a': 3001})
 
+    def test_assign_ports_no_double_assign_same_base(self):
+        # Two offset processes sharing a base must get DISTINCT ports.
+        env_def = {'processes': [
+            {'id': 'a', 'port': 3000, 'port_strategy': 'offset', 'port_env_var': 'PORT'},
+            {'id': 'b', 'port': 3000, 'port_strategy': 'offset', 'port_env_var': 'PORT'},
+        ]}
+        live = {}  # nothing listening
+        assigned = envs._assign_ports(env_def, live)
+        self.assertEqual(assigned['a'], 3000)
+        self.assertEqual(assigned['b'], 3001)
+        self.assertNotEqual(assigned['a'], assigned['b'])
+        # caller's live-port snapshot must not be mutated
+        self.assertEqual(live, {})
+
     def test_kill_ports_skipped_for_offset_in_launch(self):
         env_def = {
             'id': 'e', 'processes': [
