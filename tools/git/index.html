@@ -2364,6 +2364,31 @@ function renderWorktreeDetails(wt, isMain) {
     };
     btnRow.appendChild(btnOpen);
 
+    const btnPull = makeButton('Pull', 'secondary');
+    btnPull.onclick = async () => {
+        btnPull.disabled = true;
+        btnPull.textContent = 'Pulling...';
+        try {
+            const res = await fetch('/api/git/worktree/pull', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: currentRepo, worktree_path: wt.path })
+            }).then(r => r.json());
+            if (res.error) {
+                showError(`Pull failed: ${res.error}`);
+            } else {
+                showRepoMsg((res.output || '').trim() || 'Pull complete', 'success');
+                await refreshData();
+            }
+        } catch (e) {
+            showError(`Pull failed: ${e.message}`);
+        } finally {
+            btnPull.disabled = false;
+            btnPull.textContent = 'Pull';
+        }
+    };
+    btnRow.appendChild(btnPull);
+
     if (!isMain) {
         const btnRemove = makeButton('Remove Worktree', 'danger');
         btnRemove.onclick = async () => {
