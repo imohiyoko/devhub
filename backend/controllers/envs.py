@@ -75,7 +75,12 @@ def open_in_terminal(cwd, command, env=None):
 
     if sys_name == 'Darwin':
         if emulator == 'ghostty':
-            cmd = ['ghostty', f'--working-directory={cwd}', '-e', shell] + shell_args + ['-c', command]
+            # --wait-after-command を付けないと、起動コマンドが終了/クラッシュした瞬間に
+            # ghostty が窓を閉じてしまい（既定 wait-after-command=false）、起動失敗の
+            # エラーが読めないまま消える。-e より前に置く必要がある（-e 以降はすべて
+            # 実行コマンド扱いになるため）。
+            cmd = ['ghostty', f'--working-directory={cwd}', '--wait-after-command=true',
+                   '-e', shell] + shell_args + ['-c', command]
             subprocess.Popen(cmd, env=merged_env)
         elif emulator == 'Terminal.app':
             sh_cmd = f"cd {shlex.quote(cwd)} && {cmd_with_env}"
