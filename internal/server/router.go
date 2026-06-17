@@ -85,6 +85,12 @@ func (s *Server) routeGET(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(body)
 			return
 		}
+		// Unknown API routes get a 404 (like POST); the redirect-to-/ fallback is
+		// only meaningful for SPA navigation, not for /api clients.
+		if strings.HasPrefix(path, "/api/") {
+			httpx.WriteError(w, httpx.Errorf(http.StatusNotFound, "not found"))
+			return
+		}
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -94,6 +100,10 @@ func (s *Server) routeGET(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) routePOST(w http.ResponseWriter, r *http.Request) {
+	// Cap the request body so a malformed/oversized POST can't exhaust memory.
+	// 10 MiB is generous for the local JSON payloads this server handles.
+	const maxBodyBytes = 10 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	body, _ := io.ReadAll(r.Body)
 	data := map[string]any{}
 	if len(body) > 0 {

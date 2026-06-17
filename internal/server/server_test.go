@@ -114,6 +114,11 @@ func TestUnknownRoutes(t *testing.T) {
 	if rr.Code != http.StatusFound || rr.Header().Get("Location") != "/" {
 		t.Errorf("unknown GET = %d loc=%q, want 302 /", rr.Code, rr.Header().Get("Location"))
 	}
+	// Unknown API GETs should 404 rather than redirect (the SPA fallback is only
+	// meaningful for navigations, not /api clients).
+	if rr := s.do("GET", "/api/bogus", goodHost, testToken, "", nil); rr.Code != http.StatusNotFound {
+		t.Errorf("unknown API GET = %d, want 404", rr.Code)
+	}
 	if rr := s.do("POST", "/api/bogus", goodHost, testToken, "", strings.NewReader("{}")); rr.Code != http.StatusNotFound {
 		t.Errorf("unknown POST = %d, want 404", rr.Code)
 	}

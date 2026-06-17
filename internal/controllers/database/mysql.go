@@ -225,7 +225,10 @@ func (c *Controller) mysqlRows(p *connProfile, table string, limit, offset int, 
 	if len(pkColumns) > 0 {
 		quoted := make([]string, 0, len(pkColumns))
 		for _, pc := range pkColumns {
-			q, _ := mysqlIdentifier(pc)
+			q, err := mysqlIdentifier(pc)
+			if err != nil {
+				return nil, err
+			}
 			quoted = append(quoted, q)
 		}
 		orderSQL = " ORDER BY " + strings.Join(quoted, ", ")
@@ -345,9 +348,19 @@ func (c *Controller) mysqlUpdate(p *connProfile, table, column string, key, valu
 	if slices.Contains(pkColumns, column) {
 		return fmt.Errorf("primary key columns cannot be edited")
 	}
-	tableSQL, _ := mysqlIdentifier(table)
-	colSQL, _ := mysqlIdentifier(column)
-	_, err = mysqlRun(p, "UPDATE "+tableSQL+" SET "+colSQL+" = "+sqlLiteral(value)+" WHERE "+pkWhere(pkColumns, key))
+	tableSQL, err := mysqlIdentifier(table)
+	if err != nil {
+		return err
+	}
+	colSQL, err := mysqlIdentifier(column)
+	if err != nil {
+		return err
+	}
+	where, err := pkWhere(pkColumns, key)
+	if err != nil {
+		return err
+	}
+	_, err = mysqlRun(p, "UPDATE "+tableSQL+" SET "+colSQL+" = "+sqlLiteral(value)+" WHERE "+where)
 	return err
 }
 
@@ -355,7 +368,10 @@ func (c *Controller) mysqlInsert(p *connProfile, table string) (any, error) {
 	if _, err := c.mysqlColumns(p, table); err != nil {
 		return nil, err
 	}
-	tableSQL, _ := mysqlIdentifier(table)
+	tableSQL, err := mysqlIdentifier(table)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := mysqlRun(p, "INSERT INTO "+tableSQL+" () VALUES ()"); err != nil {
 		return nil, err
 	}
@@ -376,19 +392,29 @@ func (c *Controller) mysqlDelete(p *connProfile, table string, key any) error {
 	if len(pkColumns) == 0 {
 		return fmt.Errorf("table has no primary key")
 	}
-	tableSQL, _ := mysqlIdentifier(table)
-	_, err = mysqlRun(p, "DELETE FROM "+tableSQL+" WHERE "+pkWhere(pkColumns, key))
+	tableSQL, err := mysqlIdentifier(table)
+	if err != nil {
+		return err
+	}
+	where, err := pkWhere(pkColumns, key)
+	if err != nil {
+		return err
+	}
+	_, err = mysqlRun(p, "DELETE FROM "+tableSQL+" WHERE "+where)
 	return err
 }
 
 // pkWhere builds "`c1` = '..' AND `c2` = '..'" from the primary key columns.
-func pkWhere(pkColumns []string, key any) string {
+func pkWhere(pkColumns []string, key any) (string, error) {
 	parts := make([]string, 0, len(pkColumns))
 	for _, c := range pkColumns {
-		q, _ := mysqlIdentifier(c)
+		q, err := mysqlIdentifier(c)
+		if err != nil {
+			return "", err
+		}
 		parts = append(parts, q+" = "+sqlLiteral(keyGet(key, c)))
 	}
-	return strings.Join(parts, " AND ")
+	return strings.Join(parts, " AND "), nil
 }
 
 func tableKeyForRow(row map[string]any, pkColumns []string) map[string]any {

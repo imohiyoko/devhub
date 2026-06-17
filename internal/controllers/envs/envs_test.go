@@ -121,6 +121,43 @@ func TestValidateDeps(t *testing.T) {
 	}
 }
 
+func TestTopoSort(t *testing.T) {
+	// validateDeps and topoSort share topoOrder; this locks the ordering output
+	// (deps before dependents, stable on insertion order) that validateDeps's
+	// error-only assertions don't cover.
+	procs := []map[string]any{
+		{"id": "a"},
+		{"id": "b", "depends_on": []any{"a"}},
+		{"id": "c", "depends_on": []any{"a", "b"}},
+	}
+	got, err := topoSort(procs)
+	if err != nil {
+		t.Fatalf("topoSort errored: %v", err)
+	}
+	want := []string{"a", "b", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("topoSort len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	pos := map[string]int{}
+	for i, id := range got {
+		pos[id] = i
+	}
+	if !(pos["a"] < pos["b"] && pos["b"] < pos["c"]) {
+		t.Errorf("topoSort order violates deps: %v", got)
+	}
+	if _, err := topoSort([]map[string]any{
+		{"id": "a", "depends_on": []any{"b"}},
+		{"id": "b", "depends_on": []any{"a"}},
+	}); err == nil {
+		t.Error("topoSort should error on a cycle")
+	}
+	if _, err := topoSort([]map[string]any{
+		{"id": "a", "depends_on": []any{"ghost"}},
+	}); err == nil {
+		t.Error("topoSort should error on an unknown dep")
+	}
+}
+
 func TestValidateEnvs(t *testing.T) {
 	// Valid: one env, one offset process with a base port and env var.
 	good := map[string]any{"environments": []any{
