@@ -26,3 +26,7 @@ settings/launches.json
 /devhub
 *.test
 
+# mise（個人のローカル上書き。共有する .mise.toml は追跡する）
+.mise.local.toml
+mise.local.toml
+.mise/
