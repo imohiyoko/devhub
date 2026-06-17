@@ -1,0 +1,262 @@
+package envs
+
+import (
+	"maps"
+	"os"
+	"os/exec"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/imohiyoko/devhub/internal/platform"
+)
+
+// applescriptEscape escapes a string for an AppleScript double-quoted literal:
+// backslash/quote are escaped, CR dropped, LF -> "\n" (literal). Mirrors
+// _applescript_escape.
+func applescriptEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	return s
+}
+
+// shlexSafe matches strings that shlex.quote would leave unquoted (ASCII \w plus
+// @%+=:,./-).
+var shlexSafe = regexp.MustCompile(`^[a-zA-Z0-9_@%+=:,./-]+$`)
+
+// shellQuote is a faithful port of Python's shlex.quote (POSIX single-quoting).
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if shlexSafe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+// mergedEnv returns os.Environ() overlaid with extra (extra wins).
+func mergedEnv(extra map[string]string) []string {
+	m := map[string]string{}
+	for _, e := range os.Environ() {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			m[k] = v
+		}
+	}
+	maps.Copy(m, extra)
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		out = append(out, k+"="+v)
+	}
+	return out
+}
+
+func inPath(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
+}
+
+func start(cmd *exec.Cmd) { _ = cmd.Start() }
+
+// runShell launches command via the platform shell (subprocess shell=True).
+func runShell(cwd, command string, env []string) {
+	var cmd *exec.Cmd
+	if platform.IsWindows() {
+		cmd = exec.Command("cmd", "/c", command)
+	} else {
+		cmd = exec.Command("sh", "-c", command)
+	}
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	cmd.Env = env
+	start(cmd)
+}
+
+// termConfig reads the terminal settings for the current OS.
+func (c *Controller) termConfig() (emulator, shell string, shellArgs []string) {
+	settings, _ := c.store.LoadSettings()
+	term, _ := settings["terminal"].(map[string]any)
+	cfg, _ := term[platform.PyName()].(map[string]any)
+	emulator, _ = cfg["emulator"].(string)
+	shell, _ = cfg["shell"].(string)
+	if shell == "" {
+		if platform.IsWindows() {
+			shell = "powershell"
+		} else {
+			shell = "bash"
+		}
+	}
+	for _, a := range toAnySlice(cfg["shell_args"]) {
+		if s, ok := a.(string); ok {
+			shellArgs = append(shellArgs, s)
+		}
+	}
+	return emulator, shell, shellArgs
+}
+
+// buildCmdWithEnv prepends per-OS env exports to command (mirrors the
+// cmd_with_env construction in open_in_terminal). Env keys are sorted for
+// deterministic output.
+func buildCmdWithEnv(command string, env map[string]string, isWindows, isPowershell bool) string {
+	if len(env) == 0 {
+		return command
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var exports []string
+	for _, k := range keys {
+		v := env[k]
+		switch {
+		case isWindows && isPowershell:
+			exports = append(exports, "$env:"+k+"='"+strings.ReplaceAll(v, "'", "''")+"'")
+		case isWindows && !isPowershell:
+			exports = append(exports, `set "`+k+"="+strings.ReplaceAll(v, `"`, `\"`)+`"`)
+		default:
+			exports = append(exports, "export "+k+"="+shellQuote(v))
+		}
+	}
+	sep := " && "
+	if isWindows && isPowershell {
+		sep = " ; "
+	} else if isWindows {
+		sep = " & "
+	}
+	return strings.Join(exports, sep) + sep + command
+}
+
+// openInTerminal launches command in a new terminal window at cwd, injecting env.
+// Mirrors open_in_terminal.
+func (c *Controller) openInTerminal(cwd, command string, env map[string]string) {
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	sysName := platform.PyName()
+	emulator, shell, shellArgs := c.termConfig()
+	isPowershell := strings.Contains(strings.ToLower(shell), "powershell") || strings.Contains(strings.ToLower(shell), "pwsh")
+
+	cmdWithEnv := buildCmdWithEnv(command, env, platform.IsWindows(), isPowershell)
+	merged := mergedEnv(env)
+
+	exempt := emulator == "Terminal.app" || emulator == "iTerm" || emulator == "wt"
+	if emulator == "" || (!exempt && !inPath(emulator)) {
+		runShell(cwd, command, merged)
+		return
+	}
+
+	switch sysName {
+	case "Darwin":
+		switch emulator {
+		case "ghostty":
+			args := append([]string{"--working-directory=" + cwd, "--wait-after-command=true", "-e", shell}, shellArgs...)
+			args = append(args, "-c", command)
+			cmd := exec.Command("ghostty", args...)
+			cmd.Env = merged
+			start(cmd)
+		case "Terminal.app":
+			shCmd := "cd " + shellQuote(cwd) + " && " + cmdWithEnv
+			script := `tell application "Terminal" to do script "` + applescriptEscape(shCmd) + `"`
+			start(exec.Command("osascript", "-e", script))
+		case "iTerm":
+			shCmd := "cd " + shellQuote(cwd) + " && " + cmdWithEnv
+			script := "\n            tell application \"iTerm\"\n                create window with default profile\n                tell current session of current window\n                    write text \"" + applescriptEscape(shCmd) + "\"\n                end tell\n            end tell\n            "
+			start(exec.Command("osascript", "-e", script))
+		default:
+			runShell(cwd, command, merged)
+		}
+	case "Windows":
+		if emulator == "wt" {
+			flag := "/c"
+			if isPowershell {
+				flag = "-Command"
+			}
+			args := append([]string{"new-tab", "--startingDirectory", cwd, shell}, shellArgs...)
+			args = append(args, flag, cmdWithEnv)
+			cmd := exec.Command("wt", args...)
+			cmd.Env = merged
+			start(cmd)
+		} else {
+			runShell(cwd, command, merged)
+		}
+	case "Linux":
+		switch emulator {
+		case "gnome-terminal":
+			args := append([]string{"--working-directory=" + cwd, "--", shell}, shellArgs...)
+			args = append(args, "-c", cmdWithEnv)
+			cmd := exec.Command("gnome-terminal", args...)
+			cmd.Env = merged
+			start(cmd)
+		case "xterm":
+			args := append([]string{"-e", shell}, shellArgs...)
+			args = append(args, "-c", cmdWithEnv)
+			cmd := exec.Command("xterm", args...)
+			cmd.Dir = cwd
+			cmd.Env = merged
+			start(cmd)
+		default:
+			runShell(cwd, command, merged)
+		}
+	default:
+		runShell(cwd, command, merged)
+	}
+}
+
+// openTerminalInDir opens an interactive shell at cwd (no command), falling back
+// to the editor when no usable emulator is available. Mirrors open_terminal_in_dir.
+func (c *Controller) openTerminalInDir(cwd string) error {
+	if cwd == "" || !isDir(cwd) {
+		return errMsg("worktree directory does not exist")
+	}
+	sysName := platform.PyName()
+	emulator, _, _ := c.termConfig()
+
+	fallback := func() { c.workspace.OpenInEditor(cwd) }
+	if emulator == "" {
+		fallback()
+		return nil
+	}
+
+	switch sysName {
+	case "Darwin":
+		switch {
+		case emulator == "ghostty" && inPath("ghostty"):
+			start(exec.Command("ghostty", "--working-directory="+cwd))
+		case emulator == "Terminal.app":
+			shCmd := "cd " + shellQuote(cwd)
+			safe := strings.ReplaceAll(strings.ReplaceAll(shCmd, `\`, `\\`), `"`, `\"`)
+			start(exec.Command("osascript", "-e", `tell application "Terminal" to do script "`+safe+`"`))
+		case emulator == "iTerm":
+			shCmd := "cd " + shellQuote(cwd)
+			safe := strings.ReplaceAll(strings.ReplaceAll(shCmd, `\`, `\\`), `"`, `\"`)
+			script := "\n            tell application \"iTerm\"\n                create window with default profile\n                tell current session of current window\n                    write text \"" + safe + "\"\n                end tell\n            end tell\n            "
+			start(exec.Command("osascript", "-e", script))
+		default:
+			fallback()
+		}
+	case "Windows":
+		if emulator == "wt" && inPath("wt") {
+			start(exec.Command("wt", "new-tab", "--startingDirectory", cwd))
+		} else {
+			fallback()
+		}
+	case "Linux":
+		switch {
+		case emulator == "gnome-terminal" && inPath("gnome-terminal"):
+			start(exec.Command("gnome-terminal", "--working-directory="+cwd))
+		case emulator == "xterm" && inPath("xterm"):
+			cmd := exec.Command("xterm")
+			cmd.Dir = cwd
+			start(cmd)
+		default:
+			fallback()
+		}
+	default:
+		fallback()
+	}
+	return nil
+}
