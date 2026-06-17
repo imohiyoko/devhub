@@ -2266,7 +2266,7 @@ function renderAddWorktreeForm(preselectedBranch = '') {
     prBtn.style.padding = '8px 16px';
     prBtn.onclick = async () => {
         const prUrl = prCard.querySelector('#wt-add-pr-url').value.trim();
-        if (!prUrl) { alert('PR URL is required'); return; }
+        if (!prUrl) { showError('PR URL is required'); return; }
         prBtn.disabled = true;
         prBtn.textContent = 'Fetching PR…';
         try {
