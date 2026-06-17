@@ -41,12 +41,19 @@ env-launcher 側に「起動時 worktree オーバーライド」や専用の「
     `PORT={{port}} make run`
 
   のいずれでも offset に乗れる。割り当てポートがある時のみ作用し、それ以外は素通し。
+
+  **注意**: offset の判定（`_is_offset`）と保存時バリデーションは、現状 `port_env_var`
+  の宣言を必須とする。そのため `{{port}}` を CLI 引数で受けるアプリでも、offset に乗せるには
+  `port_env_var` を宣言する必要がある（その env 変数も export されるが、アプリが読まなければ
+  無視されるだけで害はない。`settings/envs.example.json` の `cli-port-verify` 参照）。
+  この「ダミー `port_env_var` が必要」な制約を外すかは、必要になった時に別途検討する（YAGNI）。
 - **git.py の関数抽出**（`add_worktree` / `ensure_worktree_from_pr`）:
   HTTP ハンドラ内インラインだった worktree 確保処理を純関数化。既存エンドポイントが
   これを呼ぶよう置換しただけで**挙動は不変**（既存テストで担保）。失敗は
   `WorktreeError(message, status)` で送出し HTTP 層がマップする。
-- **見本 env**（`settings/envs.example.json` の `devhub-verify`）:
-  devhub 自身を offset + `DEVHUB_PORT` で検証起動する設定例。
+- **見本 env**（`settings/envs.example.json`）:
+  `devhub-verify`（devhub 自身を offset + `DEVHUB_PORT` で検証起動）と、
+  `cli-port-verify`（ポートを CLI 引数 `--port {{port}}` で受けるアプリの offset 例）。
 
 ## Consequences（結果）
 

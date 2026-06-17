@@ -11,9 +11,10 @@ logger = logging.getLogger(__name__)
 class WorktreeError(Exception):
     """A worktree operation failed with a user-facing message and HTTP status.
 
-    The reusable ensure_* worktree helpers raise this instead of writing to the
-    HTTP handler, so they can be called both from the HTTP endpoints (which map
-    .status/.message onto send_json) and from other controllers (env-launcher).
+    The extracted worktree helpers (add_worktree / ensure_worktree_from_pr) raise
+    this instead of writing to the HTTP handler, which keeps the handlers thin and
+    lets the helpers be unit-tested without an HTTP layer. The handlers catch it
+    and map .status/.message (and .extra) onto send_json.
     """
     def __init__(self, message, status=400, extra=None):
         super().__init__(message)
