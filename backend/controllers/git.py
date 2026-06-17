@@ -472,10 +472,14 @@ def ensure_worktree_from_pr(repo_path, pr_url, worktree_path=None):
         raise WorktreeError(path_err)
 
     # Harden against credential prompts so a missing credential fails fast
-    # instead of hanging (mirrors /api/git/fetch).
+    # instead of hanging (mirrors /api/git/fetch). LC_ALL/LANG=C pin git's
+    # messages to English so the 'already exists' stderr match below stays
+    # reliable on non-English locales (git error messages are localized).
     env = os.environ.copy()
     env['GIT_TERMINAL_PROMPT'] = '0'
     env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
+    env['LC_ALL'] = 'C'
+    env['LANG'] = 'C'
 
     # pull/<N>/head resolves on the base repo for both same-repo and fork PRs, so
     # a single fetch path covers every case. <N> is digits-only by construction;
@@ -500,7 +504,7 @@ def ensure_worktree_from_pr(repo_path, pr_url, worktree_path=None):
     try:
         res = subprocess.run(
             ['git', 'worktree', 'add', '-b', branch, worktree_path, 'FETCH_HEAD'],
-            cwd=repo_path, capture_output=True, text=True, check=True, timeout=120,
+            cwd=repo_path, env=env, capture_output=True, text=True, check=True, timeout=120,
         )
     except subprocess.TimeoutExpired:
         raise WorktreeError('git worktree add timed out', status=504)

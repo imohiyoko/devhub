@@ -77,13 +77,24 @@ class AddWorktreeTest(unittest.TestCase):
         with self.assertRaises(git.WorktreeError):
             git.add_worktree('/repos/app', 'relative/path', 'feat/x')
 
-    def test_success_returns_stdout(self):
-        # prune (no check) then add (check=True) -> two subprocess.run calls
+    def test_success_returns_add_stdout_not_prune(self):
+        # prune (no check) then add (check=True) -> two subprocess.run calls.
+        # Return DISTINCT stdout per command so a regression that returned the
+        # prune output instead of the add output would fail this test.
+        calls = []
+
         def fake_run(cmd, **kw):
+            calls.append(cmd)
+            if cmd[:3] == ['git', 'worktree', 'prune']:
+                return mock.Mock(stdout='pruned stale worktrees')
             return mock.Mock(stdout='Preparing worktree')
+
         with mock.patch.object(git.subprocess, 'run', side_effect=fake_run):
             out = git.add_worktree('/repos/app', '/abs/wt', 'feat/x', new_branch=True)
         self.assertEqual(out, 'Preparing worktree')
+        # prune runs before add
+        self.assertEqual(calls[0][:3], ['git', 'worktree', 'prune'])
+        self.assertEqual(calls[1][:3], ['git', 'worktree', 'add'])
 
 
 if __name__ == '__main__':
