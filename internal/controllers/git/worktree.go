@@ -60,7 +60,7 @@ func (c *Controller) ListWorktrees(repoPath string) ([]map[string]any, error) {
 func listWorktrees(repoPath string) ([]map[string]any, error) {
 	out, stderr, timedOut, err := runCmd(repoPath, 15*time.Second, nil, "git", "worktree", "list", "--porcelain")
 	if timedOut {
-		return nil, httpx.Errorf(http.StatusBadRequest, "git worktree list timed out")
+		return nil, httpx.Errorf(http.StatusGatewayTimeout, "git worktree list timed out")
 	}
 	if err != nil {
 		return nil, httpx.Errorf(http.StatusBadRequest, "%s", stderr)

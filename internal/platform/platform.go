@@ -53,5 +53,12 @@ func DevhubHome() string {
 			return filepath.Join(la, "devhub")
 		}
 	}
-	return filepath.Join(Home(), ".devhub")
+	if h := Home(); h != "" {
+		return filepath.Join(h, ".devhub")
+	}
+	// Avoid a CWD-relative ".devhub": fall back to the OS config dir, then "".
+	if uc, err := os.UserConfigDir(); err == nil && uc != "" {
+		return filepath.Join(uc, "devhub")
+	}
+	return ""
 }

@@ -1,6 +1,9 @@
 package storage
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+)
 
 // LoadLaunches reconstructs the {"launches": [...]} document from the launches
 // table, ordered like the Python version (launched_at, then rowid).
@@ -31,9 +34,21 @@ func (s *Store) LoadLaunches() (map[string]any, error) {
 // SaveLaunches replaces the entire launches table in a single transaction.
 // Callers serialize load->mutate->save under Store.RegistryMu.
 func (s *Store) SaveLaunches(data map[string]any) error {
+	// Normalize the launches value up front. A silent type mismatch here would
+	// run the DELETE below with nothing to re-insert, wiping the whole table.
 	var launches []any
-	if list, ok := data["launches"].([]any); ok {
+	switch list := data["launches"].(type) {
+	case nil:
+		launches = nil
+	case []any:
 		launches = list
+	case []map[string]any:
+		launches = make([]any, len(list))
+		for i, rec := range list {
+			launches[i] = rec
+		}
+	default:
+		return errors.New("launches must be an array")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {

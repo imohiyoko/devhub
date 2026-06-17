@@ -73,7 +73,7 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 	case "/api/envs/launch":
 		envID := pStr(data, "env_id")
 		if envID == "" {
-			return errors.New("env_id is required")
+			return httpx.Errorf(http.StatusBadRequest, "env_id is required")
 		}
 		if err := c.launchEnvironment(envID); err != nil {
 			return err
@@ -87,11 +87,11 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 	case "/api/envs/launches/remove":
 		launchID := pStr(data, "launch_id")
 		if launchID == "" {
-			return errors.New("launch_id is required")
+			return httpx.Errorf(http.StatusBadRequest, "launch_id is required")
 		}
 		force, ok := data["force"].(bool)
 		if _, present := data["force"]; present && !ok {
-			return errors.New("force must be a boolean")
+			return httpx.Errorf(http.StatusBadRequest, "force must be a boolean")
 		}
 		if err := c.removeLaunch(launchID, force); err != nil {
 			return err
@@ -100,7 +100,7 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 	case "/api/envs/launches/open":
 		launchID := pStr(data, "launch_id")
 		if launchID == "" {
-			return errors.New("launch_id is required")
+			return httpx.Errorf(http.StatusBadRequest, "launch_id is required")
 		}
 		if err := c.openLaunch(launchID, pStr(data, "target")); err != nil {
 			return err
@@ -117,7 +117,7 @@ func (c *Controller) launchSingleProcess(data map[string]any) error {
 	envID := pStr(data, "env_id")
 	processID := pStr(data, "process_id")
 	if envID == "" || processID == "" {
-		return errors.New("env_id and process_id are required")
+		return httpx.Errorf(http.StatusBadRequest, "env_id and process_id are required")
 	}
 	envDef, err := c.findEnv(envID)
 	if err != nil {

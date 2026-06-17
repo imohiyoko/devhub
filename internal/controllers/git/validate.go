@@ -52,14 +52,14 @@ func validateWorktreePath(p string) string {
 	if p == "" {
 		return "missing worktree path"
 	}
-	if strings.HasPrefix(p, "-") || hasPathTraversal(p) {
+	// Reject control chars before the absoluteness check so the result does not
+	// depend on the OS's notion of "absolute" (on Windows "/a\nb" is not absolute,
+	// so without this ordering the newline would be masked by the abs-path error).
+	if strings.HasPrefix(p, "-") || hasPathTraversal(p) || worktreeBadChars.MatchString(p) {
 		return "invalid worktree path"
 	}
 	if !filepath.IsAbs(p) {
 		return "worktree path must be absolute"
-	}
-	if worktreeBadChars.MatchString(p) {
-		return "invalid worktree path"
 	}
 	return ""
 }
