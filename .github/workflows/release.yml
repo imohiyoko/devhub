@@ -7,6 +7,11 @@ on:
 permissions:
   contents: write # required to create the GitHub Release
 
+# mise itself is pinned to this exact version for reproducible runs.
+# Keep it in sync with the value in ci.yml.
+env:
+  MISE_VERSION: "2026.6.11"
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest # CGO_ENABLED=0 cross-compiles all targets from one runner
@@ -16,7 +21,7 @@ jobs:
           fetch-depth: 0 # full history for the changelog
       - uses: jdx/mise-action@v2
         with:
-          version: "2026.6.11" # pin mise itself for reproducible runs
+          version: ${{ env.MISE_VERSION }}
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
