@@ -222,8 +222,13 @@ func (c *Controller) resolveCwds(envDef map[string]any, envCwdOverride string) (
 	return cwds, nil
 }
 
-// topoSort returns process ids in dependency order, or an error on a cycle / unknown dep.
-func topoSort(procs []map[string]any) ([]string, error) {
+// topoOrder runs Kahn's algorithm over the processes' depends_on edges and
+// returns them in dependency order. The returned order is valid only when both
+// unknownDep and cyclic are zero/false. On an unknown dependency it reports the
+// missing dep and the process that referenced it; on a cycle it sets cyclic.
+// Callers (validateDeps, topoSort) format their own error messages so they can
+// scope them to an environment id without duplicating the algorithm.
+func topoOrder(procs []map[string]any) (order []string, unknownDep, badProc string, cyclic bool) {
 	inDegree := map[string]int{}
 	adj := map[string][]string{}
 	for _, p := range procs {
@@ -235,7 +240,7 @@ func topoSort(procs []map[string]any) ([]string, error) {
 		id := pStr(p, "id")
 		for _, dep := range toStringSlice(p["depends_on"]) {
 			if _, ok := adj[dep]; !ok {
-				return nil, fmt.Errorf("Dependency '%s' for process '%s' not found in environment", dep, id)
+				return nil, dep, id, false
 			}
 			adj[dep] = append(adj[dep], id)
 			inDegree[id]++
@@ -248,11 +253,10 @@ func topoSort(procs []map[string]any) ([]string, error) {
 			queue = append(queue, id)
 		}
 	}
-	var sorted []string
 	for len(queue) > 0 {
 		id := queue[0]
 		queue = queue[1:]
-		sorted = append(sorted, id)
+		order = append(order, id)
 		for _, nxt := range adj[id] {
 			inDegree[nxt]--
 			if inDegree[nxt] == 0 {
@@ -260,10 +264,22 @@ func topoSort(procs []map[string]any) ([]string, error) {
 			}
 		}
 	}
-	if len(sorted) != len(procs) {
+	if len(order) != len(procs) {
+		return nil, "", "", true
+	}
+	return order, "", "", false
+}
+
+// topoSort returns process ids in dependency order, or an error on a cycle / unknown dep.
+func topoSort(procs []map[string]any) ([]string, error) {
+	order, unknownDep, badProc, cyclic := topoOrder(procs)
+	if unknownDep != "" {
+		return nil, fmt.Errorf("Dependency '%s' for process '%s' not found in environment", unknownDep, badProc)
+	}
+	if cyclic {
 		return nil, errors.New("Circular dependency detected in depends_on")
 	}
-	return sorted, nil
+	return order, nil
 }
 
 // runProcesses topologically sorts and launches the env's processes on a

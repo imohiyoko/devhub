@@ -273,43 +273,14 @@ func validateEnvs(data map[string]any) error {
 }
 
 // validateDeps checks for unknown/circular dependencies with env-scoped messages.
+// It shares the dependency-sort core with topoSort (launch.go) so the two can't
+// drift; only the error wording differs (scoped to the environment id here).
 func validateDeps(procs []map[string]any, eid string) error {
-	inDegree := map[string]int{}
-	adj := map[string][]string{}
-	for _, p := range procs {
-		id := pStr(p, "id")
-		inDegree[id] = 0
-		adj[id] = nil
+	_, unknownDep, badProc, cyclic := topoOrder(procs)
+	if unknownDep != "" {
+		return fmt.Errorf("Dependency '%s' for process '%s' not found in environment '%s'", unknownDep, badProc, eid)
 	}
-	for _, p := range procs {
-		id := pStr(p, "id")
-		for _, dep := range toStringSlice(p["depends_on"]) {
-			if _, ok := adj[dep]; !ok {
-				return fmt.Errorf("Dependency '%s' for process '%s' not found in environment '%s'", dep, id, eid)
-			}
-			adj[dep] = append(adj[dep], id)
-			inDegree[id]++
-		}
-	}
-	var queue []string
-	for _, p := range procs {
-		if id := pStr(p, "id"); inDegree[id] == 0 {
-			queue = append(queue, id)
-		}
-	}
-	count := 0
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		count++
-		for _, nxt := range adj[id] {
-			inDegree[nxt]--
-			if inDegree[nxt] == 0 {
-				queue = append(queue, nxt)
-			}
-		}
-	}
-	if count != len(procs) {
+	if cyclic {
 		return fmt.Errorf("Circular dependency detected in environment '%s'", eid)
 	}
 	return nil

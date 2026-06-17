@@ -232,6 +232,11 @@ func mysqlIdentifier(name string) (string, error) {
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`", nil
 }
 
+// sqlLiteral renders a value as a quoted SQL string literal. The MySQL path
+// escapes by hand (rather than binding parameters) because queries run via the
+// `mysql` CLI. This assumes default escaping; under NO_BACKSLASH_ESCAPES the
+// backslash-doubling would be wrong — not an injection risk (single quotes are
+// still doubled) but values could be corrupted.
 func sqlLiteral(value any) string {
 	if value == nil {
 		return "NULL"
