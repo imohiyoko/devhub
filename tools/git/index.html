@@ -695,7 +695,19 @@ const DEFAULT_CONFIG = {
 let gitConfig = structuredClone(DEFAULT_CONFIG);
 let allRepos = [];
 let currentRepo = '';
-let activeTab = 'files';
+
+// Active tab is persisted in localStorage so a reload (Cmd+R) keeps the
+// current tab instead of resetting to the default.
+const TAB_STORAGE_KEY = 'git-tool-active-tab';
+const VALID_TABS = ['status', 'files', 'branches', 'commits', 'stash', 'worktrees'];
+function loadActiveTab() {
+    try {
+        const saved = localStorage.getItem(TAB_STORAGE_KEY);
+        if (VALID_TABS.includes(saved)) return saved;
+    } catch (e) {}
+    return 'files';
+}
+let activeTab = loadActiveTab();
 
 // Branches-tab filter state (persisted across re-renders of the tab).
 let branchSearch = '';
@@ -1337,6 +1349,7 @@ document.querySelectorAll('.tab').forEach(t => {
         document.querySelectorAll('.tab').forEach(tt => tt.classList.remove('active'));
         t.classList.add('active');
         activeTab = t.dataset.tab;
+        try { localStorage.setItem(TAB_STORAGE_KEY, activeTab); } catch (e) {}
         selectedItemIndex = 0;
         document.getElementById('right-pane').innerHTML = '';
         renderTabContent();
@@ -2741,6 +2754,9 @@ function showCleanupToast(category, items) {
 
 // Init
 (async () => {
+    // Sync the visually active tab with the persisted activeTab (the HTML
+    // markup hardcodes 'files' as active).
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
     await loadSystemInfo();
     await loadAppConfig();
     await loadSettings();
