@@ -1,188 +1,87 @@
-param(
+﻿param(
+    [string]$Version    = $env:DEVHUB_VERSION,
     [string]$InstallDir = $env:DEVHUB_INSTALL_DIR,
-    [string]$BinDir = $env:DEVHUB_BIN_DIR,
-    [string]$RepoUrl = $env:DEVHUB_REPO_URL
+    [string]$BinDir     = $env:DEVHUB_BIN_DIR,
+    [string]$Repo       = $env:DEVHUB_REPO
 )
 
+# devhub installer (Windows): downloads a pinned, checksum-verified release
+# binary. No git clone, no Python — just a single static executable.
 $ErrorActionPreference = "Stop"
 
-if (-not $RepoUrl) {
-    $RepoUrl = "https://github.com/imohiyoko/devhub.git"
+if (-not $Repo)       { $Repo = "imohiyoko/devhub" }
+if (-not $InstallDir) { $InstallDir = Join-Path $env:LOCALAPPDATA "devhub" }
+if (-not $BinDir)     { $BinDir = Join-Path $env:USERPROFILE "bin" }
+
+# --- detect arch (must match GoReleaser's asset names) ---
+switch ($env:PROCESSOR_ARCHITECTURE) {
+    "AMD64" { $arch = "amd64" }
+    "ARM64" { $arch = "arm64" }
+    default { throw "未対応の CPU アーキテクチャ: $($env:PROCESSOR_ARCHITECTURE)" }
 }
 
-function Test-Python {
-    param(
-        [string]$Command,
-        [string[]]$Arguments = @()
-    )
+# --- resolve version ---
+if (-not $Version) {
+    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "devhub-installer" }
+    $Version = $rel.tag_name
+}
+if (-not $Version) { throw "最新バージョンを取得できませんでした。DEVHUB_VERSION を指定してください。" }
+$nv = $Version.TrimStart("v")
 
-    try {
-        & $Command @Arguments -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)" *> $null
-        return $LASTEXITCODE -eq 0
-    } catch {
-        return $false
-    }
+$asset = "devhub_${nv}_windows_${arch}.zip"
+$base  = "https://github.com/$Repo/releases/download/$Version"
+
+$tmp = Join-Path $env:TEMP ("devhub-" + [System.IO.Path]::GetRandomFileName())
+New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+try {
+    Write-Host "Downloading $asset ($Version) ..."
+    Invoke-WebRequest -Uri "$base/$asset" -OutFile (Join-Path $tmp $asset)
+    Invoke-WebRequest -Uri "$base/checksums.txt" -OutFile (Join-Path $tmp "checksums.txt")
+
+    # --- verify SHA256 before extracting ---
+    Write-Host "Verifying checksum ..."
+    $expectedLine = Select-String -Path (Join-Path $tmp "checksums.txt") -Pattern ([regex]::Escape($asset)) | Select-Object -First 1
+    if (-not $expectedLine) { throw "$asset のチェックサムが見つかりません。" }
+    $expected = ($expectedLine.Line -split "\s+")[0].ToLower()
+    $actual = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $tmp $asset)).Hash.ToLower()
+    if ($expected -ne $actual) { throw "チェックサム検証に失敗しました ($asset)。" }
+
+    # --- install the single binary ---
+    Expand-Archive -Path (Join-Path $tmp $asset) -DestinationPath $tmp -Force
+    New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "bin") | Out-Null
+    $exe = Join-Path $InstallDir "bin\devhub.exe"
+    Copy-Item -Path (Join-Path $tmp "devhub.exe") -Destination $exe -Force
+} finally {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 
-function Find-PythonCommand {
-    if ((Get-Command py -ErrorAction SilentlyContinue) -and (Test-Python "py" @("-3"))) {
-        return "py -3"
-    }
-
-    foreach ($command in @("python", "python3")) {
-        $resolved = Get-Command $command -ErrorAction SilentlyContinue
-        if ($resolved -and (Test-Python $command)) {
-            return ('"{0}"' -f $resolved.Source)
-        }
-    }
-
-    Write-Host "エラー: Python 3.8 以上が見つかりません。" -ForegroundColor Red
-    Write-Host "Windowsの場合は以下を実行してインストールしてください:" -ForegroundColor Red
-    Write-Host "  winget install Python.Python.3" -ForegroundColor Red
-    throw "Python 3.8 or newer was not found."
-}
-
-function Set-DefaultEditorIfNeeded {
-    param([string]$RootDir)
-
-    if (Get-Command code -ErrorAction SilentlyContinue) {
-        return
-    }
-
-    $candidates = @()
-    if ($env:LOCALAPPDATA) {
-        $candidates += (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\bin\code.cmd")
-    }
-    if ($env:ProgramFiles) {
-        $candidates += (Join-Path $env:ProgramFiles "Microsoft VS Code\bin\code.cmd")
-    }
-    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
-    if ($programFilesX86) {
-        $candidates += (Join-Path $programFilesX86 "Microsoft VS Code\bin\code.cmd")
-    }
-
-    $editorPath = $null
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) {
-            $editorPath = $candidate
-            break
-        }
-    }
-
-    if (-not $editorPath) {
-        Write-Warning "VS Code 'code' command was not found. Configure settings/server.json editor if workspace open does not work."
-        return
-    }
-
-    $settingsDir = Join-Path $RootDir "settings"
-    $serverJson = Join-Path $settingsDir "server.json"
-    New-Item -ItemType Directory -Force -Path $settingsDir | Out-Null
-
-    if (Test-Path $serverJson) {
-        $settings = Get-Content -Raw -Path $serverJson | ConvertFrom-Json
-        if ($settings.PSObject.Properties.Name -contains "editor") {
-            return
-        }
-    } else {
-        $settings = [pscustomobject]@{}
-    }
-
-    $settings | Add-Member -NotePropertyName "editor" -NotePropertyValue $editorPath -Force
-    $settings | ConvertTo-Json -Depth 5 | Set-Content -Path $serverJson -Encoding UTF8
-}
-
-$scriptRoot = $PSScriptRoot
-if (-not $scriptRoot -and $MyInvocation.MyCommand.Path) {
-    $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-
-$managedInstall = $true
-if (-not $InstallDir -and $scriptRoot -and (Test-Path (Join-Path $scriptRoot "server.py"))) {
-    $InstallDir = $scriptRoot
-    $managedInstall = $false
-} elseif (-not $InstallDir) {
-    $InstallDir = Join-Path $env:LOCALAPPDATA "devhub"
-}
-
-if (-not $BinDir) {
-    $BinDir = Join-Path $env:USERPROFILE "bin"
-}
-
-if ($managedInstall) {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Host "エラー: git が見つかりません。" -ForegroundColor Red
-        Write-Host "Windowsの場合は以下を実行してインストールしてください:" -ForegroundColor Red
-        Write-Host "  winget install Git.Git" -ForegroundColor Red
-        throw "git was not found."
-    }
-
-    if (Test-Path (Join-Path $InstallDir ".git")) {
-        git -C $InstallDir remote set-url origin $RepoUrl *> $null
-        git -C $InstallDir pull --ff-only
-        if ($LASTEXITCODE -ne 0) {
-            throw "git pull failed."
-        }
-    } elseif (Test-Path $InstallDir) {
-        throw "$InstallDir already exists, but it is not a git repository. Set DEVHUB_INSTALL_DIR to use a different path."
-    } else {
-        $parent = Split-Path -Parent $InstallDir
-        if ($parent) {
-            New-Item -ItemType Directory -Force -Path $parent | Out-Null
-        }
-        git clone $RepoUrl $InstallDir
-        if ($LASTEXITCODE -ne 0) {
-            throw "git clone failed."
-        }
-    }
-}
-
-$serverPath = Join-Path $InstallDir "server.py"
-if (-not (Test-Path $serverPath)) {
-    throw "$serverPath was not found."
-}
-
-Set-DefaultEditorIfNeeded $InstallDir
-
-$pythonCommand = Find-PythonCommand
-
+# --- shim on PATH that calls the installed binary ---
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-
-$commandPath = Join-Path $BinDir "devhub.cmd"
-$commandBody = @"
+$shim = Join-Path $BinDir "devhub.cmd"
+Set-Content -Path $shim -Encoding ASCII -Value @"
 @echo off
-if not "%1"=="--no-browser" (
-    explorer "http://localhost:8765"
-)
-call $pythonCommand "$serverPath" %*
+"$exe" %*
 "@
-Set-Content -Path $commandPath -Value $commandBody -Encoding ASCII
 
+# --- ensure BinDir is on the user PATH (carried over from the previous installer) ---
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $pathItems = @()
-if ($userPath) {
-    $pathItems = $userPath -split ";"
-}
-
-$pathContainsBin = $false
+if ($userPath) { $pathItems = $userPath -split ";" }
+$onPath = $false
 foreach ($item in $pathItems) {
-    if ($item.TrimEnd("\") -ieq $BinDir.TrimEnd("\")) {
-        $pathContainsBin = $true
-        break
-    }
+    if ($item.TrimEnd("\") -ieq $BinDir.TrimEnd("\")) { $onPath = $true; break }
 }
-
-if (-not $pathContainsBin) {
+if (-not $onPath) {
     $newUserPath = if ($userPath) { "$BinDir;$userPath" } else { $BinDir }
     [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
     $env:Path = "$BinDir;$env:Path"
     Write-Host "PATH updated for future terminals: $BinDir"
 }
 
-Write-Host "Installed devhub"
-Write-Host "  Command: $commandPath"
-Write-Host "  Server : $serverPath"
+Write-Host "Installed devhub $Version"
+Write-Host "  Command : $shim"
+Write-Host "  Binary  : $exe"
+Write-Host "  Settings: $(Join-Path $InstallDir 'settings')"
 Write-Host ""
-Write-Host "Start:"
-Write-Host "  devhub"
-Write-Host ""
-Write-Host "[Notice] 環境変数を反映させるため、現在のターミナルを一度閉じて再起動するか、新しいウィンドウを開いてから devhub コマンドを実行してください。"
+Write-Host "Start: devhub"
+Write-Host "[Notice] 新しいターミナルを開いてから devhub を実行してください。"
