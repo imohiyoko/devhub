@@ -184,7 +184,21 @@ def open_terminal_in_dir(cwd):
     else:
         _editor_fallback()
 
-def launch_process(process_def, cwd_override=None, extra_env=None):
+# The `{{port}}` token in a command is substituted with the offset-assigned port
+# at launch. This lets apps that take the port as a CLI flag or make argument
+# (not an env var) still join the parallel-worktree / verification flow:
+#   "myapp --port {{port}}"  or  "PORT={{port}} make server.run"
+# Only offset processes get an assigned port, so substitution is a no-op
+# otherwise; the literal token is left untouched when no port is assigned.
+_PORT_PLACEHOLDER = '{{port}}'
+
+def _apply_port_placeholder(command, assigned_port):
+    """Replace `{{port}}` in command with assigned_port (when one was assigned)."""
+    if assigned_port is None or not command:
+        return command
+    return command.replace(_PORT_PLACEHOLDER, str(assigned_port))
+
+def launch_process(process_def, cwd_override=None, extra_env=None, assigned_port=None):
     raw_cwd = process_def.get('cwd')
     cwd = cwd_override if cwd_override else (os.path.expanduser(raw_cwd) if raw_cwd else None)
     if cwd == '':
@@ -193,7 +207,8 @@ def launch_process(process_def, cwd_override=None, extra_env=None):
     if extra_env:
         # extra_env (e.g. an offset-assigned port) overrides the declared env.
         env = {**env, **extra_env}
-    open_in_terminal(cwd, process_def.get('command', ''), env)
+    command = _apply_port_placeholder(process_def.get('command', ''), assigned_port)
+    open_in_terminal(cwd, command, env)
 
 def _resolve_worktree(repo_path, branch):
     """Resolve (repo, branch) to an EXISTING worktree path, or None.
@@ -260,16 +275,18 @@ def _resolve_cwds(env_def, env_cwd_override=None):
             cwds[p.get('id')] = env_cwd_override
     return cwds
 
-def _run_processes(env_def, cwd_by_pid=None, cwd_override=None, env_by_pid=None):
+def _run_processes(env_def, cwd_by_pid=None, cwd_override=None, env_by_pid=None, port_by_pid=None):
     """Topologically sort an environment's processes and launch them on a thread.
 
     Each process runs in cwd_by_pid[pid] when present (its resolved worktree),
     otherwise cwd_override, otherwise its own declared cwd. env_by_pid[pid] holds
-    extra env vars to inject (e.g. an offset-assigned port). Does NOT touch the
-    worktree or the launch registry — the caller owns that.
+    extra env vars to inject (e.g. an offset-assigned port); port_by_pid[pid] is
+    that same assigned port, used to substitute `{{port}}` in the command. Does
+    NOT touch the worktree or the launch registry — the caller owns that.
     """
     cwd_by_pid = cwd_by_pid or {}
     env_by_pid = env_by_pid or {}
+    port_by_pid = port_by_pid or {}
     processes = env_def.get('processes', [])
 
     # Topological sort
@@ -303,7 +320,7 @@ def _run_processes(env_def, cwd_by_pid=None, cwd_override=None, env_by_pid=None)
             for i, pid in enumerate(sorted_pids):
                 p_def = pid_to_def[pid]
                 launch_process(p_def, cwd_override=cwd_by_pid.get(pid, cwd_override),
-                               extra_env=env_by_pid.get(pid))
+                               extra_env=env_by_pid.get(pid), assigned_port=port_by_pid.get(pid))
                 if i < len(sorted_pids) - 1:
                     try:
                         raw = p_def.get('delay_seconds')
@@ -380,7 +397,8 @@ def launch_environment(env_id):
                   for p in processes if (pid := p.get('id')) in assigned}
 
     _record_launch(env_def, env_cwd, cwds=cwds, assigned=assigned)
-    _run_processes(env_def, cwd_by_pid=cwds, cwd_override=env_cwd, env_by_pid=env_by_pid)
+    _run_processes(env_def, cwd_by_pid=cwds, cwd_override=env_cwd, env_by_pid=env_by_pid,
+                   port_by_pid=assigned)
 
 def _parse_port_spec(spec):
     """Expand a process 'port' field into a sorted list of concrete ports.
@@ -730,13 +748,16 @@ def handle_post(handler, path, data):
         env_cwd = setup_worktree(env_id, env_def.get('worktree', {}))
         cwds = _resolve_cwds({'processes': [process_def]}, env_cwd_override=env_cwd)
         extra_env = None
+        assigned_port = None
         if _is_offset(process_def):
             ap = _assign_ports({'processes': [process_def]}, _live_port_index()).get(process_id)
             if ap is not None:
                 extra_env = {process_def['port_env_var']: str(ap)}
+                assigned_port = ap
         else:
             _kill_ports_for([process_def])
-        launch_process(process_def, cwd_override=cwds.get(process_id), extra_env=extra_env)
+        launch_process(process_def, cwd_override=cwds.get(process_id), extra_env=extra_env,
+                       assigned_port=assigned_port)
         handler.send_json({'ok': True})
         return
 

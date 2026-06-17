@@ -331,5 +331,35 @@ class RemoveLaunchTest(unittest.TestCase):
         saver.assert_not_called()
 
 
+class PortPlaceholderTest(unittest.TestCase):
+    def test_substitutes_when_port_assigned(self):
+        self.assertEqual(
+            envs._apply_port_placeholder('myapp --port {{port}}', 8800),
+            'myapp --port 8800')
+
+    def test_multiple_occurrences(self):
+        self.assertEqual(
+            envs._apply_port_placeholder('a {{port}} b {{port}}', 3001),
+            'a 3001 b 3001')
+
+    def test_noop_without_assigned_port(self):
+        # baton / no assignment leaves the literal token untouched
+        self.assertEqual(
+            envs._apply_port_placeholder('myapp --port {{port}}', None),
+            'myapp --port {{port}}')
+
+    def test_noop_empty_command(self):
+        self.assertEqual(envs._apply_port_placeholder('', 8800), '')
+
+
+class LaunchProcessPlaceholderTest(unittest.TestCase):
+    def test_command_port_substituted_on_launch(self):
+        proc = {'id': 'a', 'command': 'app --port {{port}}', 'cwd': ''}
+        with mock.patch.object(envs, 'open_in_terminal') as term:
+            envs.launch_process(proc, assigned_port=8800)
+        # open_in_terminal(cwd, command, env) -> command is positional arg 1
+        self.assertEqual(term.call_args.args[1], 'app --port 8800')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
