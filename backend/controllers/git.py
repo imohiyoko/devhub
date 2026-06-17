@@ -141,6 +141,53 @@ def _is_valid_branch_name(branch):
         and _BRANCH_NAME_RE.fullmatch(branch) is not None
     )
 
+# Matches a GitHub PR URL and pulls out owner / repo / number. Tolerates a
+# trailing path (e.g. '/files', '/commits'), an optional '.git', and both
+# https and scp-style ('github.com:owner/repo') forms. The number is the only
+# part interpolated into a git ref, and \d+ guarantees it is digits-only.
+_PR_URL_RE = re.compile(r'github\.com[/:]([^/]+)/([^/]+?)(?:\.git)?/pull/(\d+)(?:\b|/)')
+
+def _parse_github_pr_url(url):
+    """Return (owner, repo, number:int) from a GitHub PR URL, or None.
+
+    owner/repo are used to target `gh --repo` so it works even when the local
+    origin points elsewhere. Returns None for anything that is not a recognisable
+    GitHub PR URL.
+    """
+    if not isinstance(url, str):
+        return None
+    m = _PR_URL_RE.search(url.strip())
+    if not m:
+        return None
+    owner, repo, number = m.group(1), m.group(2), int(m.group(3))
+    if not owner or not repo:
+        return None
+    return owner, repo, number
+
+def _gh_pr_head_branch(owner, repo, number):
+    """Best-effort: the PR's real head branch name via `gh`, or None.
+
+    GitHub's pull/<N>/head ref carries no branch name, so the only way to learn
+    the PR's actual source branch is to ask GitHub. We shell out to `gh` (the
+    user's preferred GitHub CLI); any failure — gh not installed, not
+    authenticated, network error, or a name that fails our branch allowlist —
+    returns None so the caller falls back to a 'pr-<N>' name. Never raises.
+    """
+    try:
+        res = subprocess.run(
+            ['gh', 'pr', 'view', str(number), '--repo', f'{owner}/{repo}',
+             '--json', 'headRefName', '-q', '.headRefName'],
+            capture_output=True, text=True, timeout=15,
+        )
+    except Exception as e:
+        logger.debug("gh pr view failed: %s", e)
+        return None
+    if res.returncode != 0:
+        logger.debug("gh pr view returned %s: %s", res.returncode, res.stderr.strip())
+        return None
+    name = res.stdout.strip()
+    return name if _is_valid_branch_name(name) else None
+
 # Discrete poll-interval buckets (seconds) for the local status timer.
 # Snapping the computed interval to a bucket gives two properties:
 #  1. A sane floor (30s) — nothing meaningful changes in 10-30s, so polling
@@ -676,13 +723,93 @@ def handle_post(handler, path, data):
             env = os.environ.copy()
             env['GIT_TERMINAL_PROMPT'] = '0'
             env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
-            
+
             res = subprocess.run(['git', 'fetch', '--prune'], cwd=repo_path, env=env, capture_output=True, text=True, check=True, timeout=30)
             handler.send_json({'ok': True, 'output': res.stdout})
         except subprocess.TimeoutExpired:
             handler.send_json({'error': 'git fetch timed out'}, 504)
         except subprocess.CalledProcessError as e:
             handler.send_json({'error': e.stderr}, 400)
+        return
+
+    if path == '/api/git/worktree/from-pr':
+        # Fetch a GitHub PR's head and check it out in a fresh worktree, in one
+        # step. The PR's real branch name is resolved via `gh` when available,
+        # falling back to 'pr-<N>' otherwise.
+        pr_url = data.get('pr_url', '')
+        parsed = _parse_github_pr_url(pr_url)
+        if not parsed:
+            handler.send_json({'error': 'invalid PR URL'}, 400)
+            return
+        owner, repo, number = parsed
+
+        # Resolve the branch name: prefer the PR's real head branch (gh),
+        # fall back to a deterministic 'pr-<N>'. Either way it must pass the
+        # branch-name allowlist before being used as a positional git arg.
+        gh_branch = _gh_pr_head_branch(owner, repo, number)
+        branch = gh_branch or f'pr-{number}'
+        used_gh = gh_branch is not None
+        if not _is_valid_branch_name(branch):
+            handler.send_json({'error': 'invalid branch name'}, 400)
+            return
+
+        worktree_path = data.get('worktree_path')
+        if not worktree_path:
+            sanitized = re.sub(r'[^a-zA-Z0-9_-]', '-', branch)
+            worktree_path = f'{repo_path}-wt-{sanitized}'
+
+        path_err = _validate_worktree_path(worktree_path)
+        if path_err:
+            handler.send_json({'error': path_err}, 400)
+            return
+
+        # Harden against credential prompts so a missing credential fails fast
+        # instead of hanging (mirrors /api/git/fetch).
+        env = os.environ.copy()
+        env['GIT_TERMINAL_PROMPT'] = '0'
+        env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
+
+        # pull/<N>/head resolves on origin for both same-repo and fork PRs, so a
+        # single fetch path covers every case. <N> is digits-only by construction.
+        pr_ref = f'pull/{number}/head'
+        try:
+            subprocess.run(
+                ['git', 'fetch', 'origin', pr_ref],
+                cwd=repo_path, env=env, capture_output=True, text=True, check=True, timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git fetch timed out'}, 504)
+            return
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+            return
+
+        # Prune stale worktrees before adding (matches /api/git/worktree/add).
+        try:
+            subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
+        except Exception as e:
+            logger.debug("worktree prune (pre-add) failed: %s", e)
+
+        try:
+            res = subprocess.run(
+                ['git', 'worktree', 'add', '-b', branch, worktree_path, 'FETCH_HEAD'],
+                cwd=repo_path, capture_output=True, text=True, check=True, timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            handler.send_json({'error': 'git worktree add timed out'}, 504)
+            return
+        except subprocess.CalledProcessError as e:
+            handler.send_json({'error': e.stderr}, 400)
+            return
+
+        handler.send_json({
+            'ok': True,
+            'output': res.stdout,
+            'worktree_path': worktree_path,
+            'branch': branch,
+            'pr_number': number,
+            'used_gh': used_gh,
+        })
         return
 
     handler.send_json({'error': 'not found'}, 404)
