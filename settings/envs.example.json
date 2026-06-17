@@ -52,6 +52,27 @@
         "repo_path": "",
         "branch": ""
       }
+    },
+    {
+      "id": "cli-port-verify",
+      "name": "CLI ポート指定アプリの検証例",
+      "processes": [
+        {
+          "id": "app",
+          "label": "ポートを CLI 引数で受けるアプリ（command 内の {{port}} を offset 割当ポートに置換）",
+          "command": "myapp --port {{port}}",
+          "cwd": "~/projects/myapp",
+          "port": 3000,
+          "port_strategy": "offset",
+          "port_env_var": "PORT",
+          "depends_on": []
+        }
+      ],
+      "worktree": {
+        "enabled": false,
+        "repo_path": "",
+        "branch": ""
+      }
     }
   ]
 }
