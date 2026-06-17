@@ -31,6 +31,27 @@
         "repo_path": "",
         "branch": ""
       }
+    },
+    {
+      "id": "devhub-verify",
+      "name": "devhub 検証環境",
+      "processes": [
+        {
+          "id": "devhub",
+          "label": "devhub (検証インスタンス)",
+          "command": "./start.sh --no-browser",
+          "cwd": "",
+          "port": 8765,
+          "port_strategy": "offset",
+          "port_env_var": "DEVHUB_PORT",
+          "depends_on": []
+        }
+      ],
+      "worktree": {
+        "enabled": false,
+        "repo_path": "",
+        "branch": ""
+      }
     }
   ]
 }

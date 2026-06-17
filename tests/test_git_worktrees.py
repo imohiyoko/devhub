@@ -67,5 +67,24 @@ class ListWorktreesTest(unittest.TestCase):
         self.assertFalse(wts[2]['exists'])
 
 
+class AddWorktreeTest(unittest.TestCase):
+    def test_invalid_branch_raises_worktree_error(self):
+        with self.assertRaises(git.WorktreeError) as ctx:
+            git.add_worktree('/repos/app', '/abs/path', '-evil')
+        self.assertEqual(ctx.exception.status, 400)
+
+    def test_relative_path_raises(self):
+        with self.assertRaises(git.WorktreeError):
+            git.add_worktree('/repos/app', 'relative/path', 'feat/x')
+
+    def test_success_returns_stdout(self):
+        # prune (no check) then add (check=True) -> two subprocess.run calls
+        def fake_run(cmd, **kw):
+            return mock.Mock(stdout='Preparing worktree')
+        with mock.patch.object(git.subprocess, 'run', side_effect=fake_run):
+            out = git.add_worktree('/repos/app', '/abs/wt', 'feat/x', new_branch=True)
+        self.assertEqual(out, 'Preparing worktree')
+
+
 if __name__ == '__main__':
     unittest.main()
