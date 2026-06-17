@@ -7,6 +7,21 @@ from backend.storage import load_config
 
 logger = logging.getLogger(__name__)
 
+
+class WorktreeError(Exception):
+    """A worktree operation failed with a user-facing message and HTTP status.
+
+    The reusable ensure_* worktree helpers raise this instead of writing to the
+    HTTP handler, so they can be called both from the HTTP endpoints (which map
+    .status/.message onto send_json) and from other controllers (env-launcher).
+    """
+    def __init__(self, message, status=400, extra=None):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+        self.extra = extra or {}
+
+
 def find_repos(root):
     repos = []
     root = os.path.expanduser(root)
@@ -369,6 +384,144 @@ def list_worktrees(repo_path):
         wt['exists'] = bool(wt.get('path')) and os.path.isdir(wt['path'])
     return worktrees
 
+def _default_worktree_path(repo_path, branch):
+    """Derive a sibling worktree path '<repo>-wt-<sanitized-branch>'.
+
+    Mirrors the default used by /api/git/worktree/from-pr so a branch lands in a
+    predictable place when the caller does not specify a path.
+    """
+    sanitized = re.sub(r'[^a-zA-Z0-9_-]', '-', branch)
+    return f'{repo_path.rstrip("/")}-wt-{sanitized}'
+
+def add_worktree(repo_path, worktree_path, branch, new_branch=False, base_commit=None):
+    """`git worktree add` core, shared by the HTTP endpoint and the ensure_* path.
+
+    Returns git's stdout on success. Raises WorktreeError (with the same messages
+    and HTTP statuses the endpoint used to send inline) on invalid input,
+    timeout, or git failure.
+    """
+    if not worktree_path or not branch:
+        raise WorktreeError('missing worktree_path or branch')
+    if not _is_valid_branch_name(branch):
+        raise WorktreeError('invalid branch name')
+    path_err = _validate_worktree_path(worktree_path)
+    if path_err:
+        raise WorktreeError(path_err)
+    if base_commit:
+        # Revspec, not a branch name: a broader char set (~^@{}#) is allowed on
+        # purpose (see _BRANCH_NAME_RE). The leading-dash / '..' guards still apply.
+        if base_commit.startswith('-') or '..' in base_commit or not re.fullmatch(r'[a-zA-Z0-9_./~^@{}#-]+', base_commit):
+            raise WorktreeError('invalid base commit/branch')
+
+    # Prune stale worktrees before adding to avoid conflict with manually deleted worktrees
+    try:
+        subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        logger.debug("worktree prune (pre-add) failed: %s", e)
+
+    cmd = ['git', 'worktree', 'add']
+    if new_branch:
+        cmd.extend(['-b', branch, worktree_path])
+        if base_commit:
+            cmd.append(base_commit)
+    else:
+        cmd.extend([worktree_path, branch])
+
+    try:
+        res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        raise WorktreeError('git worktree add timed out', status=504)
+    except subprocess.CalledProcessError as e:
+        raise WorktreeError(e.stderr, status=400)
+    return res.stdout
+
+def ensure_worktree_from_pr(repo_path, pr_url, worktree_path=None):
+    """Fetch a GitHub PR's head and check it out in a fresh worktree, in one step.
+
+    The PR's real branch name is resolved via `gh` when available, falling back
+    to 'pr-<N>'. Returns a dict {output, worktree_path, branch, pr_number,
+    used_gh}. Raises WorktreeError on any failure (same messages/statuses the
+    endpoint used to send inline, including 409 when the branch already exists).
+    """
+    parsed = _parse_github_pr_url(pr_url)
+    if not parsed:
+        raise WorktreeError('invalid PR URL')
+    owner, repo, number = parsed
+
+    # Pick the remote that actually points at the PR's repo, so a PR URL for a
+    # different repo than `origin` does not silently fetch origin's PR #N.
+    remote = _remote_for_github_repo(repo_path, owner, repo)
+    if not remote:
+        raise WorktreeError(f'この worktree に {owner}/{repo} を指す git remote がありません')
+
+    # Resolve the branch name: prefer the PR's real head branch (gh), fall back
+    # to a deterministic 'pr-<N>'. Either way it must pass the branch-name
+    # allowlist before being used as a positional git arg.
+    gh_branch = _gh_pr_head_branch(owner, repo, number)
+    branch = gh_branch or f'pr-{number}'
+    used_gh = gh_branch is not None
+    if not _is_valid_branch_name(branch):
+        raise WorktreeError('invalid branch name')
+
+    if not worktree_path:
+        worktree_path = _default_worktree_path(repo_path, branch)
+
+    path_err = _validate_worktree_path(worktree_path)
+    if path_err:
+        raise WorktreeError(path_err)
+
+    # Harden against credential prompts so a missing credential fails fast
+    # instead of hanging (mirrors /api/git/fetch).
+    env = os.environ.copy()
+    env['GIT_TERMINAL_PROMPT'] = '0'
+    env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
+
+    # pull/<N>/head resolves on the base repo for both same-repo and fork PRs, so
+    # a single fetch path covers every case. <N> is digits-only by construction;
+    # `remote` is one of the repo's own remote names.
+    pr_ref = f'pull/{number}/head'
+    try:
+        subprocess.run(
+            ['git', 'fetch', remote, pr_ref],
+            cwd=repo_path, env=env, capture_output=True, text=True, check=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        raise WorktreeError('git fetch timed out', status=504)
+    except subprocess.CalledProcessError as e:
+        raise WorktreeError(e.stderr, status=400)
+
+    # Prune stale worktrees before adding (matches /api/git/worktree/add).
+    try:
+        subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        logger.debug("worktree prune (pre-add) failed: %s", e)
+
+    try:
+        res = subprocess.run(
+            ['git', 'worktree', 'add', '-b', branch, worktree_path, 'FETCH_HEAD'],
+            cwd=repo_path, capture_output=True, text=True, check=True, timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise WorktreeError('git worktree add timed out', status=504)
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr or ''
+        # A pre-existing branch is the common re-run case (same PR fetched twice):
+        # surface a clear hint instead of the raw git fatal.
+        if 'already exists' in stderr:
+            raise WorktreeError(
+                f"ブランチ '{branch}' は既に存在します（この PR は取り込み済みかもしれません）",
+                status=409, extra={'stderr': stderr},
+            )
+        raise WorktreeError(stderr, status=400)
+
+    return {
+        'output': res.stdout,
+        'worktree_path': worktree_path,
+        'branch': branch,
+        'pr_number': number,
+        'used_gh': used_gh,
+    }
+
 def handle_get(handler, path, params):
     repo_path = _validated_repo_path(params)
     if not repo_path:
@@ -624,53 +777,18 @@ def handle_post(handler, path, data):
         return
 
     if path == '/api/git/worktree/add':
-        worktree_path = data.get('worktree_path')
-        branch = data.get('branch')
-        new_branch = data.get('new_branch', False)
-        base_commit = data.get('base_commit')
-        
-        if not worktree_path or not branch:
-            handler.send_json({'error': 'missing worktree_path or branch'}, 400)
-            return
-
-        # Security validations to prevent argument injection
-        if not _is_valid_branch_name(branch):
-            handler.send_json({'error': 'invalid branch name'}, 400)
-            return
-
-        path_err = _validate_worktree_path(worktree_path)
-        if path_err:
-            handler.send_json({'error': path_err}, 400)
-            return
-
-        if base_commit:
-            # Revspec, not a branch name: a broader char set (~^@{}#) is allowed
-            # on purpose (see _BRANCH_NAME_RE). The leading-dash / '..' guards still apply.
-            if base_commit.startswith('-') or '..' in base_commit or not re.fullmatch(r'[a-zA-Z0-9_./~^@{}#-]+', base_commit):
-                handler.send_json({'error': 'invalid base commit/branch'}, 400)
-                return
-
-        # Prune stale worktrees before adding to avoid conflict with manually deleted worktrees
         try:
-            subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
-        except Exception as e:
-            logger.debug("worktree prune (pre-add) failed: %s", e)
-
-        cmd = ['git', 'worktree', 'add']
-        if new_branch:
-            cmd.extend(['-b', branch, worktree_path])
-            if base_commit:
-                cmd.append(base_commit)
-        else:
-            cmd.extend([worktree_path, branch])
-
-        try:
-            res = subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True, timeout=120)
-            handler.send_json({'ok': True, 'output': res.stdout})
-        except subprocess.TimeoutExpired:
-            handler.send_json({'error': 'git worktree add timed out'}, 504)
-        except subprocess.CalledProcessError as e:
-            handler.send_json({'error': e.stderr}, 400)
+            output = add_worktree(
+                repo_path,
+                data.get('worktree_path'),
+                data.get('branch'),
+                new_branch=data.get('new_branch', False),
+                base_commit=data.get('base_commit'),
+            )
+        except WorktreeError as e:
+            handler.send_json({'error': e.message}, e.status)
+            return
+        handler.send_json({'ok': True, 'output': output})
         return
 
     if path == '/api/git/worktree/remove':
@@ -782,101 +900,17 @@ def handle_post(handler, path, data):
 
     if path == '/api/git/worktree/from-pr':
         # Fetch a GitHub PR's head and check it out in a fresh worktree, in one
-        # step. The PR's real branch name is resolved via `gh` when available,
-        # falling back to 'pr-<N>' otherwise.
-        pr_url = data.get('pr_url', '')
-        parsed = _parse_github_pr_url(pr_url)
-        if not parsed:
-            handler.send_json({'error': 'invalid PR URL'}, 400)
-            return
-        owner, repo, number = parsed
-
-        # Pick the remote that actually points at the PR's repo, so a PR URL for
-        # a different repo than `origin` does not silently fetch origin's PR #N.
-        remote = _remote_for_github_repo(repo_path, owner, repo)
-        if not remote:
-            handler.send_json(
-                {'error': f'この worktree に {owner}/{repo} を指す git remote がありません'}, 400
-            )
-            return
-
-        # Resolve the branch name: prefer the PR's real head branch (gh),
-        # fall back to a deterministic 'pr-<N>'. Either way it must pass the
-        # branch-name allowlist before being used as a positional git arg.
-        gh_branch = _gh_pr_head_branch(owner, repo, number)
-        branch = gh_branch or f'pr-{number}'
-        used_gh = gh_branch is not None
-        if not _is_valid_branch_name(branch):
-            handler.send_json({'error': 'invalid branch name'}, 400)
-            return
-
-        worktree_path = data.get('worktree_path')
-        if not worktree_path:
-            sanitized = re.sub(r'[^a-zA-Z0-9_-]', '-', branch)
-            worktree_path = f'{repo_path}-wt-{sanitized}'
-
-        path_err = _validate_worktree_path(worktree_path)
-        if path_err:
-            handler.send_json({'error': path_err}, 400)
-            return
-
-        # Harden against credential prompts so a missing credential fails fast
-        # instead of hanging (mirrors /api/git/fetch).
-        env = os.environ.copy()
-        env['GIT_TERMINAL_PROMPT'] = '0'
-        env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
-
-        # pull/<N>/head resolves on the base repo for both same-repo and fork
-        # PRs, so a single fetch path covers every case. <N> is digits-only by
-        # construction; `remote` is one of the repo's own remote names.
-        pr_ref = f'pull/{number}/head'
+        # step. Logic lives in ensure_worktree_from_pr so env-launcher can reuse it.
         try:
-            subprocess.run(
-                ['git', 'fetch', remote, pr_ref],
-                cwd=repo_path, env=env, capture_output=True, text=True, check=True, timeout=60,
+            result = ensure_worktree_from_pr(
+                repo_path, data.get('pr_url', ''), worktree_path=data.get('worktree_path'),
             )
-        except subprocess.TimeoutExpired:
-            handler.send_json({'error': 'git fetch timed out'}, 504)
+        except WorktreeError as e:
+            payload = {'error': e.message}
+            payload.update(e.extra)
+            handler.send_json(payload, e.status)
             return
-        except subprocess.CalledProcessError as e:
-            handler.send_json({'error': e.stderr}, 400)
-            return
-
-        # Prune stale worktrees before adding (matches /api/git/worktree/add).
-        try:
-            subprocess.run(['git', 'worktree', 'prune'], cwd=repo_path, capture_output=True, text=True, timeout=30)
-        except Exception as e:
-            logger.debug("worktree prune (pre-add) failed: %s", e)
-
-        try:
-            res = subprocess.run(
-                ['git', 'worktree', 'add', '-b', branch, worktree_path, 'FETCH_HEAD'],
-                cwd=repo_path, capture_output=True, text=True, check=True, timeout=120,
-            )
-        except subprocess.TimeoutExpired:
-            handler.send_json({'error': 'git worktree add timed out'}, 504)
-            return
-        except subprocess.CalledProcessError as e:
-            stderr = e.stderr or ''
-            # A pre-existing branch is the common re-run case (same PR fetched
-            # twice): surface a clear hint instead of the raw git fatal.
-            if 'already exists' in stderr:
-                handler.send_json({
-                    'error': f"ブランチ '{branch}' は既に存在します（この PR は取り込み済みかもしれません）",
-                    'stderr': stderr,
-                }, 409)
-            else:
-                handler.send_json({'error': stderr}, 400)
-            return
-
-        handler.send_json({
-            'ok': True,
-            'output': res.stdout,
-            'worktree_path': worktree_path,
-            'branch': branch,
-            'pr_number': number,
-            'used_gh': used_gh,
-        })
+        handler.send_json({'ok': True, **result})
         return
 
     handler.send_json({'error': 'not found'}, 404)
