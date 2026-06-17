@@ -285,10 +285,10 @@ func (c *Controller) savePortLabel(port int, label string) error {
 
 func (c *Controller) killPortProcess(port, pid int) error {
 	if slices.Contains(c.protectedPorts(), port) {
-		return fmt.Errorf("port %d is protected", port)
+		return httpx.Errorf(http.StatusForbidden, "port %d is protected", port)
 	}
 	if pid == os.Getpid() {
-		return fmt.Errorf("devhub itself cannot be killed from this tool")
+		return httpx.Errorf(http.StatusForbidden, "devhub itself cannot be killed from this tool")
 	}
 	list, err := c.listOpen()
 	if err != nil {
@@ -302,7 +302,7 @@ func (c *Controller) killPortProcess(port, pid int) error {
 		}
 	}
 	if !found {
-		return fmt.Errorf("port process was not found")
+		return httpx.Errorf(http.StatusNotFound, "port process was not found")
 	}
 	return killProcess(pid)
 }

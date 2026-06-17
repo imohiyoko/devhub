@@ -3,6 +3,7 @@
 package server
 
 import (
+	"log"
 	"os"
 	"os/exec"
 )
@@ -13,6 +14,7 @@ import (
 func reexec(token string) {
 	exe, err := os.Executable()
 	if err != nil {
+		log.Printf("reexec: failed to resolve executable: %v", err)
 		return
 	}
 	cmd := exec.Command(exe, os.Args[1:]...)
@@ -20,6 +22,11 @@ func reexec(token string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	_ = cmd.Start()
+	// Only exit once the replacement is running; otherwise keep serving so a
+	// failed spawn doesn't take the server down.
+	if err := cmd.Start(); err != nil {
+		log.Printf("reexec: failed to start new process: %v", err)
+		return
+	}
 	os.Exit(0)
 }

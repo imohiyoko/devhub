@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,8 @@ func (s *Store) importLaunches(list []any) {
 			id, string(data), launchedAt,
 		)
 	}
-	_ = tx.Commit()
+	if err := tx.Commit(); err != nil {
+		// Best-effort migration: don't fail startup, but make the failure visible.
+		fmt.Fprintf(os.Stderr, "storage: launches migration commit failed: %v\n", err)
+	}
 }

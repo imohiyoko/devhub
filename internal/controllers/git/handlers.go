@@ -12,6 +12,10 @@ import (
 	"github.com/imohiyoko/devhub/internal/pathutil"
 )
 
+// localGitTimeout bounds local (non-network) git commands so a huge repo or a
+// stuck filesystem cannot hang a request indefinitely.
+const localGitTimeout = 30 * time.Second
+
 // validatedPath resolves a user-supplied repo path to its canonical form, but
 // only if it matches a configured repo (mirrors _get_validated_path).
 func (c *Controller) validatedPath(raw string) string {
@@ -61,12 +65,12 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		n = max(1, min(n, 1000))
-		stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", "log", "--oneline", "--decorate", "--graph", fmt.Sprintf("-n%d", n))
-		return writeRun(w, false, stdout, stderr, false, err, "")
+		stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", "log", "--oneline", "--decorate", "--graph", fmt.Sprintf("-n%d", n))
+		return writeRun(w, false, stdout, stderr, timedOut, err, "git log timed out")
 	case "/api/git/branches":
 		fmtArg := "%(refname)\t%(refname:short)\t%(HEAD)\t%(committername)\t%(committerdate:relative)\t%(committerdate:iso)"
-		stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", "branch", "-a", "--sort=-committerdate", "--format="+fmtArg)
-		return writeRun(w, false, stdout, stderr, false, err, "")
+		stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", "branch", "-a", "--sort=-committerdate", "--format="+fmtArg)
+		return writeRun(w, false, stdout, stderr, timedOut, err, "git branch timed out")
 	case "/api/git/diff":
 		file := r.URL.Query().Get("file")
 		if file == "" {
@@ -77,11 +81,11 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 			args = append(args, "--cached")
 		}
 		args = append(args, "--", file)
-		stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", args...)
-		return writeRun(w, false, stdout, stderr, false, err, "")
+		stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", args...)
+		return writeRun(w, false, stdout, stderr, timedOut, err, "git diff timed out")
 	case "/api/git/stash/list":
-		stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", "stash", "list")
-		return writeRun(w, false, stdout, stderr, false, err, "")
+		stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", "stash", "list")
+		return writeRun(w, false, stdout, stderr, timedOut, err, "git stash list timed out")
 	case "/api/git/worktrees":
 		return c.handleWorktrees(w, repoPath)
 	}
@@ -89,7 +93,10 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (c *Controller) handleStatus(w http.ResponseWriter, r *http.Request, repoPath string) error {
-	stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", "status", "--porcelain=v1", "-u")
+	stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", "status", "--porcelain=v1", "-u")
+	if timedOut {
+		return httpx.Errorf(http.StatusGatewayTimeout, "git status timed out")
+	}
 	if err != nil {
 		return httpx.Errorf(http.StatusBadRequest, "%s", stderr)
 	}
@@ -170,22 +177,22 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		if !ok {
 			return httpx.Errorf(http.StatusBadRequest, "invalid files list")
 		}
-		stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", append([]string{"add", "--"}, files...)...)
-		return writeRun(w, true, stdout, stderr, false, err, "")
+		stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", append([]string{"add", "--"}, files...)...)
+		return writeRun(w, true, stdout, stderr, timedOut, err, "git add timed out")
 	case "/api/git/unstage":
 		files, ok := filesArg(data)
 		if !ok {
 			return httpx.Errorf(http.StatusBadRequest, "invalid files list")
 		}
-		stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", append([]string{"restore", "--staged", "--"}, files...)...)
-		return writeRun(w, true, stdout, stderr, false, err, "")
+		stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", append([]string{"restore", "--staged", "--"}, files...)...)
+		return writeRun(w, true, stdout, stderr, timedOut, err, "git restore timed out")
 	case "/api/git/commit":
 		msg := strData(data, "message")
 		if msg == "" {
 			return httpx.Errorf(http.StatusBadRequest, "no message specified")
 		}
-		stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", "commit", "-m", msg)
-		return writeRun(w, true, stdout, stderr, false, err, "")
+		stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", "commit", "-m", msg)
+		return writeRun(w, true, stdout, stderr, timedOut, err, "git commit timed out")
 	case "/api/git/push":
 		stdout, stderr, timedOut, err := runCmd(repoPath, 60*time.Second, nil, "git", "push")
 		return writeRun(w, true, stdout, stderr, timedOut, err, "push timed out")
@@ -275,8 +282,8 @@ func (c *Controller) handleStash(w http.ResponseWriter, repoPath string, data ma
 	default:
 		return httpx.Errorf(http.StatusBadRequest, "invalid action")
 	}
-	stdout, stderr, _, err := runCmd(repoPath, 0, nil, "git", args...)
-	return writeRun(w, true, stdout, stderr, false, err, "")
+	stdout, stderr, timedOut, err := runCmd(repoPath, localGitTimeout, nil, "git", args...)
+	return writeRun(w, true, stdout, stderr, timedOut, err, "git stash timed out")
 }
 
 func (c *Controller) handleWorktreeRemove(w http.ResponseWriter, repoPath string, data map[string]any) error {

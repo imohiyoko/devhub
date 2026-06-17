@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Version    = $env:DEVHUB_VERSION,
     [string]$InstallDir = $env:DEVHUB_INSTALL_DIR,
     [string]$BinDir     = $env:DEVHUB_BIN_DIR,

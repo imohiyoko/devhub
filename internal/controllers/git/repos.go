@@ -4,6 +4,7 @@
 package git
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 
@@ -58,7 +59,12 @@ func findRepos(root string) []Repo {
 // AllRepos returns the deduplicated repos from scan_roots and pinned_repos,
 // honoring excludes. Mirrors all_repos() in git.py.
 func (c *Controller) AllRepos() []Repo {
-	cfg, _ := c.store.LoadConfig()
+	cfg, err := c.store.LoadConfig()
+	if err != nil {
+		// Don't mask storage failures as "no repos": surface them in the log so
+		// an empty repo list is debuggable rather than silently wrong.
+		log.Printf("git: AllRepos LoadConfig failed: %v", err)
+	}
 	excludes := map[string]bool{}
 	for _, p := range asStringSlice(cfg["excludes"]) {
 		excludes[pathutil.NormCase(pathutil.AbsExpand(p))] = true

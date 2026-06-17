@@ -11,11 +11,20 @@ import (
 
 // ExpandUser replaces a leading ~ with the user's home directory (os.path.expanduser).
 func ExpandUser(p string) string {
+	// If home can't be resolved, leave ~ untouched rather than letting
+	// filepath.Join silently collapse it to a CWD-relative path.
+	h := home()
 	if p == "~" {
-		return home()
+		if h == "" {
+			return p
+		}
+		return h
 	}
 	if strings.HasPrefix(p, "~/") || (runtime.GOOS == "windows" && strings.HasPrefix(p, `~\`)) {
-		return filepath.Join(home(), p[2:])
+		if h == "" {
+			return p
+		}
+		return filepath.Join(h, p[2:])
 	}
 	return p
 }
