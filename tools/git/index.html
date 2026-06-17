@@ -696,6 +696,16 @@ let gitConfig = structuredClone(DEFAULT_CONFIG);
 let allRepos = [];
 let currentRepo = '';
 
+// The selected repo is persisted in localStorage so a reload (Cmd+R) keeps the
+// repo currently in view instead of jumping back to the default / first repo.
+const REPO_STORAGE_KEY = 'git-tool-current-repo';
+function loadSavedRepo() {
+    try { return localStorage.getItem(REPO_STORAGE_KEY) || ''; } catch (e) { return ''; }
+}
+function saveCurrentRepo() {
+    try { localStorage.setItem(REPO_STORAGE_KEY, currentRepo); } catch (e) {}
+}
+
 // Active tab is persisted in localStorage so a reload (Cmd+R) keeps the
 // current tab instead of resetting to the default.
 const TAB_STORAGE_KEY = 'git-tool-active-tab';
@@ -813,10 +823,16 @@ async function fetchRepos() {
       settingSelect.appendChild(opt);
     });
 
-    // Pick the current repo: the configured default (if present and not hidden),
-    // otherwise the first visible repo, otherwise the first repo / none.
+    // Pick the current repo: the repo last viewed (persisted across reloads) if
+    // still present and not hidden, then the configured default (if present and
+    // not hidden), otherwise the first visible repo, otherwise the first / none.
     const visible = allRepos.filter(r => !isHidden(r.path));
-    if (gitConfig.default_repo
+    const savedRepo = loadSavedRepo();
+    if (savedRepo
+        && allRepos.find(r => r.path === savedRepo)
+        && !isHidden(savedRepo)) {
+      currentRepo = savedRepo;
+    } else if (gitConfig.default_repo
         && allRepos.find(r => r.path === gitConfig.default_repo)
         && !isHidden(gitConfig.default_repo)) {
       currentRepo = gitConfig.default_repo;
@@ -1696,6 +1712,7 @@ function buildRepoRow(r, isHiddenRow) {
 function selectRepo(path) {
   if (!path) return;
   currentRepo = path;
+  saveCurrentRepo();
   // Don't carry the previous repo's remote state into the new one; the next
   // suggest refresh re-establishes it and adjustDynamicPolling re-arms.
   gitData.hasRemote = undefined;
@@ -1724,6 +1741,7 @@ async function hideRepo(path) {
   if (pathMatch(path, currentRepo)) {
     const next = allRepos.find(r => !isHidden(r.path));
     currentRepo = next ? next.path : '';
+    saveCurrentRepo();
     gitData.hasRemote = undefined;
     renderRepoSwitcher();
     if (currentRepo) refreshData();
