@@ -1,0 +1,66 @@
+# GoReleaser config: cross-compiles devhub for darwin/linux/windows x amd64/arm64
+# (CGO disabled — modernc.org/sqlite is pure Go), archives each, emits a SHA256
+# checksums.txt, and publishes a GitHub Release. Validate locally with
+#   goreleaser check
+#   goreleaser release --snapshot --clean   # builds dist/ without publishing
+version: 2
+project_name: devhub
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: devhub
+    main: ./cmd/devhub
+    binary: devhub
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.CommitDate}}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    # asset name e.g. devhub_1.0.0_darwin_arm64.tar.gz — the install scripts
+    # depend on this exact template.
+    name_template: "devhub_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: imohiyoko
+    name: devhub
+  draft: false
+  prerelease: auto # pre-release tags (e.g. v1.0.0-rc1) are flagged automatically
