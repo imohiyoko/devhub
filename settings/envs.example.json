@@ -40,7 +40,7 @@
           "id": "devhub",
           "label": "devhub (検証インスタンス)",
           "command": "./start.sh --no-browser",
-          "cwd": "",
+          "cwd": "~/path/to/devhub",
           "port": 8765,
           "port_strategy": "offset",
           "port_env_var": "DEVHUB_PORT",
