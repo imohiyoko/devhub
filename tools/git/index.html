@@ -2261,7 +2261,68 @@ function renderAddWorktreeForm(preselectedBranch = '') {
     title.style.color = 'var(--text)';
     title.textContent = 'Add Git Worktree';
     container.appendChild(title);
-    
+
+    // --- From Pull Request -------------------------------------------------
+    // Paste a GitHub PR URL and fetch its head into a brand-new worktree in one
+    // step. The branch is named after the PR's real head branch (resolved via
+    // gh on the server) when possible, otherwise pr-<number>.
+    const prCard = document.createElement('div');
+    prCard.style.background = 'var(--surface)';
+    prCard.style.border = '1px solid var(--border)';
+    prCard.style.borderRadius = '6px';
+    prCard.style.padding = '14px';
+    prCard.style.display = 'flex';
+    prCard.style.flexDirection = 'column';
+    prCard.style.gap = '8px';
+    prCard.innerHTML = `
+        <label style="font-weight: 600; font-size: 13px; color: var(--text);">From Pull Request</label>
+        <input type="text" id="wt-add-pr-url" placeholder="https://github.com/owner/repo/pull/123"
+               style="background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: monospace;">
+        <span style="font-size: 11px; color: var(--muted);">PR の head ブランチを fetch して worktree を作成します（ブランチ名は gh で解決、不可なら pr-&lt;番号&gt;）。</span>`;
+    const prBtn = makeButton('Create from PR', 'primary');
+    prBtn.style.alignSelf = 'flex-start';
+    prBtn.style.padding = '8px 16px';
+    prBtn.onclick = async () => {
+        const prUrl = prCard.querySelector('#wt-add-pr-url').value.trim();
+        if (!prUrl) { showError('PR URL is required'); return; }
+        prBtn.disabled = true;
+        prBtn.textContent = 'Fetching PR…';
+        try {
+            const res = await fetch('/api/git/worktree/from-pr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: currentRepo, pr_url: prUrl })
+            }).then(r => r.json());
+
+            if (res.error) {
+                showError(`Error: ${res.error}`);
+            } else {
+                showRepoMsg(`Worktree created from PR #${res.pr_number} (${res.branch})`, 'success');
+                await refreshData();
+                const index = gitData.worktrees.findIndex(w => normalizePath(w.path) === normalizePath(res.worktree_path));
+                selectedItemIndex = index !== -1 ? index + 1 : 0;
+                renderTabContent();
+            }
+        } catch (e) {
+            showError(`Failed to create worktree from PR: ${e.message}`);
+        } finally {
+            prBtn.disabled = false;
+            prBtn.textContent = 'Create from PR';
+        }
+    };
+    prCard.appendChild(prBtn);
+    container.appendChild(prCard);
+
+    const divider = document.createElement('div');
+    divider.style.borderTop = '1px solid var(--border)';
+    divider.style.margin = '4px 0';
+    const dividerLabel = document.createElement('span');
+    dividerLabel.textContent = 'または、ブランチを指定して作成';
+    dividerLabel.style.fontSize = '11px';
+    dividerLabel.style.color = 'var(--muted)';
+    container.appendChild(divider);
+    container.appendChild(dividerLabel);
+
     const pathGroup = document.createElement('div');
     pathGroup.style.display = 'flex';
     pathGroup.style.flexDirection = 'column';
