@@ -145,14 +145,18 @@ def _is_valid_branch_name(branch):
 # trailing path (e.g. '/files', '/commits'), an optional '.git', and both
 # https and scp-style ('github.com:owner/repo') forms. The number is the only
 # part interpolated into a git ref, and \d+ guarantees it is digits-only.
-_PR_URL_RE = re.compile(r'github\.com[/:]([^/]+)/([^/]+?)(?:\.git)?/pull/(\d+)(?:\b|/)')
+# The (?:^|[/@.]) left boundary pins the host so look-alikes like
+# 'evilgithub.com' do not match (the char before 'github.com' must be a URL
+# separator or string start).
+_PR_URL_RE = re.compile(r'(?:^|[/@.])github\.com[/:]([^/]+)/([^/]+?)(?:\.git)?/pull/(\d+)(?:\b|/)')
 
 def _parse_github_pr_url(url):
     """Return (owner, repo, number:int) from a GitHub PR URL, or None.
 
-    owner/repo are used to target `gh --repo` so it works even when the local
-    origin points elsewhere. Returns None for anything that is not a recognisable
-    GitHub PR URL.
+    owner/repo are used to target `gh --repo` and to pick the matching remote,
+    so a recognisable github.com PR URL is required. Returns None for anything
+    else, including owner/repo that start with '-' (argument-injection smell,
+    even though they are only ever passed as option *values*).
     """
     if not isinstance(url, str):
         return None
@@ -160,9 +164,53 @@ def _parse_github_pr_url(url):
     if not m:
         return None
     owner, repo, number = m.group(1), m.group(2), int(m.group(3))
-    if not owner or not repo:
+    if not owner or not repo or owner.startswith('-') or repo.startswith('-'):
         return None
     return owner, repo, number
+
+# Extract 'owner/repo' (lowercased) from a git remote URL pointing at github.com.
+# Covers https://github.com/o/r(.git), git@github.com:o/r(.git) and ssh:// forms.
+_REMOTE_REPO_RE = re.compile(r'github\.com[/:]([^/]+?)/([^/]+?)(?:\.git)?/?$')
+
+def _normalize_github_remote(url):
+    """'owner/repo' (lowercased) for a github.com remote URL, else None."""
+    m = _REMOTE_REPO_RE.search(url.strip()) if isinstance(url, str) else None
+    return f'{m.group(1)}/{m.group(2)}'.lower() if m else None
+
+def _remote_for_github_repo(repo_path, owner, repo):
+    """Name of the git remote that points at github.com/<owner>/<repo>, or None.
+
+    Prefers 'origin' when several remotes match. This is what makes the fetch
+    target the *PR's* repository rather than blindly using 'origin': a PR always
+    lives on its base repo, so we fetch pull/<N>/head from the remote whose URL
+    is that base repo. Returns None when no remote matches (caller then errors
+    instead of silently fetching an unrelated PR #N from origin). Best-effort:
+    never raises.
+    """
+    target = f'{owner}/{repo}'.lower()
+    try:
+        res = subprocess.run(
+            ['git', 'remote', '-v'],
+            cwd=repo_path, capture_output=True, text=True, timeout=10,
+        )
+    except Exception as e:
+        logger.debug("git remote -v failed: %s", e)
+        return None
+    if res.returncode != 0:
+        return None
+    matches = []
+    for line in res.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        name, url = parts[0], parts[1]
+        if name.startswith('-'):  # pathological remote name; never use as an arg
+            continue
+        if _normalize_github_remote(url) == target and name not in matches:
+            matches.append(name)
+    if not matches:
+        return None
+    return 'origin' if 'origin' in matches else matches[0]
 
 def _gh_pr_head_branch(owner, repo, number):
     """Best-effort: the PR's real head branch name via `gh`, or None.
@@ -743,6 +791,15 @@ def handle_post(handler, path, data):
             return
         owner, repo, number = parsed
 
+        # Pick the remote that actually points at the PR's repo, so a PR URL for
+        # a different repo than `origin` does not silently fetch origin's PR #N.
+        remote = _remote_for_github_repo(repo_path, owner, repo)
+        if not remote:
+            handler.send_json(
+                {'error': f'この worktree に {owner}/{repo} を指す git remote がありません'}, 400
+            )
+            return
+
         # Resolve the branch name: prefer the PR's real head branch (gh),
         # fall back to a deterministic 'pr-<N>'. Either way it must pass the
         # branch-name allowlist before being used as a positional git arg.
@@ -769,12 +826,13 @@ def handle_post(handler, path, data):
         env['GIT_TERMINAL_PROMPT'] = '0'
         env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
 
-        # pull/<N>/head resolves on origin for both same-repo and fork PRs, so a
-        # single fetch path covers every case. <N> is digits-only by construction.
+        # pull/<N>/head resolves on the base repo for both same-repo and fork
+        # PRs, so a single fetch path covers every case. <N> is digits-only by
+        # construction; `remote` is one of the repo's own remote names.
         pr_ref = f'pull/{number}/head'
         try:
             subprocess.run(
-                ['git', 'fetch', 'origin', pr_ref],
+                ['git', 'fetch', remote, pr_ref],
                 cwd=repo_path, env=env, capture_output=True, text=True, check=True, timeout=60,
             )
         except subprocess.TimeoutExpired:
@@ -799,7 +857,16 @@ def handle_post(handler, path, data):
             handler.send_json({'error': 'git worktree add timed out'}, 504)
             return
         except subprocess.CalledProcessError as e:
-            handler.send_json({'error': e.stderr}, 400)
+            stderr = e.stderr or ''
+            # A pre-existing branch is the common re-run case (same PR fetched
+            # twice): surface a clear hint instead of the raw git fatal.
+            if 'already exists' in stderr:
+                handler.send_json({
+                    'error': f"ブランチ '{branch}' は既に存在します（この PR は取り込み済みかもしれません）",
+                    'stderr': stderr,
+                }, 409)
+            else:
+                handler.send_json({'error': stderr}, 400)
             return
 
         handler.send_json({
