@@ -21,3 +21,8 @@ settings/launches.json
 *.db-wal
 *.db-shm
 
+# Go
+/dist/
+/devhub
+*.test
+
