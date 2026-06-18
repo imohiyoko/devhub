@@ -183,6 +183,20 @@ function releaseCard(rel, kind, os, arch) {
   return card;
 }
 
+// リリース取得: まず deploy 時に焼き込んだ同一オリジンの releases.json（レート制限なし）。
+// 無ければライブ API にフォールバック（未認証は 60req/h 制限ありなので最終手段）。
+async function loadReleases() {
+  try {
+    const r = await fetch("./releases.json", { cache: "no-cache" });
+    if (r.ok) return await r.json();
+  } catch (e) { /* fall through */ }
+  const r2 = await fetch("https://api.github.com/repos/" + REPO + "/releases?per_page=30", {
+    headers: { "Accept": "application/vnd.github+json" }
+  });
+  if (!r2.ok) throw new Error("HTTP " + r2.status);
+  return await r2.json();
+}
+
 (async function () {
   const os = detectOS();
   const arch = await detectArch();
@@ -191,11 +205,7 @@ function releaseCard(rel, kind, os, arch) {
 
   const content = document.getElementById("content");
   try {
-    const res = await fetch("https://api.github.com/repos/" + REPO + "/releases?per_page=30", {
-      headers: { "Accept": "application/vnd.github+json" }
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const rels = (await res.json()).filter(r => !r.draft);
+    const rels = (await loadReleases()).filter(r => !r.draft);
     const stable = rels.find(r => !r.prerelease);
     const pre = rels.find(r => r.prerelease);
 
