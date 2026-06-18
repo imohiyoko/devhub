@@ -3,12 +3,18 @@ name: pages
 # site/ の静的ダウンロードページを GitHub Pages へ公開する。
 # 初回は repo Settings → Pages の source が "GitHub Actions" である必要があるが、
 # configure-pages の enablement: true で未設定なら自動有効化を試みる。
+#
+# リリース情報はデプロイ時に認証済みトークン（高レート上限）で取得し releases.json に
+# 焼き込む。ページは同一オリジンの静的 JSON を読むため、訪問者側の api.github.com 呼び出し
+# が不要になり 60req/h の未認証レート制限（403）を回避できる。release イベントでも再生成する。
 on:
   push:
     branches: [main]
     paths:
       - "site/**"
       - ".github/workflows/pages.yml"
+  release:
+    types: [published, edited, deleted, released]
   workflow_dispatch:
 
 permissions:
@@ -29,6 +35,15 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # リリース一覧を最小スキーマで焼き込む（draft 除外）。認証済みなのでレート制限に余裕。
+      - name: Generate releases.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/releases?per_page=30" \
+            --jq '[.[] | select(.draft | not) | {tag_name, prerelease, published_at, assets: [.assets[] | {name, browser_download_url}]}]' \
+            > site/releases.json
+          echo "releases.json: $(jq length site/releases.json) entries"
       - uses: actions/configure-pages@v5
         with:
           enablement: true
