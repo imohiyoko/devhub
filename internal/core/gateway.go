@@ -87,8 +87,10 @@ func NewGateway(reg *Registry, up Upstreams, pageFn PageFunc) *Gateway {
 		if base := up[m.ID]; base != "" {
 			if pm, err := newProxyMount(t, base); err == nil {
 				g.proxies = append(g.proxies, pm)
+				continue // extracted: do not mount its in-process page/routes
 			}
-			continue // extracted: do not mount its in-process page/routes
+			// A bad upstream URL must not make the tool vanish: fall through and
+			// mount it in-process so it stays reachable in the single binary.
 		}
 		if m.Page != "" {
 			g.pages["/"+m.ID] = m.ID

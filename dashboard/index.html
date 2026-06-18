@@ -517,21 +517,27 @@ async function copyCmd() {
 
 /* ── Init ── */
 (async () => {
-  const [toolsRes, settingsRes] = await Promise.all([
-    fetch('/api/tools'),
-    fetch('/api/settings'),
-  ]);
-  const toolsJson = await toolsRes.json();
-  TOOLS = (toolsJson.tools || []).map(t => ({
-    id: t.id,
-    href: '/' + t.id,
-    icon: t.icon,
-    name: t.title,
-    desc: t.desc,
-  }));
-  const settings = await settingsRes.json();
-  disabledTools = settings.disabled_tools || [];
-  toolOrder = settings.tool_order || [];
+  try {
+    const [toolsRes, settingsRes] = await Promise.all([
+      fetch('/api/tools'),
+      fetch('/api/settings'),
+    ]);
+    if (!toolsRes.ok) throw new Error('GET /api/tools → ' + toolsRes.status);
+    if (!settingsRes.ok) throw new Error('GET /api/settings → ' + settingsRes.status);
+    const toolsJson = await toolsRes.json();
+    TOOLS = (toolsJson.tools || []).map(t => ({
+      id: t.id,
+      href: '/' + t.id,
+      icon: t.icon || '',
+      name: t.title || t.id,
+      desc: t.desc || '',
+    }));
+    const settings = await settingsRes.json();
+    disabledTools = settings.disabled_tools || [];
+    toolOrder = settings.tool_order || [];
+  } catch (e) {
+    console.error('dashboard init failed:', e);
+  }
   renderGrid();
   renderToggles();
 })();
