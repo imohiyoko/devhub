@@ -61,8 +61,10 @@ func TestGateway_InProcDispatch(t *testing.T) {
 
 func TestGateway_ToolsNav(t *testing.T) {
 	reg := NewRegistry(
-		funcTool{meta: Meta{ID: "ports", Title: "Ports"}},
-		funcTool{meta: Meta{ID: "git", Title: "Git"}},
+		funcTool{meta: Meta{ID: "ports", Title: "Ports", Page: "tools/ports/index.html"}},
+		funcTool{meta: Meta{ID: "git", Title: "Git", Page: "tools/git/index.html"}},
+		// API-only tool: no Page, so it must NOT appear as a dashboard card.
+		funcTool{meta: Meta{ID: "settings", Title: "Settings"}},
 	)
 	g := NewGateway(reg, nil, nil)
 
@@ -76,7 +78,7 @@ func TestGateway_ToolsNav(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// Metas() sorts by ID, so git precedes ports.
+	// Nav lists only page-having tools, sorted by ID: git, ports (settings excluded).
 	if len(resp.Tools) != 2 || resp.Tools[0].ID != "git" || resp.Tools[1].ID != "ports" {
 		t.Fatalf("nav = %+v", resp.Tools)
 	}

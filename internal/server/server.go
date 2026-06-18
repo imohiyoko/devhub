@@ -1,6 +1,7 @@
-// Package server wires the embedded frontend, security middleware and
-// controllers into an HTTP server bound to 127.0.0.1. It ports the routing,
-// token-injection and restart behavior of server.py.
+// Package server wires the embedded frontend, security middleware and the tool
+// registry into an HTTP server bound to 127.0.0.1. It owns the security gate,
+// per-session token injection, the dashboard root page and process restart;
+// all tool routing is delegated to the core gateway.
 package server
 
 import (
@@ -13,12 +14,6 @@ import (
 	"strings"
 	"time"
 
-	databasectl "github.com/imohiyoko/devhub/internal/controllers/database"
-	envsctl "github.com/imohiyoko/devhub/internal/controllers/envs"
-	gitctl "github.com/imohiyoko/devhub/internal/controllers/git"
-	portsctl "github.com/imohiyoko/devhub/internal/controllers/ports"
-	settingsctl "github.com/imohiyoko/devhub/internal/controllers/settings"
-	workspacectl "github.com/imohiyoko/devhub/internal/controllers/workspace"
 	"github.com/imohiyoko/devhub/internal/core"
 	"github.com/imohiyoko/devhub/internal/platform"
 	"github.com/imohiyoko/devhub/internal/storage"
@@ -26,36 +21,32 @@ import (
 )
 
 // Server holds process-lifetime state: the per-session token, the bound port,
-// the host allowlist, pre-injected static pages and the controllers.
+// the host allowlist, the token-injected pages and the core gateway.
 type Server struct {
 	store    *storage.Store
 	settings map[string]any
 	version  string
 
-	token         string
-	port          int
-	allowedHosts  map[string]bool
-	staticByRoute map[string][]byte
-	openBrowser   bool
+	token        string
+	port         int
+	allowedHosts map[string]bool
+	openBrowser  bool
+
+	// dashboard is the token-injected root page ("/"); toolPages holds each
+	// tool's token-injected page keyed by tool ID (served by the gateway).
+	dashboard []byte
 
 	httpSrv *http.Server
 
-	// gateway dispatches tools migrated onto the core contract; everything else
-	// falls through to the legacy router (see serveLegacy). As tools migrate,
-	// their cases leave the legacy router and the gateway's coverage grows.
+	// gateway dispatches every tool (registry-driven) plus GET /api/tools.
+	// Requests it doesn't claim fall through to serveSystem (root page, /api/info,
+	// /api/restart, SPA redirect).
 	gateway *core.Gateway
-
-	settingsCtl  *settingsctl.Controller
-	gitCtl       *gitctl.Controller
-	workspaceCtl *workspacectl.Controller
-	portsCtl     *portsctl.Controller
-	databaseCtl  *databasectl.Controller
-	envsCtl      *envsctl.Controller
 }
 
 // New builds a Server: resolves the token (inheriting DEVHUB_API_TOKEN across a
-// restart), the port, the host allowlist, pre-injects the token shim into each
-// static page, and constructs the controllers.
+// restart), the port and host allowlist, builds the tool registry, and injects
+// the token shim into the dashboard and every tool page.
 func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser bool, version string) (*Server, error) {
 	s := &Server{store: store, settings: settings, version: version}
 
@@ -94,32 +85,39 @@ func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser 
 	}
 	s.openBrowser = openByCfg && !noBrowser
 
+	// Build the registry, then derive everything else from it: each tool's page
+	// is read from the embed FS and token-injected, keyed by tool ID for the
+	// gateway's pageFn. The dashboard root is the one page that is not a tool.
+	reg := tools.Registry(store)
 	script := buildTokenScript(s.token)
-	s.staticByRoute = make(map[string][]byte, len(routeFiles))
-	for route, file := range routeFiles {
-		b, err := fs.ReadFile(assets, file)
-		if err != nil {
-			return nil, fmt.Errorf("embed read %s: %w", file, err)
+
+	toolPages := map[string][]byte{}
+	for _, t := range reg.Tools() {
+		m := t.Meta()
+		if m.Page == "" {
+			continue
 		}
-		s.staticByRoute[route] = injectToken(b, script)
+		b, err := fs.ReadFile(assets, m.Page)
+		if err != nil {
+			return nil, fmt.Errorf("embed read %s: %w", m.Page, err)
+		}
+		toolPages[m.ID] = injectToken(b, script)
 	}
 
-	s.settingsCtl = settingsctl.New(store)
-	s.gitCtl = gitctl.New(store)
-	s.workspaceCtl = workspacectl.New(store, s.gitCtl)
-	s.portsCtl = portsctl.New(store)
-	s.databaseCtl = databasectl.New(store)
-	s.envsCtl = envsctl.New(store, s.gitCtl, s.portsCtl, s.workspaceCtl)
+	db, err := fs.ReadFile(assets, "dashboard/index.html")
+	if err != nil {
+		return nil, fmt.Errorf("embed read dashboard/index.html: %w", err)
+	}
+	s.dashboard = injectToken(db, script)
 
-	// Front the controllers with the core gateway. Migrated tools (the registry)
-	// are served by the gateway; pageFn reuses the already token-injected static
-	// pages; unmigrated paths fall through to the legacy router.
 	pageFn := func(toolID string) ([]byte, bool) {
-		b, ok := s.staticByRoute["/"+toolID]
+		b, ok := toolPages[toolID]
 		return b, ok
 	}
-	s.gateway = core.NewGateway(tools.Registry(store), nil, pageFn)
-	s.gateway.Next = http.HandlerFunc(s.serveLegacy)
+	// Upstreams is nil: every tool runs in-process (single binary). Point an
+	// entry at a URL to extract that tool to its own service — no code change.
+	s.gateway = core.NewGateway(reg, nil, pageFn)
+	s.gateway.Next = http.HandlerFunc(s.serveSystem)
 	return s, nil
 }
 
