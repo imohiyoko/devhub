@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// fetchShimJS is ported verbatim from server.py's _FETCH_SHIM_JS. The %s is
-// replaced with the JSON-encoded token (json.Marshal of a string yields the same
-// quoted literal as Python's json.dumps).
+// fetchShimJS injects the API token into the served frontend. The %s is
+// replaced with the JSON-encoded token (json.Marshal of a string yields a
+// safely quoted literal).
 //
 // Invariant: every /api/ access must go through fetch / XMLHttpRequest. There is
 // no EventSource/WebSocket use in the frontend, so this shim covers the surface.

@@ -1,6 +1,6 @@
 // Package git implements the /api/repos and /api/git/* endpoints. This file
-// holds repo discovery (find_repos / all_repos from backend/controllers/git.py);
-// the git command endpoints are added in a later phase.
+// holds repo discovery and listing; the git command endpoints live in the
+// other files of this package.
 package git
 
 import (
@@ -57,7 +57,7 @@ func findRepos(root string) []Repo {
 }
 
 // AllRepos returns the deduplicated repos from scan_roots and pinned_repos,
-// honoring excludes. Mirrors all_repos() in git.py.
+// honoring excludes.
 func (c *Controller) AllRepos() []Repo {
 	cfg, err := c.store.LoadConfig()
 	if err != nil {

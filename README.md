@@ -106,7 +106,7 @@ devhub --version     # バージョンを表示
 | 環境変数 | 説明 |
 |---|---|
 | `DEVHUB_PORT` | ポート設定より優先してバインドするポート |
-| `DEVHUB_HOME` | データ保存先（既定 `~/.devhub`。旧 Python 版の `devhub.db` をそのまま引き継げます） |
+| `DEVHUB_HOME` | データ保存先（既定 `~/.devhub`。旧版の `devhub.db` をそのまま引き継げます） |
 
 ### ワークスペース設定
 

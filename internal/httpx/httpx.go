@@ -1,7 +1,7 @@
 // Package httpx provides the shared JSON response writer and HTTP error type
-// used by the server and all controllers. WriteJSON mirrors Python's
-// json.dumps(ensure_ascii=False): no HTML escaping of <, >, & so values such as
-// git diff output round-trip byte-for-byte.
+// used by the server and all controllers. WriteJSON emits UTF-8 JSON without
+// HTML escaping of <, >, & so values such as git diff output round-trip
+// byte-for-byte.
 package httpx
 
 import (
@@ -16,7 +16,7 @@ import (
 
 // HTTPError carries an explicit status code (and optional extra fields) for an
 // API error. Controllers return it to signal a specific status; any other error
-// is treated as a 400 by WriteError, mirroring server.py's outer try/except.
+// is treated as a 400 by WriteError.
 type HTTPError struct {
 	Status int
 	Msg    string

@@ -1,5 +1,5 @@
 // Package sanitize strips secret-bearing keys from settings and DB connection
-// profiles before they are returned to the frontend. Ports backend/controllers/base.py.
+// profiles before they are returned to the frontend.
 package sanitize
 
 import (
@@ -7,10 +7,9 @@ import (
 	"strings"
 )
 
-// secretKeys are matched case-insensitively as substrings of a key name. The
-// list is lowercased (the Python source lowercases the key but kept mixed-case
-// needles, so "apiKey" slipped through); lowercasing both sides matches the
-// clear intent — a case-insensitive partial match.
+// secretKeys are matched case-insensitively as substrings of a key name. Both
+// the key and these needles are lowercased so partial matches like "apiKey" are
+// caught — a case-insensitive partial match.
 var secretKeys = []string{"password", "secret", "apikey", "api_key", "api-key", "token"}
 
 // IsSecretKey reports whether a key name looks like it carries a secret.

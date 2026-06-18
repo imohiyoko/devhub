@@ -10,8 +10,8 @@ import (
 	"github.com/imohiyoko/devhub/internal/httpx"
 )
 
-// routeFiles maps a request path to the embedded HTML file it serves. Ports the
-// ROUTES table in server.py (csv-tsv is intentionally absent; it has no page).
+// routeFiles maps a request path to the embedded HTML file it serves
+// (csv-tsv is intentionally absent; it has no page).
 var routeFiles = map[string]string{
 	"/":               "dashboard/index.html",
 	"/diff-kun":       "tools/diff-kun/index.html",
@@ -31,7 +31,7 @@ var routeFiles = map[string]string{
 }
 
 // ServeHTTP is the single security gate (host allowlist + API token), then
-// dispatches by method, mirroring server.py's do_GET/do_POST ordering.
+// dispatches by method (GET handlers before POST).
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.hostAllowed(r) {
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
@@ -107,7 +107,7 @@ func (s *Server) routePOST(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	data := map[string]any{}
 	if len(body) > 0 {
-		_ = json.Unmarshal(body, &data) // bad/empty body -> empty map, like server.py
+		_ = json.Unmarshal(body, &data) // bad/empty body -> empty map
 	}
 	path := r.URL.Path
 	var err error

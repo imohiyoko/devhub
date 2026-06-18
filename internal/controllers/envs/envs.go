@@ -1,6 +1,6 @@
 // Package envs implements the env-launcher endpoints (/api/envs*). It launches
 // per-OS terminals, resolves worktree bindings, assigns ports (baton/offset),
-// and tracks launches in the SQLite registry. Ports backend/controllers/envs.py.
+// and tracks launches in the SQLite registry.
 package envs
 
 import (
