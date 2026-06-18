@@ -11,16 +11,6 @@ env:
   MISE_VERSION: "2026.6.11"
 
 jobs:
-  # Keep validating the Python tree until it is removed at v1.0.0.
-  python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
-        with:
-          version: ${{ env.MISE_VERSION }}
-      - run: python3 -m unittest discover -s tests -v
-
   go:
     runs-on: ${{ matrix.os }}
     strategy:

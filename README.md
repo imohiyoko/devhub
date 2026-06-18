@@ -1,16 +1,17 @@
 # devhub
 
 ローカル開発を補助するツール群を `localhost:8765` に集約するダッシュボード。  
-外部依存なし（Python 標準ライブラリのみ）。
+単一の実行ファイルで動作（ランタイム不要・OS / CPU アーキ別バイナリを配布）。
 
 ## ツール
 
 | ツール | パス | 概要 |
 |---|---|---|
-| **workspace** | `/workspace` | `~/developer` 配下のリポジトリ一覧から VSCode で開く |
+| **workspace** | `/workspace` | スキャン対象ディレクトリ配下のリポジトリ一覧からエディタで開く |
+| **git** | `/git` | status / log / diff / stash / branch / worktree などを GUI から操作（PR から worktree 作成も対応） |
+| **env-launcher** | `/env-launcher` | 検証環境（複数プロセス）を OS 別ターミナルで依存順に起動・管理 |
 | **diff-kun** | `/diff-kun` | テキスト差分をリアルタイム確認（unified / context / side-by-side） |
 | **diagram** | `/diagram` | Mermaid 記法と Draw.io XML の相互変換（外部CDNは読み込まない） |
-| **csv-tsv** | `/csv-tsv` | CSV / TSV の相互変換 |
 | **db-table** | `/db-table` | SQLite / MySQL / MariaDB の接続管理、表表示、テーブル/横断カラム/横断要素検索、TSV/CSVコピー、列コピー、セル編集 |
 | **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、保護対象設定、LISTEN プロセスの kill |
 
@@ -19,12 +20,15 @@
 
 ## セットアップ
 
+devhub は単一バイナリで配布されます。インストーラは GitHub Releases から**バージョン固定**の成果物を取得し、**SHA256 を検証**してから配置します（ランタイム不要）。
+
 ### 必要環境
 
-- Python 3.8+
-- Git
-- MySQL / MariaDB を編集する場合は `mysql` コマンド
-- VSCode / Cursor / Windsurf など（workspace からエディタで開く場合）
+- インストール時: `curl`（macOS / Linux）/ PowerShell（Windows）のみ
+- 実行時（各ツールを使うときだけ必要なもの）:
+  - **git** … git / env-launcher ツール
+  - **mysql** コマンド … db-table で MySQL / MariaDB を編集する場合
+  - VSCode / Cursor / Windsurf など … workspace からエディタで開く場合
 
 ### クイックセットアップ
 
@@ -40,54 +44,52 @@ Windows PowerShell:
 powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/imohiyoko/devhub/main/install.ps1 | iex"
 ```
 
-上記は devhub を標準の場所へ clone / 更新し、`devhub` コマンドを登録します。
+最新リリースのバイナリをダウンロードして SHA256 を検証し、`devhub` コマンドを登録します。
 
 | OS | インストール先 | コマンド配置先 |
 |---|---|---|
 | macOS / Linux | `~/.devhub` | `~/.local/bin/devhub` |
 | Windows | `%LOCALAPPDATA%\devhub` | `%USERPROFILE%\bin\devhub.cmd` |
 
-### 手動インストール
+### バージョンを固定してインストール
+
+`DEVHUB_VERSION` を指定すると特定リリースに固定できます（汚染対策・再現性のため推奨）。
 
 ```bash
-git clone https://github.com/imohiyoko/devhub.git
-cd devhub
-
-# グローバルコマンドとして登録
-chmod +x install.sh && ./install.sh
+DEVHUB_VERSION=v1.0.0 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/imohiyoko/devhub/main/install.sh)"
 ```
 
-Windows:
-
 ```powershell
-git clone https://github.com/imohiyoko/devhub.git
-cd devhub
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+$env:DEVHUB_VERSION="v1.0.0"; powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/imohiyoko/devhub/main/install.ps1 | iex"
+```
+
+### 手動インストール
+
+[Releases](https://github.com/imohiyoko/devhub/releases) から自分の OS / アーキの資産（`devhub_<version>_<os>_<arch>.tar.gz`、Windows は `.zip`）と `checksums.txt` をダウンロードし、SHA256 を検証して展開、PATH の通った場所に `devhub` を置きます。
+
+```bash
+# 例: macOS arm64
+shasum -a 256 -c <(grep devhub_1.0.0_darwin_arm64.tar.gz checksums.txt)
+tar -xzf devhub_1.0.0_darwin_arm64.tar.gz
+install -m 0755 devhub ~/.local/bin/devhub
 ```
 
 ### 起動
 
 ```bash
-# インストール済みの場合
-devhub
-
-# スクリプトから直接
-./start.sh          # macOS / Linux
-start.bat           # Windows
+devhub               # ダッシュボードを起動してブラウザを開く
+devhub --no-browser  # ブラウザを開かない
+devhub --version     # バージョンを表示
 ```
-
-macOS では `devhub.app` をダブルクリックしても起動できます。
 
 ## 設定
 
-`settings/` 配下のファイルで動作をカスタマイズできます。  
-`.example.json` をコピーして編集してください（個人設定は gitignore 済み）。
+設定は `$DEVHUB_HOME/settings/devhub.db`（既定 `~/.devhub/settings/devhub.db`、SQLite）に保存されます。  
+初回起動時にバイナリ同梱の既定値から自動生成され、各ツールの UI から編集できます（編集用の JSON ファイルを置く必要はありません）。
 
-### サーバー設定 (`settings/server.json`)
+### サーバー設定
 
-```bash
-cp settings/server.example.json settings/server.json
-```
+ダッシュボード右上の設定、および各ツールの UI から変更できます。
 
 | キー | デフォルト | 説明 |
 |---|---|---|
@@ -97,12 +99,16 @@ cp settings/server.example.json settings/server.json
 | `db_local_only` | `true` | db-table の MySQL / MariaDB 接続をローカルホストのみに制限 |
 | `protected_ports` | `[]` | ports ツールで kill できないよう保護するポート番号の配列 |
 
-### ワークスペース設定 (`settings/config.json`)
+環境変数で上書きできる項目:
 
-初回起動時に `settings/config.example.json` から自動生成されます。  
-workspace ツールの UI からも編集可能です。
+| 環境変数 | 説明 |
+|---|---|
+| `DEVHUB_PORT` | ポート設定より優先してバインドするポート |
+| `DEVHUB_HOME` | データ保存先（既定 `~/.devhub`。旧 Python 版の `devhub.db` をそのまま引き継げます） |
 
-> **Note**: 古いバージョンからアップデートした場合、`settings/config.json` が Git の管理対象として残っている場合があります。その場合は `git rm --cached settings/config.json` を実行して管理から外してください。
+### ワークスペース設定
+
+workspace / git ツールの UI から編集できます。
 
 | キー | 説明 |
 |---|---|

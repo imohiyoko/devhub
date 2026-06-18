@@ -361,7 +361,7 @@ const TOOLS = [
 
 let disabledTools = [];
 let toolOrder = [];
-let restartCmdText = 'python3 server.py';
+let restartCmdText = 'devhub';
 let dragSrcId = null;
 
 function orderedTools() {
@@ -570,14 +570,6 @@ async function copyCmd() {
   toolOrder = settings.tool_order || [];
   renderGrid();
   renderToggles();
-
-  try {
-    const infoRes = await fetch('/api/info');
-    const info = await infoRes.json();
-    restartCmdText = `python3 ${info.base}/server.py`;
-  } catch {
-    restartCmdText = 'python3 server.py';
-  }
 })();
 </script>
 </body>
