@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>devhub — ダウンロード</title>
+<meta name="description" content="devhub のインストール。OS を自動判定してコマンドと対応バイナリを表示します。">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+    --muted: #8b949e; --accent: #58a6ff; --accent2: #2ea043; --code: #0b0f14;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", Meiryo, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
+  header { margin-bottom: 8px; }
+  h1 { font-size: 32px; margin: 0; letter-spacing: -0.5px; }
+  .tagline { color: var(--muted); margin: 6px 0 0; }
+  .env {
+    margin: 28px 0 8px; font-size: 14px; color: var(--muted);
+  }
+  .env b { color: var(--text); }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; margin: 16px 0;
+  }
+  .card h2 { margin: 0 0 4px; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+  .tag { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .tag.stable { background: #1f6f3f33; color: #3fb950; border: 1px solid #2ea04366; }
+  .tag.rc { background: #9e6a0333; color: #d29922; border: 1px solid #bb800966; }
+  .card .ver { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .cmd {
+    position: relative; background: var(--code); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 46px 14px 14px; margin: 10px 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px; white-space: pre-wrap; word-break: break-all;
+  }
+  .cmd .lbl { display: block; color: var(--muted); font-size: 11px; margin-bottom: 6px; user-select: none; }
+  .copy {
+    position: absolute; top: 10px; right: 10px; background: #21262d; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer;
+  }
+  .copy:hover { border-color: var(--accent); }
+  .dl { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .dl a {
+    display: inline-block; padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--accent); text-decoration: none; font-size: 13px; background: #0d1117;
+  }
+  .dl a:hover { border-color: var(--accent); }
+  .dl a.match { border-color: var(--accent2); color: #3fb950; }
+  .note { color: var(--muted); font-size: 12.5px; margin: 10px 0 0; }
+  .links { margin-top: 28px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+  .links a { color: var(--accent); text-decoration: none; }
+  .links a:hover { text-decoration: underline; }
+  .muted { color: var(--muted); }
+  code { background: #ffffff14; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  #error { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>devhub</h1>
+    <p class="tagline">ローカル開発ツールを <code>localhost:8765</code> に集約するダッシュボード。単一バイナリ・ランタイム不要。</p>
+  </header>
+
+  <p class="env" id="env">環境を判定しています…</p>
+
+  <div id="content"></div>
+
+  <div class="card" id="error">
+    <h2>リリース情報を取得できませんでした</h2>
+    <p class="note">GitHub API への接続に失敗したか、レート制限の可能性があります。下のリンクから直接ご確認ください。</p>
+  </div>
+
+  <div class="links">
+    <a id="allReleases" href="https://github.com/imohiyoko/devhub/releases" target="_blank" rel="noopener">📦 すべてのリリース / 全プラットフォーム</a>
+    <a href="https://github.com/imohiyoko/devhub" target="_blank" rel="noopener">⌨️ リポジトリ</a>
+  </div>
+</div>
+
+<script>
+const REPO = "imohiyoko/devhub";
+const INSTALL_SH = "https://raw.githubusercontent.com/" + REPO + "/main/install.sh";
+const INSTALL_PS1 = "https://raw.githubusercontent.com/" + REPO + "/main/install.ps1";
+
+// ---- OS / arch 判定 ----
+function detectOS() {
+  const ua = navigator.userAgent || "";
+  if (/Macintosh|Mac OS X/.test(ua)) return "darwin";
+  if (/Windows/.test(ua)) return "windows";
+  if (/Linux/.test(ua) && !/Android/.test(ua)) return "linux";
+  return "unknown";
+}
+async function detectArch() {
+  try {
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      const d = await navigator.userAgentData.getHighEntropyValues(["architecture"]);
+      if (d.architecture === "arm") return "arm64";
+      if (d.architecture === "x86") return "amd64";
+    }
+  } catch (e) { /* noop */ }
+  return null; // 不明（Safari 等）。Mac は arm64 を既定表示。
+}
+const OS_LABEL = { darwin: "macOS", windows: "Windows", linux: "Linux", unknown: "お使いの環境" };
+
+// ---- インストールコマンド生成（curl|bash は arch を自動判定するので arch 不要）----
+function installCmd(os, tag, pinned) {
+  if (os === "windows") {
+    const pin = pinned ? ('$env:DEVHUB_VERSION="' + tag + '"; ') : "";
+    return pin + 'powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb ' + INSTALL_PS1 + ' | iex"';
+  }
+  const pin = pinned ? ("DEVHUB_VERSION=" + tag + " ") : "";
+  return pin + '/bin/bash -c "$(curl -fsSL ' + INSTALL_SH + ')"';
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function cmdBlock(label, command) {
+  const box = el("div", "cmd");
+  box.appendChild(el("span", "lbl", label));
+  box.appendChild(document.createTextNode(command));
+  const btn = el("button", "copy", "コピー");
+  btn.addEventListener("click", () => {
+    navigator.clipboard.writeText(command).then(() => {
+      btn.textContent = "✓ コピー済"; setTimeout(() => (btn.textContent = "コピー"), 1500);
+    });
+  });
+  box.appendChild(btn);
+  return box;
+}
+
+// release オブジェクトの assets から os に合う DL リンク群を作る
+function downloadLinks(rel, os, arch) {
+  const wrap = el("div", "dl");
+  const assets = (rel.assets || []).filter(a => os === "unknown" ? true : a.name.includes("_" + os + "_"));
+  assets.sort((a, b) => a.name.localeCompare(b.name));
+  for (const a of assets) {
+    const link = el("a", null, a.name.replace(/^devhub_/, "").replace(/\.(tar\.gz|zip)$/, ""));
+    link.href = a.browser_download_url;
+    if (arch && a.name.includes("_" + arch + ".")) link.className = "match";
+    wrap.appendChild(link);
+  }
+  // checksums は常に添える
+  const sums = (rel.assets || []).find(a => a.name === "checksums.txt");
+  if (sums) {
+    const c = el("a", null, "checksums.txt"); c.href = sums.browser_download_url;
+    wrap.appendChild(c);
+  }
+  return wrap;
+}
+
+function releaseCard(rel, kind, os, arch) {
+  const card = el("div", "card");
+  const h = el("h2", null, kind === "stable" ? "安定版" : "テスト版 (pre-release)");
+  h.appendChild(el("span", "tag " + (kind === "stable" ? "stable" : "rc"), rel.tag_name));
+  card.appendChild(h);
+
+  const d = rel.published_at ? new Date(rel.published_at).toLocaleDateString("ja-JP") : "";
+  card.appendChild(el("p", "ver", "公開日: " + d));
+
+  // 安定版は最新を指す無指定コマンド、pre-release はバージョン固定。
+  const pinned = (kind !== "stable");
+  if (os === "unknown") {
+    card.appendChild(cmdBlock("macOS / Linux", installCmd("darwin", rel.tag_name, pinned)));
+    card.appendChild(cmdBlock("Windows (PowerShell)", installCmd("windows", rel.tag_name, pinned)));
+  } else {
+    card.appendChild(cmdBlock(OS_LABEL[os] + " — ターミナルに貼り付け", installCmd(os, rel.tag_name, pinned)));
+  }
+
+  card.appendChild(el("p", "note", "直接ダウンロード（" + (os === "unknown" ? "全プラットフォーム" : OS_LABEL[os]) + "）:"));
+  card.appendChild(downloadLinks(rel, os, arch));
+  card.appendChild(el("p", "note", "インストーラは checksums.txt(SHA256) で検証してから配置します。手動展開時はハッシュ照合を推奨。"));
+  return card;
+}
+
+(async function () {
+  const os = detectOS();
+  const arch = await detectArch();
+  const envEl = document.getElementById("env");
+  envEl.innerHTML = "判定結果: <b>" + OS_LABEL[os] + (arch ? " / " + (arch === "arm64" ? "Apple Silicon・ARM64" : "Intel・x86_64") : "") + "</b>";
+
+  const content = document.getElementById("content");
+  try {
+    const res = await fetch("https://api.github.com/repos/" + REPO + "/releases?per_page=30", {
+      headers: { "Accept": "application/vnd.github+json" }
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const rels = (await res.json()).filter(r => !r.draft);
+    const stable = rels.find(r => !r.prerelease);
+    const pre = rels.find(r => r.prerelease);
+
+    if (!stable && !pre) { content.appendChild(el("p", "muted", "公開済みのリリースがまだありません。")); return; }
+
+    if (stable) {
+      content.appendChild(releaseCard(stable, "stable", os, arch));
+    } else {
+      const info = el("div", "card");
+      info.appendChild(el("h2", null, "安定版"));
+      info.appendChild(el("p", "note", "安定版（v1.0.0）は準備中です。現在はテスト版でお試しいただけます。"));
+      content.appendChild(info);
+    }
+    // pre-release が安定版より新しい場合のみ別カードで表示
+    if (pre && (!stable || pre.tag_name !== stable.tag_name)) {
+      content.appendChild(releaseCard(pre, "pre", os, arch));
+    }
+  } catch (e) {
+    document.getElementById("error").style.display = "block";
+  }
+})();
+</script>
+</body>
+</html>
