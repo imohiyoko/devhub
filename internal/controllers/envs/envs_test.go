@@ -7,12 +7,12 @@ import (
 
 func TestShellQuote(t *testing.T) {
 	cases := map[string]string{
-		"":                 "''",
-		"abc":              "abc",
-		"/path/to-dir_1":   "/path/to-dir_1",
-		"a b":              "'a b'",
-		"a$b":              "'a$b'",
-		"it's":             `'it'"'"'s'`,
+		"":               "''",
+		"abc":            "abc",
+		"/path/to-dir_1": "/path/to-dir_1",
+		"a b":            "'a b'",
+		"a$b":            "'a$b'",
+		"it's":           `'it'"'"'s'`,
 	}
 	for in, want := range cases {
 		if got := shellQuote(in); got != want {
