@@ -43,14 +43,22 @@ type Gateway struct {
 }
 
 type proxyMount struct {
-	id    string
-	proxy http.Handler
+	proxy    http.Handler
+	patterns []routeMatch // the page + API patterns this tool owns
+}
+
+type routeMatch struct {
+	pattern string
+	prefix  bool
 }
 
 func (pm proxyMount) matches(path string) bool {
-	return path == "/"+pm.id ||
-		strings.HasPrefix(path, "/"+pm.id+"/") ||
-		strings.HasPrefix(path, "/api/"+pm.id+"/")
+	for _, m := range pm.patterns {
+		if m.pattern == path || (m.prefix && strings.HasPrefix(path, m.pattern)) {
+			return true
+		}
+	}
+	return false
 }
 
 type inprocRoute struct {
@@ -64,11 +72,20 @@ type inprocRoute struct {
 // out-of-process; pageFn supplies page bytes for in-process tools (may be nil
 // for API-only setups).
 func NewGateway(reg *Registry, up Upstreams, pageFn PageFunc) *Gateway {
-	g := &Gateway{metas: reg.Metas(), pages: map[string]string{}, pageFn: pageFn}
+	g := &Gateway{pages: map[string]string{}, pageFn: pageFn}
+
+	// Nav (/api/tools) lists only tools with a page; API-only tools (e.g.
+	// settings) have no dashboard card. reg.Metas() is already sorted by ID.
+	for _, m := range reg.Metas() {
+		if m.Page != "" {
+			g.metas = append(g.metas, m)
+		}
+	}
+
 	for _, t := range reg.Tools() {
 		m := t.Meta()
 		if base := up[m.ID]; base != "" {
-			if pm, err := newProxyMount(m.ID, base); err == nil {
+			if pm, err := newProxyMount(t, base); err == nil {
 				g.proxies = append(g.proxies, pm)
 			}
 			continue // extracted: do not mount its in-process page/routes
@@ -88,12 +105,25 @@ func NewGateway(reg *Registry, up Upstreams, pageFn PageFunc) *Gateway {
 	return g
 }
 
-func newProxyMount(id, base string) (proxyMount, error) {
+// newProxyMount captures the tool's own page and API patterns so an extracted
+// tool is matched by exactly the routes it declares — not a guessed /api/<id>/,
+// which would be wrong for tools whose API prefix differs from their ID (e.g.
+// db-table → /api/db/, env-launcher → /api/envs).
+func newProxyMount(t Tool, base string) (proxyMount, error) {
 	u, err := url.Parse(base)
 	if err != nil {
 		return proxyMount{}, err
 	}
-	return proxyMount{id: id, proxy: httputil.NewSingleHostReverseProxy(u)}, nil
+	pm := proxyMount{proxy: httputil.NewSingleHostReverseProxy(u)}
+	if m := t.Meta(); m.Page != "" {
+		pm.patterns = append(pm.patterns,
+			routeMatch{pattern: "/" + m.ID},
+			routeMatch{pattern: "/" + m.ID + "/", prefix: true})
+	}
+	for _, rt := range t.Routes() {
+		pm.patterns = append(pm.patterns, routeMatch{pattern: rt.Pattern, prefix: rt.Prefix})
+	}
+	return pm, nil
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -6,23 +6,20 @@ import (
 	gitctl "github.com/imohiyoko/devhub/internal/controllers/git"
 	"github.com/imohiyoko/devhub/internal/core"
 	"github.com/imohiyoko/devhub/internal/httpx"
-	"github.com/imohiyoko/devhub/internal/storage"
 )
 
 // gitTool adapts the git controller to the core.Tool contract. It owns the
 // /api/repos and /api/git/* routes and the /git page.
 type gitTool struct{ ctl *gitctl.Controller }
 
-// NewGit builds the git tool from the store.
-func NewGit(store *storage.Store) core.Tool {
-	return gitTool{ctl: gitctl.New(store)}
-}
+func newGit(ctl *gitctl.Controller) core.Tool { return gitTool{ctl: ctl} }
 
 func (t gitTool) Meta() core.Meta {
 	return core.Meta{
 		ID:    "git",
 		Title: "git",
-		Desc:  "status / log / diff / stash / branch / worktree を GUI から操作",
+		Icon:  "⎇",
+		Desc:  "lazygit風ブラウザUI。ステージング・コミット・ブランチ管理・プッシュ・プルをキーボードで操作",
 		Page:  "tools/git/index.html",
 	}
 }
