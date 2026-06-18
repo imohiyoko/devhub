@@ -5,8 +5,7 @@ import (
 	"runtime"
 )
 
-// browserOpen opens url in the user's default browser (best-effort), replacing
-// Python's webbrowser.open.
+// browserOpen opens url in the user's default browser (best-effort).
 func browserOpen(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {

@@ -1,5 +1,5 @@
 // Package pathutil provides the filesystem path helpers shared by the workspace
-// and git controllers, mirroring the os.path.* operations used in the Python code.
+// and git controllers.
 package pathutil
 
 import (
@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// ExpandUser replaces a leading ~ with the user's home directory (os.path.expanduser).
+// ExpandUser replaces a leading ~ with the user's home directory.
 func ExpandUser(p string) string {
 	// If home can't be resolved, leave ~ untouched rather than letting
 	// filepath.Join silently collapse it to a CWD-relative path.
@@ -29,7 +29,7 @@ func ExpandUser(p string) string {
 	return p
 }
 
-// NormCase mirrors os.path.normcase: case-fold on Windows, identity elsewhere.
+// NormCase case-folds on Windows, identity elsewhere.
 // (filepath.Clean already normalizes separators on Windows.)
 func NormCase(p string) string {
 	if runtime.GOOS == "windows" {
@@ -38,7 +38,7 @@ func NormCase(p string) string {
 	return p
 }
 
-// AbsClean returns the cleaned absolute form of p (os.path.normpath(os.path.abspath(p))).
+// AbsClean returns the cleaned absolute form of p.
 func AbsClean(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		return abs // filepath.Abs already calls Clean
@@ -51,13 +51,13 @@ func AbsExpand(p string) string {
 	return AbsClean(ExpandUser(p))
 }
 
-// IsDir reports whether p is a directory, following symlinks (like scandir.is_dir()).
+// IsDir reports whether p is a directory, following symlinks.
 func IsDir(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
 }
 
-// Exists reports whether p exists, following symlinks (os.path.exists).
+// Exists reports whether p exists, following symlinks.
 func Exists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil

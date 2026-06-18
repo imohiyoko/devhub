@@ -80,7 +80,7 @@ func defaultWorktreePath(repoPath, branch string) string {
 }
 
 // addWorktree runs `git worktree add`, validating inputs. Returns git stdout, or
-// an *httpx.HTTPError mirroring the Python WorktreeError statuses/messages.
+// an *httpx.HTTPError carrying the worktree error status/message.
 func addWorktree(repoPath, worktreePath, branch string, newBranch bool, baseCommit string) (string, error) {
 	if worktreePath == "" || branch == "" {
 		return "", httpx.Errorf(http.StatusBadRequest, "missing worktree_path or branch")
