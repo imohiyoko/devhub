@@ -1,9 +1,7 @@
 # Dev environment toolchain — single source of truth for local + CI.
 # Run `mise install` to provision exactly these versions.
-#   go     : matches the `go` directive in go.mod and setup in CI.
-#   python : matches the legacy Python tree (server.py, tests/); drop at v1.0.0.
+#   go : matches the `go` directive in go.mod and setup in CI.
 min_version = "2026.1.0"
 
 [tools]
 go = "1.26"
-python = "3.12"
