@@ -2,11 +2,6 @@
 settings/config.json
 settings/server.json
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
 # macOS
 .DS_Store
 

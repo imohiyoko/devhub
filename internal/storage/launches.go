@@ -6,7 +6,7 @@ import (
 )
 
 // LoadLaunches reconstructs the {"launches": [...]} document from the launches
-// table, ordered like the Python version (launched_at, then rowid).
+// table, ordered by launched_at, then rowid.
 func (s *Store) LoadLaunches() (map[string]any, error) {
 	rows, err := s.db.Query("SELECT data FROM launches ORDER BY launched_at, rowid")
 	if err != nil {

@@ -11,9 +11,9 @@ import (
 
 // migrate performs the one-time import of legacy settings/*.json into SQLite,
 // guarded by meta.migrated. It reads from the on-disk settings dir (not the
-// embedded examples) so a user upgrading from the Python app keeps their state.
-// An upgrade that reuses the same ~/.devhub already has meta.migrated set by the
-// Python app, so this is a no-op there.
+// embedded examples) so an upgrading user keeps their state. An upgrade that
+// reuses the same ~/.devhub already has meta.migrated set, so this is a no-op
+// there.
 func (s *Store) migrate() error {
 	var v string
 	err := s.db.QueryRow("SELECT value FROM meta WHERE key = 'migrated'").Scan(&v)
