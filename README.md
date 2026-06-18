@@ -22,6 +22,8 @@
 
 devhub は単一バイナリで配布されます。インストーラは GitHub Releases から**バージョン固定**の成果物を取得し、**SHA256 を検証**してから配置します（ランタイム不要）。
 
+> 🔽 **ダウンロードページ**: <https://imohiyoko.github.io/devhub/> — OS を自動判定して、あなたの環境向けのコマンドとバイナリを表示します。
+
 ### 必要環境
 
 - インストール時: `curl`（macOS / Linux）/ PowerShell（Windows）のみ
