@@ -1,11 +1,33 @@
 name: release
 
+# Two ways to cut a release:
+#   1. workflow_dispatch (Actions タブから手動): bump=patch|minor|major を選ぶと
+#      最新の v* タグから次バージョンを計算してタグを作成・push し、続けて公開する。
+#   2. push: tags v* (ローカルから `git push origin vX.Y.Z`): そのタグで公開する。
+# 手動実行時のタグ push は GITHUB_TOKEN 由来のため push トリガーを再帰起動しない
+# （= 二重リリースは起きない）。同一ジョブ内で続けて goreleaser を回す。
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "セマンティックバージョンの上げ幅"
+        type: choice
+        options: [patch, minor, major]
+        default: minor
+      prerelease:
+        description: "プレリリース識別子（例: rc1。安定版は空欄）"
+        type: string
+        default: ""
 
 permissions:
-  contents: write # required to create the GitHub Release
+  contents: write # タグ作成 + GitHub Release 公開に必要
+
+# 同時に複数のリリースが走らないようにする（タグの競合・二重公開を防ぐ）。
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 # mise itself is pinned to this exact version for reproducible runs.
 # Keep it in sync with the value in ci.yml.
@@ -18,10 +40,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history for the changelog
+          fetch-depth: 0 # full history for the changelog and tag computation
+
+      # 手動実行時のみ: 次バージョンを採番してタグを作成・push する。
+      - name: Compute and push tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BUMP: ${{ inputs.bump }}
+          PRE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          # リリースは main からのみ（誤ったブランチでの採番を防ぐ）。
+          if [ "${GITHUB_REF#refs/heads/}" != "main" ]; then
+            echo "::error::release は main ブランチから実行してください（現在: ${GITHUB_REF}）"
+            exit 1
+          fi
+          latest="$(git tag -l 'v*' --sort=-v:refname | head -n1)"
+          [ -z "$latest" ] && latest="v0.0.0"
+          base="${latest#v}"; base="${base%%-*}" # 先頭 v と -pre を除去
+          # X.Y.Z をパラメータ展開で分解（heredoc を避けて YAML 字下げの罠を回避）。
+          major="${base%%.*}"; rest="${base#*.}"
+          minor="${rest%%.*}"; patch="${rest##*.}"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "::error::unknown bump: $BUMP"; exit 1 ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+          [ -n "$PRE" ] && next="${next}-${PRE}"
+          if git rev-parse -q --verify "refs/tags/${next}" >/dev/null; then
+            echo "::error::tag ${next} は既に存在します"
+            exit 1
+          fi
+          echo "前回: ${latest}  →  今回: ${next}"
+          echo "## release ${next} (from ${latest})" >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${next}" -m "release ${next}"
+          git push origin "${next}"
+
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
