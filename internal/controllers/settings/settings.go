@@ -1,5 +1,5 @@
 // Package settings implements the /api/config, /api/settings and
-// /api/settings/tool/{id} endpoints. Ports backend/controllers/settings.py.
+// /api/settings/tool/{id} endpoints.
 package settings
 
 import (

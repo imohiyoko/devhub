@@ -7,8 +7,7 @@ import (
 	"net/http"
 )
 
-// generateToken returns a 32-byte URL-safe random token, equivalent to
-// Python's secrets.token_urlsafe(32).
+// generateToken returns a 32-byte URL-safe random token.
 func generateToken() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

@@ -1,7 +1,6 @@
 // Package database implements the db-table endpoints (/api/db/*). SQLite is
 // served via the pure-Go modernc driver; MySQL/MariaDB by shelling out to the
-// `mysql --xml` client (preserving the Python behavior). Ports
-// backend/controllers/database.py.
+// `mysql --xml` client.
 package database
 
 import (
@@ -216,7 +215,7 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 	return nil
 }
 
-// --- shared SQL/text helpers (mirror database.py module functions) ---
+// --- shared SQL/text helpers ---
 
 func quoteIdentifier(name string) (string, error) {
 	if name == "" || strings.ContainsRune(name, 0) {

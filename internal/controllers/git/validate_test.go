@@ -10,7 +10,7 @@ func TestIsValidBranchName(t *testing.T) {
 		}
 	}
 	// Only a *leading* dash is rejected (argument-injection guard); a mid-string
-	// "--" like "feat/--evil" is a valid branch name, matching the Python allowlist.
+	// "--" like "feat/--evil" is a valid branch name, matching the allowlist.
 	if !isValidBranchName("feat/--evil") {
 		t.Error("feat/--evil should be valid (only leading dash is rejected)")
 	}

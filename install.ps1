@@ -6,7 +6,7 @@
 )
 
 # devhub installer (Windows): downloads a pinned, checksum-verified release
-# binary. No git clone, no Python — just a single static executable.
+# binary. No git clone, no runtime — just a single static executable.
 $ErrorActionPreference = "Stop"
 
 if (-not $Repo)       { $Repo = "imohiyoko/devhub" }
