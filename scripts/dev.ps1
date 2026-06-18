@@ -62,7 +62,7 @@ function PassThruArgs {
 switch ($Action) {
   'run' {
     Require-Cmd go
-    $dataHome = if ($env:DEVHUB_HOME) { $env:DEVHUB_HOME } else { '%LOCALAPPDATA%\devhub' }
+    $dataHome = if ($env:DEVHUB_HOME) { $env:DEVHUB_HOME } else { "$env:LOCALAPPDATA\devhub" }
     Write-Host "devhub をソースから起動します (port=$Port, home=$dataHome)"
     & go run ./cmd/devhub @(PassThruArgs)
   }
