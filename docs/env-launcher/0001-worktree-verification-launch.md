@@ -34,7 +34,7 @@ env-launcher 側に「起動時 worktree オーバーライド」や専用の「
 
 ### 今回の最小限の追加（検証専用ではない汎用改善）
 
-- **`{{port}}` プレースホルダ置換**（`backend/controllers/envs.py`）:
+- **`{{port}}` プレースホルダ置換**（`internal/controllers/envs/`）:
   offset 起動時、コマンド内の `{{port}}` を割り当てポートに置換する。これにより、
   - 環境変数を読むアプリ（例: devhub の `DEVHUB_PORT`）はそのまま、
   - ポートを CLI 引数 / make 変数で受けるアプリは `myapp --port {{port}}` /
@@ -42,15 +42,15 @@ env-launcher 側に「起動時 worktree オーバーライド」や専用の「
 
   のいずれでも offset に乗れる。割り当てポートがある時のみ作用し、それ以外は素通し。
 
-  **注意**: offset の判定（`_is_offset`）と保存時バリデーションは、現状 `port_env_var`
+  **注意**: offset の判定と保存時バリデーションは、現状 `port_env_var`
   の宣言を必須とする。そのため `{{port}}` を CLI 引数で受けるアプリでも、offset に乗せるには
   `port_env_var` を宣言する必要がある（その env 変数も export されるが、アプリが読まなければ
   無視されるだけで害はない。`settings/envs.example.json` の `cli-port-verify` 参照）。
   この「ダミー `port_env_var` が必要」な制約を外すかは、必要になった時に別途検討する（YAGNI）。
-- **git.py の関数抽出**（`add_worktree` / `ensure_worktree_from_pr`）:
+- **worktree 確保処理の関数抽出**（`internal/controllers/git/worktree.go` の `addWorktree` / `ensureWorktreeFromPR`）:
   HTTP ハンドラ内インラインだった worktree 確保処理を純関数化。既存エンドポイントが
   これを呼ぶよう置換しただけで**挙動は不変**（既存テストで担保）。失敗は
-  `WorktreeError(message, status)` で送出し HTTP 層がマップする。
+  `*httpx.HTTPError`（status 付き）で送出し HTTP 層がマップする。
 - **見本 env**（`settings/envs.example.json`）:
   `devhub-verify`（devhub 自身を offset + `DEVHUB_PORT` で検証起動）と、
   `cli-port-verify`（ポートを CLI 引数 `--port {{port}}` で受けるアプリの offset 例）。

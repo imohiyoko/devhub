@@ -1,6 +1,6 @@
 // Package server wires the embedded frontend, security middleware and
-// controllers into an HTTP server bound to 127.0.0.1. It ports the routing,
-// token-injection and restart behavior of server.py.
+// controllers into an HTTP server bound to 127.0.0.1. It handles routing,
+// token injection and restart behavior.
 package server
 
 import (
@@ -143,14 +143,14 @@ func (s *Server) Run() error {
 
 func (s *Server) printBanner() {
 	fmt.Printf("devhub → http://localhost:%d  (Ctrl+C to quit)\n", s.port)
-	fmt.Printf("  platform : %s\n", platform.PyName())
+	fmt.Printf("  platform : %s\n", platform.SystemName())
 	editor := "code"
 	if e, ok := s.settings["editor"].(string); ok && e != "" {
 		editor = e
 	}
 	fmt.Printf("  editor   : %s\n", editor)
 	if term, ok := s.settings["terminal"].(map[string]any); ok {
-		if sys, ok := term[platform.PyName()].(map[string]any); ok {
+		if sys, ok := term[platform.SystemName()].(map[string]any); ok {
 			emu, _ := sys["emulator"].(string)
 			sh, _ := sys["shell"].(string)
 			if emu != "" || sh != "" {

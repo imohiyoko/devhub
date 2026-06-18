@@ -1,6 +1,6 @@
 // Package storage backs all devhub state with a single SQLite file
 // ($DEVHUB_HOME/settings/devhub.db) using the pure-Go modernc driver, so the
-// binary cross-compiles with CGO disabled. Ports backend/storage.py.
+// binary cross-compiles with CGO disabled.
 package storage
 
 import (
@@ -24,8 +24,7 @@ type Store struct {
 	assets      fs.FS
 	settingsDir string
 
-	// RegistryMu serializes load->mutate->save of the launch registry, matching
-	// the Python _REGISTRY_LOCK contract.
+	// RegistryMu serializes load->mutate->save of the launch registry.
 	RegistryMu sync.Mutex
 }
 
@@ -81,7 +80,7 @@ func (s *Store) initSchema() error {
 
 func now() string { return time.Now().Format(time.RFC3339) }
 
-// marshalJSON encodes v without HTML escaping, matching json.dumps(ensure_ascii=False).
+// marshalJSON encodes v without HTML escaping.
 func marshalJSON(v any) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

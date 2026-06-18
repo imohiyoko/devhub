@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # devhub installer: downloads a pinned, checksum-verified release binary.
-# No git clone, no Python — just a single static binary.
+# No git clone, no runtime — just a single static binary.
 #
 # Env overrides:
 #   DEVHUB_VERSION      tag to install (default: latest release)

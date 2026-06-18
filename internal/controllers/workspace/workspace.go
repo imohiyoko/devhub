@@ -1,5 +1,5 @@
 // Package workspace implements the directory browser (/api/ls) and editor open
-// (/api/open) endpoints. Ports backend/controllers/workspace.py.
+// (/api/open) endpoints.
 package workspace
 
 import (
