@@ -19,6 +19,7 @@ settings/launches.json
 # Go
 /dist/
 /devhub
+/devhub.exe
 *.test
 
 # mise（個人のローカル上書き。共有する .mise.toml は追跡する）

@@ -84,6 +84,8 @@ devhub --no-browser  # ブラウザを開かない
 devhub --version     # バージョンを表示
 ```
 
+> 配布バイナリを使えない環境などで**ソースから実行**したい開発者は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください（ポート分離・worktree ベースの起動方法を記載）。
+
 ## 設定
 
 設定は `$DEVHUB_HOME/settings/devhub.db`（既定 `~/.devhub/settings/devhub.db`、SQLite）に保存されます。  

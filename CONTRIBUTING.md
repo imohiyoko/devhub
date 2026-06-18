@@ -21,6 +21,65 @@ make fmt-check # the CI format gate
 CI runs `gofmt` (must be clean), `go vet`, `go build`, and `go test` on
 Linux/macOS/Windows.
 
+## Running from source
+
+The shipped `devhub` is a single binary, but during development you usually run
+straight from source — handy when binaries can't be installed (e.g. a policy
+forbids running binary software), and so you exercise the code in *this* working
+tree. Assets are embedded from the module root (`assets.go`), so `go run`
+reflects your current checkout rather than a previously built binary.
+
+```bash
+mise run dev               # run from source on :8765
+scripts/dev.sh run         # same (no exec bit yet? `bash scripts/dev.sh run`)
+```
+
+On Windows use `scripts\dev.ps1 run`. The `dev.sh` / `dev.ps1` helpers `cd` to
+their own worktree root first, so launching the script from a given worktree
+always runs that worktree's code.
+
+### Multiple instances on different ports
+
+`DEVHUB_PORT` overrides the listen port (default 8765), so a verification
+instance can run alongside your main one without a clash:
+
+| instance | command | URL |
+|---|---|---|
+| main | `scripts/dev.sh run` | http://localhost:8765 |
+| verify | `DEVHUB_PORT=9000 scripts/dev.sh run` | http://localhost:9000 |
+
+`DEVHUB_PORT=9000 mise run dev` works too.
+
+### Stopping
+
+Foreground: `Ctrl+C`. For a backgrounded / other-terminal instance:
+
+```bash
+DEVHUB_PORT=9000 scripts/dev.sh stop   # stop the instance on :9000
+scripts/dev.sh status                  # show what's listening
+```
+
+`stop` kills whatever process listens on `DEVHUB_PORT` (default 8765), so point
+it at the instance you mean to stop. Note the in-app **ports tool deliberately
+refuses to kill devhub's own PID** (`internal/controllers/ports/ports.go`) as a
+safety measure — that's why this dedicated `stop` exists.
+
+### Data isolation (optional)
+
+State lives under `DEVHUB_HOME` (default `~/.devhub`; `%LOCALAPPDATA%\devhub` on
+Windows). By default instances share it and only the port differs. To fully
+isolate a verification instance's DB/settings, give it its own home:
+
+```bash
+DEVHUB_PORT=9000 DEVHUB_HOME="$HOME/.devhub-verify" scripts/dev.sh run
+```
+
+### Building a local binary
+
+`make build` compile-checks every package. To produce a runnable binary in the
+repo root, use `mise run build` or `scripts/dev.sh build` (→ `./devhub`;
+`scripts\dev.ps1 build` → `devhub.exe`). Both outputs are gitignored.
+
 ## Add a tool
 
 ```bash
