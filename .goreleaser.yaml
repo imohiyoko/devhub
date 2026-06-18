@@ -64,3 +64,20 @@ release:
     name: devhub
   draft: false
   prerelease: auto # pre-release tags (e.g. v1.0.0-rc1) are flagged automatically
+  # Release ページ自体を「導入手順つきダウンロードページ」にする。各リリースに
+  # このバージョンへ固定したインストールコマンドを載せる（{{ .Tag }} = vX.Y.Z）。
+  footer: |
+    ## インストール
+
+    **macOS / Linux**
+    ```bash
+    DEVHUB_VERSION={{ .Tag }} /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/imohiyoko/devhub/main/install.sh)"
+    ```
+
+    **Windows (PowerShell)**
+    ```powershell
+    $env:DEVHUB_VERSION="{{ .Tag }}"; powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/imohiyoko/devhub/main/install.ps1 | iex"
+    ```
+
+    インストーラは下の資産を `checksums.txt`（SHA256）で検証してから配置します。手動の場合は資産と `checksums.txt` を取得し、ハッシュを照合してから展開してください。
+
