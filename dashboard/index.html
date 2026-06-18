@@ -307,57 +307,10 @@ footer {
 <footer>devhub · localhost:8765</footer>
 
 <script>
-const TOOLS = [
-  {
-    id: 'diff-kun',
-    href: '/diff-kun',
-    icon: '⇄',
-    name: 'diff-kun',
-    desc: '2つのテキストの差分をリアルタイム確認（ユニファイド / コンテキスト / サイドバイサイド）',
-  },
-  {
-    id: 'workspace',
-    href: '/workspace',
-    icon: '📁',
-    name: 'workspace',
-    desc: 'リポジトリ一覧から選んで VSCode で開く',
-  },
-  {
-    id: 'diagram',
-    href: '/diagram',
-    icon: '◈',
-    name: 'diagram',
-    desc: 'Mermaid 記法と Draw.io XML の相互変換。外部CDNは読み込まない',
-  },
-  {
-    id: 'db-table',
-    href: '/db-table',
-    icon: '▦',
-    name: 'db-table',
-    desc: 'SQLite / MySQL / MariaDB の接続管理、表表示、TSV/CSVコピー、列コピー、セル編集',
-  },
-  {
-    id: 'git',
-    href: '/git',
-    icon: '⎇',
-    name: 'git',
-    desc: 'lazygit風ブラウザUI。ステージング・コミット・ブランチ管理・プッシュ・プルをキーボードで操作',
-  },
-  {
-    id: 'ports',
-    href: '/ports',
-    icon: '⌁',
-    name: 'ports',
-    desc: '開いている TCP ポートの確認、ラベル付け、保護対象設定、LISTEN プロセスの kill',
-  },
-  {
-    id: 'env-launcher',
-    href: '/env-launcher',
-    icon: '🚀',
-    name: 'env launcher',
-    desc: '検証環境の起動・管理',
-  },
-];
+// Tool cards are sourced from GET /api/tools (registry-driven), so adding a
+// backend tool surfaces here automatically — no edit to this file. The API
+// returns {id, title, desc, icon}; the card href is /<id>.
+let TOOLS = [];
 
 let disabledTools = [];
 let toolOrder = [];
@@ -564,10 +517,27 @@ async function copyCmd() {
 
 /* ── Init ── */
 (async () => {
-  const settingsRes = await fetch('/api/settings');
-  const settings = await settingsRes.json();
-  disabledTools = settings.disabled_tools || [];
-  toolOrder = settings.tool_order || [];
+  try {
+    const [toolsRes, settingsRes] = await Promise.all([
+      fetch('/api/tools'),
+      fetch('/api/settings'),
+    ]);
+    if (!toolsRes.ok) throw new Error('GET /api/tools → ' + toolsRes.status);
+    if (!settingsRes.ok) throw new Error('GET /api/settings → ' + settingsRes.status);
+    const toolsJson = await toolsRes.json();
+    TOOLS = (toolsJson.tools || []).map(t => ({
+      id: t.id,
+      href: '/' + t.id,
+      icon: t.icon || '',
+      name: t.title || t.id,
+      desc: t.desc || '',
+    }));
+    const settings = await settingsRes.json();
+    disabledTools = settings.disabled_tools || [];
+    toolOrder = settings.tool_order || [];
+  } catch (e) {
+    console.error('dashboard init failed:', e);
+  }
   renderGrid();
   renderToggles();
 })();
