@@ -5,3 +5,15 @@ min_version = "2026.1.0"
 
 [tools]
 go = "1.26"
+
+# 開発用タスク（ソースから実行）。配布バイナリを使えない環境向けに、
+# いまの worktree のコードを go run / go build で動かす。クロスプラットフォーム。
+# 停止・再起動は OS 依存のため scripts/dev.sh（Windows は scripts\dev.ps1）を使う。
+#   例: DEVHUB_PORT=9000 mise run dev   # 別ポートで検証インスタンスを起動
+[tasks.dev]
+description = "Run devhub from source (honors DEVHUB_PORT/DEVHUB_HOME). Worktree-aware."
+run = "go run ./cmd/devhub"
+
+[tasks.build]
+description = "Build the devhub binary into ./devhub"
+run = "go build -o devhub ./cmd/devhub"
