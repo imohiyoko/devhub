@@ -1,5 +1,5 @@
 // Package ports implements the open-TCP-port endpoints (/api/ports and
-// /api/ports/{label,protected,kill}). Ports backend/controllers/ports.py.
+// /api/ports/{label,protected,kill}).
 package ports
 
 import (

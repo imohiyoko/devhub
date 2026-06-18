@@ -19,12 +19,12 @@ git ツールの worktree タブは worktree の追加・削除はできるが�
 
 worktree 一覧取得時に各 worktree を検出・注釈し、**理由ごとに 2 つの提案トースト**を出す。
 
-### 検出（バックエンド: `backend/controllers/git.py`）
+### 検出（バックエンド: `internal/controllers/git/`）
 - `/api/git/worktrees` のレスポンスで各 worktree に以下を付与する。
-  - `exists`: `os.path.isdir(path)`。porcelain の `prunable` 行ではなく**ディレクトリ存在を直接**
+  - `exists`: 対象パスのディレクトリ存在を直接チェックする。porcelain の `prunable` 行ではなく**ディレクトリ存在を直接**
     見る（git バージョン非依存・「ディレクトリがなくなった」要件に直接対応）。
   - `merged`: そのブランチが基準ブランチにマージ済みか。
-- 基準ブランチ（`_base_merge_ref`）は **origin/HEAD（例 `origin/main`）を優先**し、無ければ
+- 基準ブランチは **origin/HEAD（例 `origin/main`）を優先**し、無ければ
   ローカル `main` → `master` にフォールバック。PR をリモートでマージするとローカル main が
   古いままになりがちなため、リモート基準を優先する。
 - マージ済み集合（`_merged_branch_set`）は `git branch --merged <base>` のローカル短縮名集合。
@@ -76,5 +76,5 @@ worktree 一覧取得時に各 worktree を検出・注釈し、**理由ごと�
 1. **1 つのトーストにまとめる** — 後始末コマンド（remove / prune）が異なり、理由も別物のため
    ユーザーが判断しづらい。要件どおり理由別 2 トーストにした。
 2. **`prunable`（porcelain）行で欠落判定** — git バージョン依存・「prune 猶予」ヒューリスティックが
-   絡む。ディレクトリ存在を直接見る方が要件に素直なので `os.path.isdir` を採用。
+   絡む。ディレクトリ存在を直接見る方が要件に素直なので**ディレクトリ存在チェック**を採用。
 3. **欠落も per-item で `worktree remove --force`** — 欠落ディレクトリには remove が効かない。prune が正道。

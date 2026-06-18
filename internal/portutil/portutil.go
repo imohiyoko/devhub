@@ -1,5 +1,5 @@
 // Package portutil holds port-number helpers shared by the settings and ports
-// controllers. Ports backend/controllers/ports.normalize_port_list.
+// controllers.
 package portutil
 
 import (
@@ -40,7 +40,7 @@ func NormalizePortList(value any, strict bool) ([]int, error) {
 	return ports, nil
 }
 
-// coercePort mirrors Python's int(str(item).strip()) with bools rejected.
+// coercePort parses a port from a number or trimmed string, rejecting bools.
 func coercePort(item any) (int, bool) {
 	switch v := item.(type) {
 	case bool:

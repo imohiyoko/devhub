@@ -12,8 +12,7 @@ import (
 )
 
 // applescriptEscape escapes a string for an AppleScript double-quoted literal:
-// backslash/quote are escaped, CR dropped, LF -> "\n" (literal). Mirrors
-// _applescript_escape.
+// backslash/quote are escaped, CR dropped, LF -> "\n" (literal).
 func applescriptEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
@@ -22,11 +21,11 @@ func applescriptEscape(s string) string {
 	return s
 }
 
-// shlexSafe matches strings that shlex.quote would leave unquoted (ASCII \w plus
-// @%+=:,./-).
+// shlexSafe matches strings that are safe to leave unquoted in a POSIX shell
+// (ASCII \w plus @%+=:,./-).
 var shlexSafe = regexp.MustCompile(`^[a-zA-Z0-9_@%+=:,./-]+$`)
 
-// shellQuote is a faithful port of Python's shlex.quote (POSIX single-quoting).
+// shellQuote applies POSIX shell single-quoting for safe interpolation.
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"
@@ -79,7 +78,7 @@ func runShell(cwd, command string, env []string) {
 func (c *Controller) termConfig() (emulator, shell string, shellArgs []string) {
 	settings, _ := c.store.LoadSettings()
 	term, _ := settings["terminal"].(map[string]any)
-	cfg, _ := term[platform.PyName()].(map[string]any)
+	cfg, _ := term[platform.SystemName()].(map[string]any)
 	emulator, _ = cfg["emulator"].(string)
 	shell, _ = cfg["shell"].(string)
 	if shell == "" {
@@ -136,7 +135,7 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	sysName := platform.PyName()
+	sysName := platform.SystemName()
 	emulator, shell, shellArgs := c.termConfig()
 	isPowershell := strings.Contains(strings.ToLower(shell), "powershell") || strings.Contains(strings.ToLower(shell), "pwsh")
 
@@ -212,7 +211,7 @@ func (c *Controller) openTerminalInDir(cwd string) error {
 	if cwd == "" || !isDir(cwd) {
 		return errMsg("worktree directory does not exist")
 	}
-	sysName := platform.PyName()
+	sysName := platform.SystemName()
 	emulator, _, _ := c.termConfig()
 
 	fallback := func() { c.workspace.OpenInEditor(cwd) }
