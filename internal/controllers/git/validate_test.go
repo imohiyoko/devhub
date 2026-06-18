@@ -24,10 +24,10 @@ func TestIsValidBranchName(t *testing.T) {
 
 func TestParseGithubPRURL(t *testing.T) {
 	cases := []struct {
-		url               string
-		wantOK            bool
-		owner, repo       string
-		number            int
+		url         string
+		wantOK      bool
+		owner, repo string
+		number      int
 	}{
 		{"https://github.com/owner/repo/pull/123", true, "owner", "repo", 123},
 		{"git@github.com:owner/repo.git/pull/5", true, "owner", "repo", 5},

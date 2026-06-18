@@ -1,127 +1,125 @@
-# コントリビューションガイド
+# Contributing to devhub
 
-devhub は単一バイナリで配布されますが、**開発時はソースから実行**します。
-配布バイナリを使えない環境（例: 会社規定でバイナリソフトウェアの実行が不可）でも、
-このガイドの手順だけで開発・検証ができます。
+devhub is a single static binary that serves a set of local dev tools under
+`localhost:8765`. Tools are modular: each is a `core.Tool` registered in one
+place, and the gateway routing plus the dashboard nav are derived from that
+registration. Adding a tool does not touch the server, the router, or the
+dashboard.
 
-## 前提
+## Toolchain
 
-- **Go 1.26 以上**。`go.mod` / CI と同じバージョンを使うなら [mise](https://mise.jdx.dev/) が簡単です。
-
-  ```bash
-  mise install   # .mise.toml に固定された go 1.26 を用意
-  ```
-
-  mise を使わない場合は、各自で Go 1.26+ を入れてください（`go version` で確認）。
-- 各ツールが内部で使うコマンド（必要なときだけ）: `git` / `lsof`（dev.sh の stop 用）など。
-
-## ソースから実行する
-
-なぜソース実行か: 配布物の `devhub` コマンドは**ビルドした時点の埋め込みアセットで固定**されるため、
-いま編集中のコードを反映しません。開発では `go run` を使い、現在のソースをそのまま起動します。
+`go` is pinned in `.mise.toml`. Run `mise install` to provision it, then:
 
 ```bash
-# どちらでも可（既定ポート 8765 で起動）
-mise run dev
-# または
-scripts/dev.sh run        # 実行ビットが無ければ: bash scripts/dev.sh run
+make build    # go build ./...
+make test     # go test ./...
+make vet      # go vet ./...
+make fmt      # gofmt -w .
+make fmt-check # the CI format gate
 ```
 
-起動すると `http://localhost:8765` が開きます。停止はフォアグラウンドなら `Ctrl+C`。
+CI runs `gofmt` (must be clean), `go vet`, `go build`, and `go test` on
+Linux/macOS/Windows.
 
-> アセットは module ルートからの `go:embed`（`assets.go`）です。`go run ./cmd/devhub` は
-> 実行したディレクトリ（= その worktree）の `dashboard/` `tools/` `settings/` を焼き込みます。
+## Running from source
 
-## worktree ベースの開発
-
-`scripts/dev.sh` は **自身が属する worktree の repo ルート**へ移動してから `go run` します。
-そのため、worktree ごとに `scripts/dev.sh run` を実行すれば、**その worktree のコードがそのまま動きます**。
-固定された `devhub` コマンドのように「repo の特定状態」に縛られません。
+The shipped `devhub` is a single binary, but during development you usually run
+straight from source — handy when binaries can't be installed (e.g. a policy
+forbids running binary software), and so you exercise the code in *this* working
+tree. Assets are embedded from the module root (`assets.go`), so `go run`
+reflects your current checkout rather than a previously built binary.
 
 ```bash
-# 例: 機能ブランチの worktree を作ってそこで起動
-git worktree add ../worktrees/feat-foo -b feat/foo
-../worktrees/feat-foo/scripts/dev.sh run
+mise run dev               # run from source on :8765
+scripts/dev.sh run         # same (no exec bit yet? `bash scripts/dev.sh run`)
 ```
 
-## ポートを分けて同時に立てる
+On Windows use `scripts\dev.ps1 run`. The `dev.sh` / `dev.ps1` helpers `cd` to
+their own worktree root first, so launching the script from a given worktree
+always runs that worktree's code.
 
-本番用の自分の devhub と、検証用インスタンスを**同時に**動かすときはポートを分けます。
-ポートは環境変数 `DEVHUB_PORT` で指定できます（未指定なら 8765）。
+### Multiple instances on different ports
 
-| 用途 | 起動コマンド | URL |
+`DEVHUB_PORT` overrides the listen port (default 8765), so a verification
+instance can run alongside your main one without a clash:
+
+| instance | command | URL |
 |---|---|---|
-| 本番（自分用） | `scripts/dev.sh run` | http://localhost:8765 |
-| 検証 | `DEVHUB_PORT=9000 scripts/dev.sh run` | http://localhost:9000 |
+| main | `scripts/dev.sh run` | http://localhost:8765 |
+| verify | `DEVHUB_PORT=9000 scripts/dev.sh run` | http://localhost:9000 |
 
-mise でも同じです:
+`DEVHUB_PORT=9000 mise run dev` works too.
 
-```bash
-DEVHUB_PORT=9000 mise run dev
-```
+### Stopping
 
-## 停止する
-
-フォアグラウンド実行なら `Ctrl+C`。別ターミナル/バックグラウンドのインスタンスは
-`stop` サブコマンドで止めます。
+Foreground: `Ctrl+C`. For a backgrounded / other-terminal instance:
 
 ```bash
-DEVHUB_PORT=9000 scripts/dev.sh stop     # port 9000 の devhub を停止
-scripts/dev.sh status                    # LISTEN 状況を確認
+DEVHUB_PORT=9000 scripts/dev.sh stop   # stop the instance on :9000
+scripts/dev.sh status                  # show what's listening
 ```
 
-> **注意**: `stop` は `DEVHUB_PORT`（未指定なら既定の **8765**）を LISTEN しているプロセスを
-> 落とします。プロセス種別は問わないため、停止したいインスタンスのポートを `DEVHUB_PORT` で
-> 正しく指定してください（例: 本番 8765 を残して検証 9000 だけ止めるなら `DEVHUB_PORT=9000`）。
+`stop` kills whatever process listens on `DEVHUB_PORT` (default 8765), so point
+it at the instance you mean to stop. Note the in-app **ports tool deliberately
+refuses to kill devhub's own PID** (`internal/controllers/ports/ports.go`) as a
+safety measure — that's why this dedicated `stop` exists.
 
-> **なぜ専用の stop が必要か**: ダッシュボードの **ports ツールは安全のため
-> devhub 自身（自分の PID）を kill できません**（`internal/controllers/ports/ports.go`）。
-> 自分のプロセスを誤って落とさないための仕様です。dev インスタンスのポートを解放したいときは
-> `scripts/dev.sh stop` を使ってください。
+### Data isolation (optional)
 
-## ビルド
-
-ローカルにバイナリが必要なときだけ:
-
-```bash
-mise run build          # ./devhub を生成（.gitignore 済み）
-# または
-scripts/dev.sh build    # ./devhub
-```
-
-Windows は `scripts\dev.ps1 build` で `devhub.exe` を生成します（`devhub` / `devhub.exe` とも `.gitignore` 済み）。
-
-## データ/設定の分離（任意）
-
-devhub は DB と設定を `DEVHUB_HOME`（既定: macOS/Linux は `~/.devhub`、Windows は
-`%LOCALAPPDATA%\devhub`）に置きます。**既定ではポートだけ分けて HOME は共有**します
-（ラベルや保護ポート、env-launcher の定義などを本番と共有できます）。
-
-本番と検証で **DB/設定まで完全に分けたい**場合は `DEVHUB_HOME` を切り替えます:
+State lives under `DEVHUB_HOME` (default `~/.devhub`; `%LOCALAPPDATA%\devhub` on
+Windows). By default instances share it and only the port differs. To fully
+isolate a verification instance's DB/settings, give it its own home:
 
 ```bash
 DEVHUB_PORT=9000 DEVHUB_HOME="$HOME/.devhub-verify" scripts/dev.sh run
 ```
 
-> 同一の `DEVHUB_HOME` を 2 プロセスで共有しても、SQLite（WAL）で動作はしますが
-> 状態は共有されます。独立させたいときは上記のように HOME を分けてください。
+### Building a local binary
 
-## Windows
+`make build` compile-checks every package. To produce a runnable binary in the
+repo root, use `mise run build` or `scripts/dev.sh build` (→ `./devhub`;
+`scripts\dev.ps1 build` → `devhub.exe`). Both outputs are gitignored.
 
-PowerShell では `scripts\dev.ps1` を使います（`dev.sh` と同じサブコマンド）。
-
-```powershell
-scripts\dev.ps1 run
-$env:DEVHUB_PORT = 9000; scripts\dev.ps1 run     # 別ポート
-$env:DEVHUB_PORT = 9000; scripts\dev.ps1 stop
-```
-
-## テスト
-
-PR 前に CI（`.github/workflows/ci.yml`）と同じチェックを通してください:
+## Add a tool
 
 ```bash
-go vet ./...
-go test ./...
-go build ./...
+make new-tool NAME=notes
 ```
+
+This scaffolds:
+
+- `internal/tools/notes.go` — a `core.Tool` adapter (Meta + Routes)
+- `tools/notes/index.html` — a page stub (auto-embedded via `assets.go`)
+
+Then do the one wiring step it prints: add `newNotes()` to the `NewRegistry(...)`
+list in `internal/tools/registry.go`. Build and run — the dashboard card appears
+automatically from `GET /api/tools`.
+
+Notes:
+
+- `Meta.ID` is the route namespace: the page is served at `/<id>`. Use a
+  Go-identifier-safe id (lowercase, no dashes) so the generated type compiles;
+  put a nicer label in `Title`. API routes are declared explicitly in `Routes()`,
+  so they may differ from the id (e.g. db-table serves `/api/db/*`).
+- An API-only tool (no `Page`) is valid — it simply has no dashboard card.
+- Give each tool its own storage namespace with `core.Namespace(store, id)` so
+  tools never collide on keys.
+
+## How rich should a tool be?
+
+Treat a tool as a bounded context and scale its internals to its needs:
+
+- **Thin** (diff-kun, diagram): a page, no backend.
+- **Medium** (ports, workspace, db-table): a controller and typed models.
+- **Rich** (env-launcher, git): domain types with invariants, where richer
+  patterns (aggregates, value objects, domain services) earn their keep.
+
+Don't impose heavy structure on a thin tool.
+
+## Extracting a tool to its own process (advanced)
+
+A tool can run out-of-process without code changes: point a gateway `Upstreams`
+entry at its URL and the gateway reverse-proxies that tool's page and API while
+the rest stay in-process. The single binary is the default; do this only when a
+tool needs independent scaling, isolation, or a different runtime. See
+`internal/core/README.md`.

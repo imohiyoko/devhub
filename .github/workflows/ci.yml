@@ -11,6 +11,24 @@ env:
   MISE_VERSION: "2026.6.11"
 
 jobs:
+  # Formatting is OS-independent, so it runs once on Linux rather than across the
+  # build matrix. Fails if any file is not gofmt-clean.
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          version: ${{ env.MISE_VERSION }}
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
   go:
     runs-on: ${{ matrix.os }}
     strategy:
