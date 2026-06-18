@@ -13,25 +13,27 @@ import (
 // routeFiles maps a request path to the embedded HTML file it serves. Ports the
 // ROUTES table in server.py (csv-tsv is intentionally absent; it has no page).
 var routeFiles = map[string]string{
-	"/":               "dashboard/index.html",
-	"/diff-kun":       "tools/diff-kun/index.html",
-	"/diff-kun/":      "tools/diff-kun/index.html",
-	"/workspace":      "tools/workspace/index.html",
-	"/workspace/":     "tools/workspace/index.html",
-	"/diagram":        "tools/diagram/index.html",
-	"/diagram/":       "tools/diagram/index.html",
-	"/db-table":       "tools/db-table/index.html",
-	"/db-table/":      "tools/db-table/index.html",
-	"/ports":          "tools/ports/index.html",
-	"/ports/":         "tools/ports/index.html",
-	"/env-launcher":   "tools/env-launcher/index.html",
-	"/env-launcher/":  "tools/env-launcher/index.html",
-	"/git":            "tools/git/index.html",
-	"/git/":           "tools/git/index.html",
+	"/":              "dashboard/index.html",
+	"/diff-kun":      "tools/diff-kun/index.html",
+	"/diff-kun/":     "tools/diff-kun/index.html",
+	"/workspace":     "tools/workspace/index.html",
+	"/workspace/":    "tools/workspace/index.html",
+	"/diagram":       "tools/diagram/index.html",
+	"/diagram/":      "tools/diagram/index.html",
+	"/db-table":      "tools/db-table/index.html",
+	"/db-table/":     "tools/db-table/index.html",
+	"/ports":         "tools/ports/index.html",
+	"/ports/":        "tools/ports/index.html",
+	"/env-launcher":  "tools/env-launcher/index.html",
+	"/env-launcher/": "tools/env-launcher/index.html",
+	"/git":           "tools/git/index.html",
+	"/git/":          "tools/git/index.html",
 }
 
-// ServeHTTP is the single security gate (host allowlist + API token), then
-// dispatches by method, mirroring server.py's do_GET/do_POST ordering.
+// ServeHTTP is the single security gate (host allowlist + API token). Once a
+// request clears the gate it is handed to the core gateway, which serves tools
+// already migrated onto the core contract plus GET /api/tools, and falls
+// through to serveLegacy for everything else.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.hostAllowed(r) {
 		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
@@ -41,6 +43,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
+	s.gateway.ServeHTTP(w, r)
+}
+
+// serveLegacy is the pre-gateway router for tools not yet migrated onto the core
+// contract. It is wired as the gateway's Next handler and dispatches by method
+// (GET handlers before POST). It shrinks as tools migrate.
+func (s *Server) serveLegacy(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		s.routeGET(w, r)
@@ -57,13 +66,10 @@ func (s *Server) routeGET(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "/api/config" || path == "/api/settings" || strings.HasPrefix(path, "/api/settings/tool/"):
 		err = s.settingsCtl.HandleGet(w, r)
-	case path == "/api/repos":
-		httpx.WriteJSON(w, http.StatusOK, s.gitCtl.AllRepos())
-		return
+	// NOTE: /api/repos and /api/git/* are migrated to the core gateway (git tool)
+	// and no longer routed here.
 	case path == "/api/envs" || strings.HasPrefix(path, "/api/envs/"):
 		err = s.envsCtl.HandleGet(w, r)
-	case strings.HasPrefix(path, "/api/git/"):
-		err = s.gitCtl.HandleGet(w, r)
 	case path == "/api/ls":
 		err = s.workspaceCtl.HandleLs(w, r)
 	case path == "/api/open":
@@ -114,8 +120,7 @@ func (s *Server) routePOST(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "/api/config" || path == "/api/settings" || strings.HasPrefix(path, "/api/settings/tool/"):
 		err = s.settingsCtl.HandlePost(w, r, data)
-	case strings.HasPrefix(path, "/api/git/"):
-		err = s.gitCtl.HandlePost(w, r, data)
+	// NOTE: /api/git/* is migrated to the core gateway (git tool).
 	case strings.HasPrefix(path, "/api/db/"):
 		err = s.databaseCtl.HandlePost(w, r, data)
 	case strings.HasPrefix(path, "/api/envs"):

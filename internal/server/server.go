@@ -19,8 +19,10 @@ import (
 	portsctl "github.com/imohiyoko/devhub/internal/controllers/ports"
 	settingsctl "github.com/imohiyoko/devhub/internal/controllers/settings"
 	workspacectl "github.com/imohiyoko/devhub/internal/controllers/workspace"
+	"github.com/imohiyoko/devhub/internal/core"
 	"github.com/imohiyoko/devhub/internal/platform"
 	"github.com/imohiyoko/devhub/internal/storage"
+	"github.com/imohiyoko/devhub/internal/tools"
 )
 
 // Server holds process-lifetime state: the per-session token, the bound port,
@@ -37,6 +39,11 @@ type Server struct {
 	openBrowser   bool
 
 	httpSrv *http.Server
+
+	// gateway dispatches tools migrated onto the core contract; everything else
+	// falls through to the legacy router (see serveLegacy). As tools migrate,
+	// their cases leave the legacy router and the gateway's coverage grows.
+	gateway *core.Gateway
 
 	settingsCtl  *settingsctl.Controller
 	gitCtl       *gitctl.Controller
@@ -103,6 +110,16 @@ func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser 
 	s.portsCtl = portsctl.New(store)
 	s.databaseCtl = databasectl.New(store)
 	s.envsCtl = envsctl.New(store, s.gitCtl, s.portsCtl, s.workspaceCtl)
+
+	// Front the controllers with the core gateway. Migrated tools (the registry)
+	// are served by the gateway; pageFn reuses the already token-injected static
+	// pages; unmigrated paths fall through to the legacy router.
+	pageFn := func(toolID string) ([]byte, bool) {
+		b, ok := s.staticByRoute["/"+toolID]
+		return b, ok
+	}
+	s.gateway = core.NewGateway(tools.Registry(store), nil, pageFn)
+	s.gateway.Next = http.HandlerFunc(s.serveLegacy)
 	return s, nil
 }
 
