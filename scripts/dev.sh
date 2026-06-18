@@ -53,7 +53,7 @@ listeners() {
 
 cmd_run() {
   require go
-  echo "devhub をソースから起動します (port=$PORT, home=${DEVHUB_HOME:-~/.devhub})" >&2
+  echo "devhub をソースから起動します (port=$PORT, home=${DEVHUB_HOME:-$HOME/.devhub})" >&2
   exec go run ./cmd/devhub "$@"
 }
 

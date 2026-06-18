@@ -14,6 +14,8 @@ go = "1.26"
 description = "Run devhub from source (honors DEVHUB_PORT/DEVHUB_HOME). Worktree-aware."
 run = "go run ./cmd/devhub"
 
+# Windows で実行ファイル名を .exe にしたい場合は scripts\dev.ps1 build を使う
+# （こちらは ./devhub を出力。両方とも .gitignore 済み）。
 [tasks.build]
 description = "Build the devhub binary into ./devhub"
 run = "go build -o devhub ./cmd/devhub"

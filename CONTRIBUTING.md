@@ -70,6 +70,10 @@ DEVHUB_PORT=9000 scripts/dev.sh stop     # port 9000 の devhub を停止
 scripts/dev.sh status                    # LISTEN 状況を確認
 ```
 
+> **注意**: `stop` は `DEVHUB_PORT`（未指定なら既定の **8765**）を LISTEN しているプロセスを
+> 落とします。プロセス種別は問わないため、停止したいインスタンスのポートを `DEVHUB_PORT` で
+> 正しく指定してください（例: 本番 8765 を残して検証 9000 だけ止めるなら `DEVHUB_PORT=9000`）。
+
 > **なぜ専用の stop が必要か**: ダッシュボードの **ports ツールは安全のため
 > devhub 自身（自分の PID）を kill できません**（`internal/controllers/ports/ports.go`）。
 > 自分のプロセスを誤って落とさないための仕様です。dev インスタンスのポートを解放したいときは
@@ -82,8 +86,10 @@ scripts/dev.sh status                    # LISTEN 状況を確認
 ```bash
 mise run build          # ./devhub を生成（.gitignore 済み）
 # または
-scripts/dev.sh build
+scripts/dev.sh build    # ./devhub
 ```
+
+Windows は `scripts\dev.ps1 build` で `devhub.exe` を生成します（`devhub` / `devhub.exe` とも `.gitignore` 済み）。
 
 ## データ/設定の分離（任意）
 
