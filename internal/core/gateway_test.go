@@ -133,6 +133,30 @@ func TestGateway_ProxySwap(t *testing.T) {
 	}
 }
 
+// A malformed upstream URL must not make the tool disappear: it falls back to
+// in-process so the single binary stays fully functional on a config typo.
+func TestGateway_BadUpstreamFallsBackInProc(t *testing.T) {
+	var inprocCalled bool
+	git := funcTool{
+		meta: Meta{ID: "git", Title: "Git"},
+		routes: []Route{{
+			Method: http.MethodGet, Pattern: "/api/git/", Prefix: true,
+			Handle: func(w http.ResponseWriter, _ *http.Request) error {
+				inprocCalled = true
+				_, _ = w.Write([]byte("in-proc"))
+				return nil
+			},
+		}},
+	}
+
+	// "://invalid" is non-empty (so the proxy branch is taken) but fails url.Parse.
+	g := NewGateway(NewRegistry(git), Upstreams{"git": "://invalid"}, nil)
+	w := do(g, http.MethodGet, "/api/git/status")
+	if !inprocCalled || w.Body.String() != "in-proc" {
+		t.Fatalf("expected in-proc fallback; called=%v body=%q", inprocCalled, w.Body.String())
+	}
+}
+
 // --- in-process page serving via PageFunc ------------------------------------
 
 func TestGateway_PageServe(t *testing.T) {
