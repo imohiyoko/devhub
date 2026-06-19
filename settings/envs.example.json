@@ -3,6 +3,8 @@
     {
       "id": "local-full-stack",
       "name": "フルスタック検証環境",
+      "repos": ["~/projects/myapp"],
+      "ips": [],
       "processes": [
         {
           "id": "db",
