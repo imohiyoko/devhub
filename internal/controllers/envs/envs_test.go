@@ -227,6 +227,14 @@ func TestValidateEnvs(t *testing.T) {
 	if err := validateEnvs(noScope); err != nil {
 		t.Errorf("no-scope binding errored: %v", err)
 	}
+	// repos[] scope also covers the env-level worktree repo_path.
+	wtOut := map[string]any{"environments": []any{
+		map[string]any{"id": "web", "repos": []any{"/repo/a"},
+			"worktree": map[string]any{"repo_path": "/repo/x", "branch": "feature"}},
+	}}
+	if err := validateEnvs(wtOut); err == nil {
+		t.Error("out-of-scope worktree repo_path should error")
+	}
 	// Malformed repos (not an array of strings) must fail.
 	badRepos := map[string]any{"environments": []any{
 		map[string]any{"id": "web", "repos": "nope"},
