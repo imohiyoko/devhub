@@ -2,6 +2,7 @@ package envs
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -155,6 +156,23 @@ func TestTopoSort(t *testing.T) {
 		{"id": "a", "depends_on": []any{"ghost"}},
 	}); err == nil {
 		t.Error("topoSort should error on an unknown dep")
+	}
+}
+
+func TestProcessEnv(t *testing.T) {
+	def := map[string]any{"env": map[string]any{
+		"DEVHUB_HOME": "~/.devhub-verify", // leading ~ expands like cwd does
+		"PLAIN":       "literal",          // non-~ value passes through untouched
+	}}
+	got := processEnv(def, map[string]string{"PORT": "3001"})
+	if dh := got["DEVHUB_HOME"]; strings.HasPrefix(dh, "~") || !strings.HasSuffix(dh, ".devhub-verify") || dh == ".devhub-verify" {
+		t.Errorf("DEVHUB_HOME not expanded from ~: %q", dh)
+	}
+	if got["PLAIN"] != "literal" {
+		t.Errorf("PLAIN = %q, want literal", got["PLAIN"])
+	}
+	if got["PORT"] != "3001" {
+		t.Errorf("PORT (extraEnv) = %q, want 3001", got["PORT"])
 	}
 }
 

@@ -46,6 +46,9 @@
           "port": 8765,
           "port_strategy": "offset",
           "port_env_var": "DEVHUB_PORT",
+          "env": {
+            "DEVHUB_HOME": "~/.devhub-verify"
+          },
           "depends_on": []
         }
       ],
