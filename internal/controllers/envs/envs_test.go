@@ -182,4 +182,38 @@ func TestValidateEnvs(t *testing.T) {
 	if err := validateEnvs(badID); err == nil {
 		t.Error("invalid env id should error")
 	}
+	// repos[] scope: a binding inside the declared repos passes.
+	inScope := map[string]any{"environments": []any{
+		map[string]any{"id": "web", "repos": []any{"/repo/a", "/repo/b"}, "processes": []any{
+			map[string]any{"id": "api", "binding": map[string]any{"repo_path": "/repo/a", "branch": "feature"}},
+		}},
+	}}
+	if err := validateEnvs(inScope); err != nil {
+		t.Errorf("in-scope binding errored: %v", err)
+	}
+	// repos[] scope: a binding outside the declared repos must fail.
+	outScope := map[string]any{"environments": []any{
+		map[string]any{"id": "web", "repos": []any{"/repo/a"}, "processes": []any{
+			map[string]any{"id": "api", "binding": map[string]any{"repo_path": "/repo/x", "branch": "feature"}},
+		}},
+	}}
+	if err := validateEnvs(outScope); err == nil {
+		t.Error("out-of-scope binding repo should error")
+	}
+	// Empty/absent repos imposes no constraint (backward compatible).
+	noScope := map[string]any{"environments": []any{
+		map[string]any{"id": "web", "processes": []any{
+			map[string]any{"id": "api", "binding": map[string]any{"repo_path": "/repo/x", "branch": "feature"}},
+		}},
+	}}
+	if err := validateEnvs(noScope); err != nil {
+		t.Errorf("no-scope binding errored: %v", err)
+	}
+	// Malformed repos (not an array of strings) must fail.
+	badRepos := map[string]any{"environments": []any{
+		map[string]any{"id": "web", "repos": "nope"},
+	}}
+	if err := validateEnvs(badRepos); err == nil {
+		t.Error("non-array repos should error")
+	}
 }
