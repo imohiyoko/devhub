@@ -5,9 +5,10 @@ package devhub
 
 import "embed"
 
-// Assets bundles the served frontend (dashboard/, tools/) and the committed
-// example settings used to seed first-run config. Runtime files (devhub.db,
-// *.json under settings/) are intentionally NOT embedded; they live on disk.
+// Assets bundles the served frontend (dashboard/, tools/, shared/) and the
+// committed example settings used to seed first-run config. Runtime files
+// (devhub.db, *.json under settings/) are intentionally NOT embedded; they live
+// on disk.
 //
-//go:embed dashboard tools settings/config.example.json settings/server.example.json settings/envs.example.json settings/tools/git.example.json
+//go:embed dashboard tools shared settings/config.example.json settings/server.example.json settings/envs.example.json settings/tools/git.example.json
 var Assets embed.FS
