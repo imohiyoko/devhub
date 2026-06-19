@@ -348,13 +348,20 @@ func (c *Controller) launchProcess(processDef map[string]any, cwdOverride string
 			cwd = pathutil.ExpandUser(raw)
 		}
 	}
+	command := applyPortPlaceholder(pStr(processDef, "command"), assignedPort)
+	c.openInTerminal(cwd, command, processEnv(processDef, extraEnv))
+}
+
+// processEnv builds a process's resolved environment: its declared env (with a
+// leading ~ expanded in values, so e.g. DEVHUB_HOME=~/.devhub-verify points at
+// the home dir like cwd does) overlaid by extraEnv (e.g. the offset port var).
+func processEnv(processDef map[string]any, extraEnv map[string]string) map[string]string {
 	env := map[string]string{}
 	for k, v := range pMap(processDef, "env") {
-		env[k] = fmt.Sprintf("%v", v)
+		env[k] = pathutil.ExpandUser(fmt.Sprintf("%v", v))
 	}
 	maps.Copy(env, extraEnv)
-	command := applyPortPlaceholder(pStr(processDef, "command"), assignedPort)
-	c.openInTerminal(cwd, command, env)
+	return env
 }
 
 // recordLaunch appends a launch record to the registry under the registry lock.

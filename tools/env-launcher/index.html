@@ -283,6 +283,16 @@ main {
           <select id="envWtBranch" class="form-control"></select>
         </div>
       </div>
+      <div class="form-group" style="margin-top: 24px;">
+        <label style="font-weight: 600; color: var(--text);">スコープ (任意)</label>
+        <div style="font-size: 12px; color: var(--text-muted); margin: 4px 0 8px;">
+          ※ Repository を選ぶと、この環境のプロセスは選んだ範囲からのみ binding できます（事故防止）。空なら制限なし。
+        </div>
+        <label>許可する Repository <span style="font-size: 11px; color: var(--muted);">※ Ctrl/⌘ + クリックで複数選択</span></label>
+        <select id="envRepos" class="form-control" multiple style="height: 90px;"></select>
+        <label style="margin-top: 8px;">許可する IP / ホスト <span style="font-size: 11px; color: var(--muted);">※ 1行に1つ</span></label>
+        <textarea id="envIps" class="form-control" rows="2" style="font-family: monospace; resize: vertical;" placeholder="10.0.0.1&#10;db.local"></textarea>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeEnvModal()">キャンセル</button>
@@ -376,7 +386,7 @@ let currentProcIndex = -1;
 
 // Cross-repo worktree inventory (source of truth = git). Used to populate the
 // repo/branch pickers so users reference existing worktrees instead of typing.
-let worktreeData = { repos: [] };
+let worktreeData = { repos: [], home: '' };
 
 async function fetchWorktrees() {
   try {
@@ -384,6 +394,17 @@ async function fetchWorktrees() {
     const data = await res.json();
     if (res.ok && !data.error) worktreeData = data;
   } catch (e) { /* non-fatal: pickers just stay empty */ }
+}
+
+// Expand a leading ~ using the home dir reported by the backend, so env-declared
+// repo paths (which may be ~-relative) compare equal to the scanner's absolute
+// paths — mirroring the backend's ExpandUser on both sides of the scope check.
+function expandHome(p) {
+  const home = worktreeData.home;
+  if (!p || !home || home === '~') return p;
+  if (p === '~') return home;
+  if (p.startsWith('~/')) return home + '/' + p.slice(2);
+  return p;
 }
 
 function repoByPath(path) {
@@ -399,18 +420,40 @@ function branchesForRepo(path) {
     .map(w => w.branch);
 }
 
-// Fill a repo <select>, keeping `selected` if still present.
-function fillRepoSelect(sel, selected, placeholder) {
-  const repos = worktreeData.repos || [];
+// Fill a repo <select>, keeping `selected` if still present. When `allowed` is
+// a non-empty list of repo paths, only those repos are offered — this enforces
+// the environment's declared repo scope in the picker.
+function fillRepoSelect(sel, selected, placeholder, allowed) {
+  let repos = worktreeData.repos || [];
+  if (allowed && allowed.length) {
+    const set = new Set(allowed.map(expandHome));
+    repos = repos.filter(r => set.has(r.path));
+  }
   const opts = [`<option value="">${placeholder || '(なし)'}</option>`]
     .concat(repos.map(r => `<option value="${escapeHtml(r.path)}">${escapeHtml(r.name)}</option>`));
   sel.innerHTML = opts.join('');
   sel.value = selected || '';
-  // A previously-saved repo that no longer scans still needs to show.
+  // A previously-saved repo that no longer scans (or is now out of scope) still
+  // needs to show so the user can see and clear it.
   if (selected && sel.value !== selected) {
     sel.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(selected)}">${escapeHtml(selected)} (未検出)</option>`);
     sel.value = selected;
   }
+}
+
+// Fill the env-scope repo multi-select, marking `selectedPaths` as selected.
+// Saved paths no longer in the inventory are still shown so they aren't lost.
+function fillReposMulti(sel, selectedPaths) {
+  const repos = worktreeData.repos || [];
+  const chosen = new Set((selectedPaths || []).map(expandHome));
+  const opts = repos.map(r =>
+    `<option value="${escapeHtml(r.path)}"${chosen.has(r.path) ? ' selected' : ''}>${escapeHtml(r.name)}</option>`);
+  (selectedPaths || []).forEach(p => {
+    if (!repos.some(r => r.path === expandHome(p))) {
+      opts.push(`<option value="${escapeHtml(p)}" selected>${escapeHtml(p)} (未検出)</option>`);
+    }
+  });
+  sel.innerHTML = opts.join('');
 }
 
 // Fill a branch <select> from a repo's existing worktrees.
@@ -772,6 +815,16 @@ envWtEnabled.addEventListener('change', () => {
 document.getElementById('envWtRepo').addEventListener('change', e => {
   fillBranchSelect(document.getElementById('envWtBranch'), e.target.value, '', '(branch を選択)');
 });
+// The env's declared repo scope (selected paths in the multi-select).
+function selectedEnvRepos() {
+  return Array.from(document.getElementById('envRepos').selectedOptions).map(o => o.value);
+}
+// Re-scope the env worktree repo picker when the allowed repos change.
+document.getElementById('envRepos').addEventListener('change', () => {
+  const repoSel = document.getElementById('envWtRepo');
+  fillRepoSelect(repoSel, repoSel.value, '(repo を選択)', selectedEnvRepos());
+  fillBranchSelect(document.getElementById('envWtBranch'), repoSel.value, document.getElementById('envWtBranch').value, '(branch を選択)');
+});
 // Same for the per-process binding repo picker.
 document.getElementById('procBindRepo').addEventListener('change', e => {
   fillBranchSelect(document.getElementById('procBindBranch'), e.target.value, '', '(branch を選択)');
@@ -782,18 +835,21 @@ async function openEnvModal(index = -1) {
   document.getElementById('envModalTitle').textContent = index >= 0 ? '環境の編集' : '環境の追加';
   await fetchWorktrees();
 
-  const wt = index >= 0 ? (envsData.environments[index].worktree || {}) : {};
+  const env0 = index >= 0 ? envsData.environments[index] : {};
+  const wt = env0.worktree || {};
   if (index >= 0) {
-    const env = envsData.environments[index];
-    document.getElementById('envId').value = env.id || '';
-    document.getElementById('envName').value = env.name || '';
+    document.getElementById('envId').value = env0.id || '';
+    document.getElementById('envName').value = env0.name || '';
     document.getElementById('envWtEnabled').checked = !!wt.enabled;
   } else {
     document.getElementById('envId').value = '';
     document.getElementById('envName').value = '';
     document.getElementById('envWtEnabled').checked = false;
   }
-  fillRepoSelect(document.getElementById('envWtRepo'), wt.repo_path || '', '(repo を選択)');
+  fillReposMulti(document.getElementById('envRepos'), env0.repos || []);
+  document.getElementById('envIps').value = (env0.ips || []).join('\n');
+  const allowed = env0.repos || [];
+  fillRepoSelect(document.getElementById('envWtRepo'), wt.repo_path || '', '(repo を選択)', allowed);
   fillBranchSelect(document.getElementById('envWtBranch'), wt.repo_path || '', wt.branch || '', '(branch を選択)');
   envWtEnabled.dispatchEvent(new Event('change'));
   document.getElementById('envModalOverlay').classList.add('open');
@@ -815,12 +871,24 @@ function saveEnv() {
     return;
   }
 
+  const repos = selectedEnvRepos();
+  const ips = document.getElementById('envIps').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+
+  const wtRepo = document.getElementById('envWtRepo').value.trim();
+  if (repos.length && wtRepo && !repos.map(expandHome).includes(expandHome(wtRepo))) {
+    alert('Worktree の Repository が「許可する Repository」に含まれていません。スコープに追加するか選び直してください。');
+    return;
+  }
+
   const env = {
     id: id,
     name: document.getElementById('envName').value.trim(),
+    repos: repos,
+    ips: ips,
     worktree: {
       enabled: document.getElementById('envWtEnabled').checked,
-      repo_path: document.getElementById('envWtRepo').value.trim(),
+      repo_path: wtRepo,
       branch: document.getElementById('envWtBranch').value.trim()
     }
   };
@@ -938,7 +1006,7 @@ async function openProcessModal(envIndex, procIndex = -1) {
   const env = envsData.environments[envIndex];
   const procForBind = procIndex >= 0 ? (env.processes[procIndex] || {}) : {};
   const binding = procForBind.binding || {};
-  fillRepoSelect(document.getElementById('procBindRepo'), binding.repo_path || '', '(binding なし)');
+  fillRepoSelect(document.getElementById('procBindRepo'), binding.repo_path || '', '(binding なし)', env.repos || []);
   fillBranchSelect(document.getElementById('procBindBranch'), binding.repo_path || '', binding.branch || '', '(branch を選択)');
   document.getElementById('procPortStrategy').value = procForBind.port_strategy === 'offset' ? 'offset' : 'baton';
   document.getElementById('procPortEnvVar').value = procForBind.port_env_var || '';
@@ -1040,6 +1108,11 @@ function saveProcess() {
   const bindBranch = document.getElementById('procBindBranch').value.trim();
   if (Boolean(bindRepo) !== Boolean(bindBranch)) {
     alert('Worktree binding は repo と branch の両方を指定してください（両方空なら binding なし）。');
+    return;
+  }
+  const envRepos = (targetEnv && targetEnv.repos) || [];
+  if (envRepos.length && bindRepo && !envRepos.map(expandHome).includes(expandHome(bindRepo))) {
+    alert('この binding の Repository は環境の許可スコープ外です。環境設定の「許可する Repository」に追加してください。');
     return;
   }
 
