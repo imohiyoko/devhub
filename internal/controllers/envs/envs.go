@@ -53,7 +53,7 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 		}
 		httpx.WriteJSON(w, http.StatusOK, data)
 	case "/api/envs/worktrees":
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"repos": c.worktreeInventory()})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"repos": c.worktreeInventory(), "home": pathutil.ExpandUser("~")})
 	default:
 		return httpx.Errorf(http.StatusNotFound, "not found")
 	}

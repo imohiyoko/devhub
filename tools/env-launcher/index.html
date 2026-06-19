@@ -386,7 +386,7 @@ let currentProcIndex = -1;
 
 // Cross-repo worktree inventory (source of truth = git). Used to populate the
 // repo/branch pickers so users reference existing worktrees instead of typing.
-let worktreeData = { repos: [] };
+let worktreeData = { repos: [], home: '' };
 
 async function fetchWorktrees() {
   try {
@@ -394,6 +394,17 @@ async function fetchWorktrees() {
     const data = await res.json();
     if (res.ok && !data.error) worktreeData = data;
   } catch (e) { /* non-fatal: pickers just stay empty */ }
+}
+
+// Expand a leading ~ using the home dir reported by the backend, so env-declared
+// repo paths (which may be ~-relative) compare equal to the scanner's absolute
+// paths — mirroring the backend's ExpandUser on both sides of the scope check.
+function expandHome(p) {
+  const home = worktreeData.home;
+  if (!p || !home || home === '~') return p;
+  if (p === '~') return home;
+  if (p.startsWith('~/')) return home + '/' + p.slice(2);
+  return p;
 }
 
 function repoByPath(path) {
@@ -415,7 +426,7 @@ function branchesForRepo(path) {
 function fillRepoSelect(sel, selected, placeholder, allowed) {
   let repos = worktreeData.repos || [];
   if (allowed && allowed.length) {
-    const set = new Set(allowed);
+    const set = new Set(allowed.map(expandHome));
     repos = repos.filter(r => set.has(r.path));
   }
   const opts = [`<option value="">${placeholder || '(なし)'}</option>`]
@@ -434,11 +445,11 @@ function fillRepoSelect(sel, selected, placeholder, allowed) {
 // Saved paths no longer in the inventory are still shown so they aren't lost.
 function fillReposMulti(sel, selectedPaths) {
   const repos = worktreeData.repos || [];
-  const chosen = new Set(selectedPaths || []);
+  const chosen = new Set((selectedPaths || []).map(expandHome));
   const opts = repos.map(r =>
     `<option value="${escapeHtml(r.path)}"${chosen.has(r.path) ? ' selected' : ''}>${escapeHtml(r.name)}</option>`);
   (selectedPaths || []).forEach(p => {
-    if (!repos.some(r => r.path === p)) {
+    if (!repos.some(r => r.path === expandHome(p))) {
       opts.push(`<option value="${escapeHtml(p)}" selected>${escapeHtml(p)} (未検出)</option>`);
     }
   });
@@ -865,7 +876,7 @@ function saveEnv() {
     .split('\n').map(s => s.trim()).filter(Boolean);
 
   const wtRepo = document.getElementById('envWtRepo').value.trim();
-  if (repos.length && wtRepo && !repos.includes(wtRepo)) {
+  if (repos.length && wtRepo && !repos.map(expandHome).includes(expandHome(wtRepo))) {
     alert('Worktree の Repository が「許可する Repository」に含まれていません。スコープに追加するか選び直してください。');
     return;
   }
@@ -1100,7 +1111,7 @@ function saveProcess() {
     return;
   }
   const envRepos = (targetEnv && targetEnv.repos) || [];
-  if (envRepos.length && bindRepo && !envRepos.includes(bindRepo)) {
+  if (envRepos.length && bindRepo && !envRepos.map(expandHome).includes(expandHome(bindRepo))) {
     alert('この binding の Repository は環境の許可スコープ外です。環境設定の「許可する Repository」に追加してください。');
     return;
   }
