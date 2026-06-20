@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/devhub/internal/approval"
 	"github.com/imohiyoko/devhub/internal/core"
 	"github.com/imohiyoko/devhub/internal/platform"
 	"github.com/imohiyoko/devhub/internal/storage"
@@ -47,6 +48,8 @@ type Server struct {
 	// Requests it doesn't claim fall through to serveSystem (root page, /api/info,
 	// /api/restart, SPA redirect).
 	gateway *core.Gateway
+
+	approvalMgr *approval.Manager
 }
 
 // New builds a Server: resolves the token (inheriting DEVHUB_API_TOKEN across a
@@ -140,6 +143,7 @@ func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser 
 	// entry at a URL to extract that tool to its own service — no code change.
 	s.gateway = core.NewGateway(reg, nil, pageFn)
 	s.gateway.Next = http.HandlerFunc(s.serveSystem)
+	s.approvalMgr = approval.NewManager(store)
 	return s, nil
 }
 
