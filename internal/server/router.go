@@ -38,6 +38,13 @@ func (s *Server) serveSystem(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, err)
 		}
 		return
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shared/"):
+		if body, ok := s.shared[path]; ok {
+			writeAsset(w, body, "application/javascript; charset=utf-8")
+			return
+		}
+		httpx.WriteError(w, httpx.Errorf(http.StatusNotFound, "not found"))
+		return
 	case r.Method == http.MethodGet && path == "/":
 		writePage(w, s.dashboard)
 		return
@@ -60,6 +67,17 @@ func (s *Server) serveSystem(w http.ResponseWriter, r *http.Request) {
 func writePage(w http.ResponseWriter, body []byte) {
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	h.Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// writeAsset writes an embedded static asset (e.g. shared JS) with the given
+// content type. no-store keeps a restarted server from serving stale bytes.
+func writeAsset(w http.ResponseWriter, body []byte, contentType string) {
+	h := w.Header()
+	h.Set("Content-Type", contentType)
 	h.Set("Content-Length", strconv.Itoa(len(body)))
 	h.Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)

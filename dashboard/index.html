@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>devhub</title>
+<script src="/shared/reorder.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -315,7 +316,6 @@ let TOOLS = [];
 let disabledTools = [];
 let toolOrder = [];
 let restartCmdText = 'devhub';
-let dragSrcId = null;
 
 function orderedTools() {
   if (!toolOrder.length) return TOOLS;
@@ -334,28 +334,19 @@ function renderGrid() {
     return;
   }
   grid.innerHTML = enabled.map(t => `
-    <a href="${t.href}" class="tool-card" draggable="true" data-id="${t.id}"
-       ondragstart="onCardDragStart(event,'${t.id}')"
-       ondragover="onCardDragOver(event)"
-       ondragleave="onCardDragLeave(event)"
-       ondrop="onCardDrop(event,'${t.id}')"
-       ondragend="onCardDragEnd(event)">
+    <a href="${t.href}" class="tool-card" data-id="${t.id}">
       <div class="tool-icon">${t.icon}</div>
       <div class="tool-name">${t.name}</div>
       <div class="tool-desc">${t.desc}</div>
     </a>
   `).join('');
+  DevhubReorder.attach(grid, { itemSelector: '.tool-card', keyAttr: 'data-id', onDrop: reorderTools });
 }
 
 function renderToggles() {
   const container = document.getElementById('toolToggles');
   container.innerHTML = orderedTools().map(t => `
-    <div class="toggle-row" draggable="true" data-id="${t.id}"
-         ondragstart="onDragStart(event,'${t.id}')"
-         ondragover="onDragOver(event)"
-         ondragleave="onDragLeave(event)"
-         ondrop="onDrop(event,'${t.id}')"
-         ondragend="onDragEnd(event)">
+    <div class="toggle-row" data-id="${t.id}">
       <span class="drag-handle" title="ドラッグで並び替え">⠿</span>
       <span class="toggle-label">
         <span class="toggle-label-icon">${t.icon}</span>
@@ -368,69 +359,20 @@ function renderToggles() {
       </label>
     </div>
   `).join('');
+  DevhubReorder.attach(container, {
+    itemSelector: '.toggle-row', keyAttr: 'data-id',
+    handleSelector: '.drag-handle', onDrop: reorderTools,
+  });
 }
 
-/* ── Settings panel drag & drop ── */
-function onDragStart(e, id) {
-  dragSrcId = id;
-  e.dataTransfer.effectAllowed = 'move';
-  setTimeout(() => e.currentTarget.style.opacity = '0.4', 0);
-}
-function onDragOver(e) {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
-  e.currentTarget.classList.add('insert-before');
-}
-function onDragLeave(e) {
-  e.currentTarget.classList.remove('insert-before');
-}
-function onDragEnd(e) {
-  e.currentTarget.style.opacity = '';
-  document.querySelectorAll('.toggle-row').forEach(r => r.classList.remove('insert-before'));
-}
-function onDrop(e, dstId) {
-  e.preventDefault();
-  e.currentTarget.classList.remove('insert-before');
-  applyReorder(dragSrcId, dstId);
-}
-
-/* ── Shared reorder helper ── */
-function applyReorder(srcId, dstId) {
-  if (srcId === dstId) return;
-  const ordered = orderedTools();
-  const srcIdx = ordered.findIndex(t => t.id === srcId);
-  const dstIdx = ordered.findIndex(t => t.id === dstId);
-  const [item] = ordered.splice(srcIdx, 1);
-  ordered.splice(srcIdx < dstIdx ? dstIdx - 1 : dstIdx, 0, item);
-  toolOrder = ordered.map(t => t.id);
+/* ── Reorder (grid cards & settings toggles share this) ──
+   Drag mechanics live in /shared/reorder.js; here we just translate a
+   (src,dst) drop into a new toolOrder and re-render + persist. */
+function reorderTools(srcId, dstId) {
+  toolOrder = DevhubReorder.move(orderedTools().map(t => t.id), srcId, dstId);
   renderGrid();
   renderToggles();
   saveSettings();
-}
-
-/* ── Card drag & drop ── */
-function onCardDragStart(e, id) {
-  dragSrcId = id;
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', id);
-  setTimeout(() => e.currentTarget.style.opacity = '0.4', 0);
-}
-function onCardDragOver(e) {
-  e.preventDefault();
-  e.dataTransfer.dropEffect = 'move';
-  e.currentTarget.classList.add('insert-before');
-}
-function onCardDragLeave(e) {
-  e.currentTarget.classList.remove('insert-before');
-}
-function onCardDragEnd(e) {
-  e.currentTarget.style.opacity = '';
-  document.querySelectorAll('.tool-card').forEach(c => c.classList.remove('insert-before'));
-}
-function onCardDrop(e, dstId) {
-  e.preventDefault();
-  e.currentTarget.classList.remove('insert-before');
-  applyReorder(dragSrcId, dstId);
 }
 
 /* ── Toggle ── */

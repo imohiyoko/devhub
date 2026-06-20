@@ -160,9 +160,9 @@ func TestTopoSort(t *testing.T) {
 }
 
 func TestProcessEnv(t *testing.T) {
-	def := map[string]any{"env": map[string]any{
-		"DEVHUB_HOME": "~/.devhub-verify", // leading ~ expands like cwd does
-		"PLAIN":       "literal",          // non-~ value passes through untouched
+	def := map[string]any{"env": []any{
+		map[string]any{"key": "DEVHUB_HOME", "value": "~/.devhub-verify"}, // leading ~ expands like cwd does
+		map[string]any{"key": "PLAIN", "value": "literal"},                // non-~ value passes through untouched
 	}}
 	got := processEnv(def, map[string]string{"PORT": "3001"})
 	if dh := got["DEVHUB_HOME"]; strings.HasPrefix(dh, "~") || !strings.HasSuffix(dh, ".devhub-verify") || dh == ".devhub-verify" {

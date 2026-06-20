@@ -11,9 +11,9 @@
           "label": "PostgreSQL",
           "command": "docker compose up db",
           "cwd": "~/projects/myapp",
-          "env": {
-            "POSTGRES_PASSWORD": "secret"
-          },
+          "env": [
+            { "key": "POSTGRES_PASSWORD", "value": "secret" }
+          ],
           "depends_on": []
         },
         {
@@ -22,9 +22,9 @@
           "command": "bundle exec rails s",
           "cwd": "~/projects/myapp",
           "port": 3000,
-          "env": {
-            "RAILS_ENV": "development"
-          },
+          "env": [
+            { "key": "RAILS_ENV", "value": "development" }
+          ],
           "depends_on": ["db"]
         }
       ],
@@ -46,9 +46,9 @@
           "port": 8765,
           "port_strategy": "offset",
           "port_env_var": "DEVHUB_PORT",
-          "env": {
-            "DEVHUB_HOME": "~/.devhub-verify"
-          },
+          "env": [
+            { "key": "DEVHUB_HOME", "value": "~/.devhub-verify" }
+          ],
           "depends_on": []
         }
       ],
