@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
 
 # mise itself is pinned to this exact version for reproducible CI runs.
 # Keep it in sync across all jobs here and in release.yml.
@@ -15,6 +16,10 @@ jobs:
   # build matrix. Fails if any file is not gofmt-clean.
   fmt:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
@@ -36,6 +41,10 @@ jobs:
   # Windows arm64 has no GitHub-hosted runner, so it is covered by cross-compile only.
   go:
     runs-on: ${{ matrix.runner }}
+    if: |
+      github.event_name == 'push' ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
     strategy:
       fail-fast: false
       matrix:
@@ -73,6 +82,10 @@ jobs:
   # cannot cover (e.g. windows/arm64 has no hosted runner).
   cross:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
     env:
       CGO_ENABLED: "0"
     steps:

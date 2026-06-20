@@ -1,0 +1,103 @@
+ci/core-backend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "cmd/**"
+          - "internal/approval/**"
+          - "internal/controllers/**"
+          - "internal/core/**"
+          - "internal/httpx/**"
+          - "internal/pathutil/**"
+          - "internal/platform/**"
+          - "internal/sanitize/**"
+          - "internal/server/**"
+          - "assets.go"
+          - "go.mod"
+          - "go.sum"
+          - "Makefile"
+          - ".mise.toml"
+          - ".github/workflows/ci.yml"
+
+ci/core-frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "dashboard/**"
+          - "shared/**"
+
+ci/tool-git-frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tools/git/**"
+
+ci/tool-git-api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "internal/tools/git.go"
+          - "settings/tools/git.example.json"
+
+ci/tool-db-frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tools/db-table/**"
+
+ci/tool-db-api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "internal/tools/database.go"
+          - "internal/storage/**"
+
+ci/tool-env-frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tools/env-launcher/**"
+
+ci/tool-env-api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "internal/tools/envs.go"
+          - "settings/envs.example.json"
+
+ci/tool-ports-frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tools/ports/**"
+
+ci/tool-ports-api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "internal/tools/ports.go"
+
+ci/tool-workspace-frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tools/workspace/**"
+
+ci/tool-workspace-api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "internal/tools/workspace.go"
+
+ci/tool-other-frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tools/csv-tsv/**"
+          - "tools/diagram/**"
+          - "tools/diff-kun/**"
+
+ci/tool-other-api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "internal/tools/body.go"
+          - "internal/tools/pages.go"
+          - "internal/tools/registry.go"
+          - "internal/tools/settings.go"
+
+ci/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "*.md"
+
+ci/site:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "site/**"

@@ -1,0 +1,138 @@
+name: Sync Labels
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.json"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/labels.json"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+
+      - name: Validate and Sync Labels
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            // 1. JSON Validation
+            let labels;
+            try {
+              const fileContent = fs.readFileSync('.github/labels.json', 'utf8');
+              labels = JSON.parse(fileContent);
+            } catch (err) {
+              core.setFailed(`Invalid JSON structure in .github/labels.json: ${err.message}`);
+              return;
+            }
+
+            if (!Array.isArray(labels)) {
+              core.setFailed('.github/labels.json must be a JSON array of label objects.');
+              return;
+            }
+
+            for (const [index, label] of labels.entries()) {
+              if (!label.name || typeof label.name !== 'string') {
+                core.setFailed(`Label at index ${index} must have a valid 'name' (string).`);
+                return;
+              }
+              if (!label.color || typeof label.color !== 'string') {
+                core.setFailed(`Label '${label.name}' at index ${index} must have a valid 'color' (hex string).`);
+                return;
+              }
+              // Normalise color to lowercase and remove any leading '#'
+              label.color = label.color.replace(/^#/, '').toLowerCase();
+              label.description = label.description || '';
+            }
+
+            console.log(`Successfully validated ${labels.length} labels in .github/labels.json.`);
+
+            // 2. Fetch existing labels from the repository
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            console.log(`Fetching existing labels for ${owner}/${repo}...`);
+            
+            let existingLabels;
+            try {
+              existingLabels = await github.paginate(github.rest.issues.listLabelsForRepo, {
+                owner,
+                repo
+              });
+            } catch (err) {
+              core.setFailed(`Failed to fetch existing labels: ${err.message}`);
+              return;
+            }
+
+            const existingMap = new Map(existingLabels.map(l => [l.name.toLowerCase(), l]));
+
+            // Determine if it is a dry run (PR checks are dry run)
+            const isDryRun = context.eventName === 'pull_request';
+            if (isDryRun) {
+              console.log('--- RUNNING IN DRY-RUN MODE (No changes will be applied to the repository) ---');
+            } else {
+              console.log('--- RUNNING IN WRITE MODE (Changes will be applied to the repository) ---');
+            }
+
+            // 3. Compare and sync
+            for (const label of labels) {
+              const existing = existingMap.get(label.name.toLowerCase());
+              
+              if (!existing) {
+                console.log(`[CREATE] Label '${label.name}' is missing.`);
+                if (isDryRun) {
+                  console.log(`  (Dry Run) Would create label: color=${label.color}, description="${label.description}"`);
+                } else {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: label.name,
+                    color: label.color,
+                    description: label.description
+                  });
+                  console.log(`  Successfully created label: ${label.name}`);
+                }
+              } else {
+                const normalizedExistingColor = existing.color.replace(/^#/, '').toLowerCase();
+                const normalizedExistingDesc = existing.description || '';
+                
+                const colorChanged = normalizedExistingColor !== label.color;
+                const descChanged = normalizedExistingDesc !== label.description;
+                
+                if (colorChanged || descChanged) {
+                  console.log(`[UPDATE] Label '${label.name}' has changes.`);
+                  if (colorChanged) {
+                    console.log(`  Color: '${normalizedExistingColor}' -> '${label.color}'`);
+                  }
+                  if (descChanged) {
+                    console.log(`  Description: "${normalizedExistingDesc}" -> "${label.description}"`);
+                  }
+                  
+                  if (isDryRun) {
+                    console.log(`  (Dry Run) Would update label: ${label.name}`);
+                  } else {
+                    await github.rest.issues.updateLabel({
+                      owner,
+                      repo,
+                      name: existing.name,
+                      new_name: label.name,
+                      color: label.color,
+                      description: label.description
+                    });
+                    console.log(`  Successfully updated label: ${label.name}`);
+                  }
+                } else {
+                  console.log(`[NO CHANGE] Label '${label.name}' is already up-to-date.`);
+                }
+              }
+            }
