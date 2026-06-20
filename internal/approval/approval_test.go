@@ -57,7 +57,7 @@ func TestApprovalFlow_Timeout(t *testing.T) {
 	mgr := NewManager(nil)
 	req := mgr.Register("test_action", "test_detail")
 
-	decision, err := mgr.Wait(req, 20 * time.Millisecond)
+	decision, err := mgr.Wait(req, 20*time.Millisecond)
 	if err == nil {
 		t.Fatalf("expected timeout error, got nil")
 	}
