@@ -126,4 +126,3 @@ func (s *Store) LoadAIRules() (json.RawMessage, error) {
 func (s *Store) SaveAIRules(data json.RawMessage) error {
 	return kvSet(s.db, "ai_rules", data)
 }
-

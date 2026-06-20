@@ -60,4 +60,3 @@ func (s *Server) isLoopback(r *http.Request) bool {
 	}
 	return false
 }
-
