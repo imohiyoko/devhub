@@ -1,0 +1,82 @@
+[
+  {
+    "name": "ci/core-backend",
+    "color": "0E8A16",
+    "description": "Backend core changes"
+  },
+  {
+    "name": "ci/core-frontend",
+    "color": "FBCA04",
+    "description": "Frontend core dashboard UI changes"
+  },
+  {
+    "name": "ci/tool-git-frontend",
+    "color": "D4C5F9",
+    "description": "Git tool frontend changes"
+  },
+  {
+    "name": "ci/tool-git-api",
+    "color": "1D76DB",
+    "description": "Git tool backend API changes"
+  },
+  {
+    "name": "ci/tool-db-frontend",
+    "color": "006B75",
+    "description": "Database tool frontend changes"
+  },
+  {
+    "name": "ci/tool-db-api",
+    "color": "BFD4F2",
+    "description": "Database tool backend API changes"
+  },
+  {
+    "name": "ci/tool-env-frontend",
+    "color": "B60205",
+    "description": "Env-launcher frontend changes"
+  },
+  {
+    "name": "ci/tool-env-api",
+    "color": "D93F0B",
+    "description": "Env-launcher backend API changes"
+  },
+  {
+    "name": "ci/tool-ports-frontend",
+    "color": "84F392",
+    "description": "Ports tool frontend changes"
+  },
+  {
+    "name": "ci/tool-ports-api",
+    "color": "C5DEF5",
+    "description": "Ports tool backend API changes"
+  },
+  {
+    "name": "ci/tool-workspace-frontend",
+    "color": "FEF2C0",
+    "description": "Workspace tool frontend changes"
+  },
+  {
+    "name": "ci/tool-workspace-api",
+    "color": "BFDADC",
+    "description": "Workspace tool backend API changes"
+  },
+  {
+    "name": "ci/tool-other-frontend",
+    "color": "F9D0C4",
+    "description": "Other tools frontend changes"
+  },
+  {
+    "name": "ci/tool-other-api",
+    "color": "C2E0C6",
+    "description": "Other tools backend API changes"
+  },
+  {
+    "name": "ci/docs",
+    "color": "E99695",
+    "description": "Documentation changes"
+  },
+  {
+    "name": "ci/site",
+    "color": "5319E7",
+    "description": "Static website changes"
+  }
+]
