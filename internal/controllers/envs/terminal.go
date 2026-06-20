@@ -60,6 +60,10 @@ func inPath(name string) bool {
 func start(cmd *exec.Cmd) { _ = cmd.Start() }
 
 // runShell launches command via the platform shell (subprocess shell=True).
+// On Windows the configured shell is honoured (powershell / cmd).
+// On Unix we always use sh(1) — it is POSIX-required and available on every
+// supported OS, making it the safest choice for background process launching
+// regardless of the user's interactive shell (bash/zsh/fish/…).
 func runShell(cwd, command string, env []string) {
 	var cmd *exec.Cmd
 	if platform.IsWindows() {
