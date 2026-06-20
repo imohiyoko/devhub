@@ -29,8 +29,9 @@ jobs:
             exit 1
           fi
 
-  # Native tests on every OS+arch combination that devhub ships for.
-  # macos-latest = Apple Silicon (arm64); macos-13 = Intel (amd64).
+  # Native tests on every OS+arch combination that has a reliable hosted runner.
+  # macos-latest = Apple Silicon (arm64). macOS amd64 (Intel / macos-13) has an
+  # unreliable runner pool so it is covered by the cross-compile job instead.
   # ubuntu-24.04-arm = Linux arm64 native runner.
   # Windows arm64 has no GitHub-hosted runner, so it is covered by cross-compile only.
   go:
@@ -42,7 +43,6 @@ jobs:
           - runner: ubuntu-latest      # Linux amd64
           - runner: ubuntu-24.04-arm   # Linux arm64
           - runner: macos-latest       # macOS arm64 (Apple Silicon)
-          - runner: macos-13           # macOS amd64 (Intel)
           - runner: windows-latest     # Windows amd64
     env:
       CGO_ENABLED: "0"
