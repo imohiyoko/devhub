@@ -266,6 +266,84 @@ footer {
   font-size: 11px;
   font-family: "SF Mono", ui-monospace, monospace;
 }
+
+/* ── Approval Panel ── */
+.approval-panel {
+  background: rgba(22, 27, 34, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(240, 140, 0, 0.4);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+  display: none;
+  animation: slideDown 0.3s ease-out;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.approval-panel.open {
+  display: block;
+}
+@keyframes slideDown {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.approval-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #ff9e2c;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.approval-detail {
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 16px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  word-break: break-all;
+}
+.approval-actions {
+  display: flex;
+  gap: 10px;
+}
+.approval-btn {
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease;
+}
+.approval-btn.approve {
+  background: var(--green);
+  color: #fff;
+}
+.approval-btn.approve:hover {
+  background: #2ea043;
+  transform: translateY(-1px);
+}
+.approval-btn.reject {
+  background: #da3633;
+  color: #fff;
+}
+.approval-btn.reject:hover {
+  background: #b62320;
+  transform: translateY(-1px);
+}
+.approval-btn.always {
+  background: var(--accent);
+  color: #fff;
+}
+.approval-btn.always:hover {
+  background: #1f6feb;
+  transform: translateY(-1px);
+}
 </style>
 </head>
 <body>
@@ -301,6 +379,16 @@ footer {
 </div>
 
 <main>
+  <div class="approval-panel" id="approvalPanel">
+    <div class="approval-title">⚠️ AI操作の保留中リクエスト</div>
+    <div class="approval-detail" id="approvalDetail">-</div>
+    <div class="approval-actions">
+      <button class="approval-btn approve" id="btnApprove">許可 (Approve)</button>
+      <button class="approval-btn reject" id="btnReject">却下 (Reject)</button>
+      <button class="approval-btn always" id="btnAlways">常に許可 (Always Allow)</button>
+    </div>
+  </div>
+
   <p class="section-title">ツール</p>
   <div class="tools-grid" id="toolsGrid"></div>
 </main>
@@ -482,7 +570,58 @@ async function copyCmd() {
   }
   renderGrid();
   renderToggles();
+  checkPendingApprovals();
 })();
+
+/* ── Approval handling ── */
+let currentPendingRequest = null;
+
+async function checkPendingApprovals() {
+  try {
+    const res = await fetch('/api/approval/pending');
+    if (!res.ok) return;
+    const json = await res.json();
+    const requests = json.requests || [];
+    if (requests.length > 0) {
+      currentPendingRequest = requests[0];
+      document.getElementById('approvalDetail').textContent = 
+        `${currentPendingRequest.action} -> ${currentPendingRequest.detail}`;
+      document.getElementById('approvalPanel').classList.add('open');
+    } else {
+      currentPendingRequest = null;
+      document.getElementById('approvalPanel').classList.remove('open');
+    }
+  } catch (e) {
+    console.error('failed to check pending approvals', e);
+  }
+}
+
+async function respondApproval(decision) {
+  if (!currentPendingRequest) return;
+  const url = decision === 'always' ? '/api/approval/always-allow' : '/api/approval/respond';
+  const body = decision === 'always' 
+    ? { id: currentPendingRequest.id }
+    : { id: currentPendingRequest.id, decision };
+  
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (res.ok) {
+      checkPendingApprovals();
+    }
+  } catch (e) {
+    console.error('respond failed', e);
+  }
+}
+
+document.getElementById('btnApprove').addEventListener('click', () => respondApproval('approved'));
+document.getElementById('btnReject').addEventListener('click', () => respondApproval('rejected'));
+document.getElementById('btnAlways').addEventListener('click', () => respondApproval('always'));
+
+setInterval(checkPendingApprovals, 2000);
 </script>
 </body>
 </html>

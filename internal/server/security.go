@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"net"
 	"net/http"
 )
 
@@ -40,4 +41,22 @@ func toLowerASCII(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// isLoopback checks if the request originates from a loopback address.
+func (s *Server) isLoopback(r *http.Request) bool {
+	// RemoteAddr has the IP:port of the client.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	// On Windows or dual-stack IPv4/IPv6 loopback might be ::1 or 127.0.0.1.
+	if host == "::1" || host == "127.0.0.1" {
+		return true
+	}
+	// For other representations, try parsing.
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
