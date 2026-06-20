@@ -370,7 +370,11 @@ func processEnv(processDef map[string]any, extraEnv map[string]string) map[strin
 		if k == "" {
 			continue
 		}
-		env[k] = pathutil.ExpandUser(fmt.Sprintf("%v", m["value"]))
+		val := ""
+		if raw, ok := m["value"]; ok && raw != nil {
+			val = fmt.Sprintf("%v", raw)
+		}
+		env[k] = pathutil.ExpandUser(val)
 	}
 	maps.Copy(env, extraEnv)
 	return env
