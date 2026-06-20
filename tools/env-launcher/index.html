@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>env launcher — devhub</title>
+<script src="/shared/reorder.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -146,9 +147,25 @@ main {
 .process-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .process-actions { display: flex; gap: 8px; }
 
-.env-var-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.env-var-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
 .env-var-row input { flex: 1; }
 .env-var-remove { background: none; border: none; color: var(--red); cursor: pointer; }
+
+/* Drag-to-reorder (shared module: /shared/reorder.js) */
+.drag-handle {
+  color: var(--border);
+  cursor: grab;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  padding: 0 2px;
+  user-select: none;
+  transition: color 0.12s;
+}
+.drag-handle:hover { color: var(--muted); }
+.env-card.insert-before { box-shadow: 0 -3px 0 0 var(--green); }
+.process-item.insert-before { box-shadow: 0 -2px 0 0 var(--green); }
+.env-var-row.insert-before { box-shadow: 0 -2px 0 0 var(--green); }
 
 /* Empty state */
 .empty-state { text-align: center; color: var(--muted); padding: 40px; }
@@ -747,8 +764,9 @@ function render() {
     const envId = escapeHtml(env.id);
     const envName = escapeHtml(env.name || env.id);
     html += `
-      <div class="env-card">
+      <div class="env-card" data-key="${eIdx}">
         <div class="env-header">
+          <span class="drag-handle env-drag-handle" title="ドラッグで環境を並び替え">⠿</span>
           <h2>${envName}</h2>
           ${env.worktree?.enabled ? `<span style="font-size: 11px; background: var(--border); padding: 2px 6px; border-radius: 4px;">worktree</span>` : ''}
           <div class="env-actions">
@@ -779,7 +797,8 @@ function render() {
           : '';
 
         html += `
-          <div class="process-item">
+          <div class="process-item" data-key="${pIdx}">
+            <span class="drag-handle proc-drag-handle" title="ドラッグでプロセスを並び替え">⠿</span>
             <div class="process-info">
               <div class="process-label">${procLabel}</div>
               <div class="process-cmd">${procCmd}</div>
@@ -804,6 +823,38 @@ function render() {
     html += `</div></div>`;
   });
   app.innerHTML = html;
+
+  // ドラッグ並び替えを配線（共通モジュール）。環境カードは app 直下、
+  // プロセスは各環境カード内に限定して attach（環境をまたぐ移動を防ぐ）。
+  DevhubReorder.attach(app, {
+    itemSelector: '.env-card', keyAttr: 'data-key',
+    handleSelector: '.env-drag-handle', onDrop: reorderEnvironments,
+  });
+  app.querySelectorAll('.env-card').forEach(card => {
+    DevhubReorder.attach(card, {
+      itemSelector: '.process-item', keyAttr: 'data-key',
+      handleSelector: '.proc-drag-handle',
+      onDrop: (src, dst) => reorderProcesses(card.dataset.key, src, dst),
+    });
+  });
+}
+
+// 環境カードの並び替え：id 配列を並び替え→配列を再構築→保存（保存成功時に再描画）。
+function reorderEnvironments(src, dst) {
+  const envs = envsData.environments || [];
+  const order = DevhubReorder.move(envs.map((_, i) => String(i)), src, dst);
+  envsData.environments = order.map(i => envs[Number(i)]);
+  saveEnvsData();
+}
+
+// プロセスの並び替え：対象環境内でのみ。配列保存なので順序は永続化される。
+function reorderProcesses(envId, src, dst) {
+  const env = (envsData.environments || []).find(e => e.id === envId);
+  if (!env || !env.processes) return;
+  const procs = env.processes;
+  const order = DevhubReorder.move(procs.map((_, i) => String(i)), src, dst);
+  env.processes = order.map(i => procs[Number(i)]);
+  saveEnvsData();
 }
 
 // --- Env Modal ---
@@ -923,12 +974,23 @@ function renderEnvVars() {
     const escapedKey = escapeHtml(v.key);
     const escapedValue = escapeHtml(v.value);
     return `
-    <div class="env-var-row">
+    <div class="env-var-row" data-key="${i}">
+      <span class="drag-handle env-var-drag-handle" title="ドラッグで並び替え">⠿</span>
       <input type="text" class="form-control" placeholder="KEY" value="${escapedKey}" oninput="updateEnvVarKey(${i}, this.value, this.nextElementSibling)">
       <input type="${isMaskedKey(v.key) ? 'password' : 'text'}" class="form-control" placeholder="VALUE" value="${escapedValue}" oninput="updateEnvVarValue(${i}, this.value)">
       <button class="env-var-remove" onclick="removeEnvVar(${i})">✕</button>
     </div>
   `}).join('');
+  // 行のドラッグ並び替え（インデックスを key に使用）。保存はプロセス保存時。
+  DevhubReorder.attach(container, {
+    itemSelector: '.env-var-row', keyAttr: 'data-key',
+    handleSelector: '.env-var-drag-handle', onDrop: reorderEnvVars,
+  });
+}
+function reorderEnvVars(srcKey, dstKey) {
+  const order = DevhubReorder.move(tempEnvVars.map((_, i) => String(i)), srcKey, dstKey);
+  tempEnvVars = order.map(i => tempEnvVars[Number(i)]);
+  renderEnvVars();
 }
 function addEnvVar() { tempEnvVars.push({key: '', value: ''}); renderEnvVars(); }
 function updateEnvVarKey(i, val, valueInputEl) {
@@ -1031,7 +1093,11 @@ async function openProcessModal(envIndex, procIndex = -1) {
       opt.selected = (proc.depends_on || []).includes(opt.value);
     });
 
-    tempEnvVars = Object.entries(proc.env || {}).map(([k, v]) => ({key: k, value: v}));
+    // env は順序保持のため {key,value} の配列で保存している。
+    tempEnvVars = (Array.isArray(proc.env) ? proc.env : []).map(v => ({
+      key: String((v && v.key) ?? ''),
+      value: String((v && v.value) ?? ''),
+    }));
   } else {
     document.getElementById('procId').value = '';
     document.getElementById('procLabel').value = '';
@@ -1069,10 +1135,11 @@ function saveProcess() {
   const dependsSelect = document.getElementById('procDepends');
   const depends_on = Array.from(dependsSelect.selectedOptions).map(opt => opt.value);
 
-  const envObj = {};
-  tempEnvVars.forEach(v => {
-    if (v.key.trim()) envObj[v.key.trim()] = v.value;
-  });
+  // env は {key,value} の配列で保存し入力順を保持する（オブジェクトだと
+  // Go の json.Marshal がキーをソートしてしまい順序が崩れる）。
+  const envList = tempEnvVars
+    .map(v => ({key: String(v.key ?? '').trim(), value: String(v.value ?? '')}))
+    .filter(v => v.key);
 
   const delayVal = document.getElementById('procDelay').value.trim();
   const portVal = document.getElementById('procPort').value.trim();
@@ -1136,7 +1203,7 @@ function saveProcess() {
     cwd: document.getElementById('procCwd').value.trim(),
     delay_seconds: delayVal === '' ? 1.0 : (parseFloat(delayVal) || 0),
     depends_on: depends_on,
-    env: envObj
+    env: envList
   };
   if (port !== undefined) proc.port = port;
   if (bindRepo && bindBranch) proc.binding = { repo_path: bindRepo, branch: bindBranch };

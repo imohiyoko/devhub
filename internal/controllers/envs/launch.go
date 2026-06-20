@@ -355,10 +355,26 @@ func (c *Controller) launchProcess(processDef map[string]any, cwdOverride string
 // processEnv builds a process's resolved environment: its declared env (with a
 // leading ~ expanded in values, so e.g. DEVHUB_HOME=~/.devhub-verify points at
 // the home dir like cwd does) overlaid by extraEnv (e.g. the offset port var).
+//
+// env is an ordered list of {key, value} pairs (a JSON array) so the user's
+// input order survives the save round-trip — a JSON object would be re-sorted
+// alphabetically by encoding/json on save.
 func processEnv(processDef map[string]any, extraEnv map[string]string) map[string]string {
 	env := map[string]string{}
-	for k, v := range pMap(processDef, "env") {
-		env[k] = pathutil.ExpandUser(fmt.Sprintf("%v", v))
+	for _, item := range toAnySlice(processDef["env"]) {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		k := pStr(m, "key")
+		if k == "" {
+			continue
+		}
+		val := ""
+		if raw, ok := m["value"]; ok && raw != nil {
+			val = fmt.Sprintf("%v", raw)
+		}
+		env[k] = pathutil.ExpandUser(val)
 	}
 	maps.Copy(env, extraEnv)
 	return env

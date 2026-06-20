@@ -36,6 +36,11 @@ type Server struct {
 	// tool's token-injected page keyed by tool ID (served by the gateway).
 	dashboard []byte
 
+	// shared holds embedded static assets under shared/ (e.g. reorder.js),
+	// keyed by URL path ("/shared/reorder.js"). Served by serveSystem; not
+	// token-injected (these are plain JS, not HTML pages).
+	shared map[string][]byte
+
 	httpSrv *http.Server
 
 	// gateway dispatches every tool (registry-driven) plus GET /api/tools.
@@ -109,6 +114,23 @@ func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser 
 		return nil, fmt.Errorf("embed read dashboard/index.html: %w", err)
 	}
 	s.dashboard = injectToken(db, script)
+
+	// Pre-read shared/ static assets (plain JS shared across tool pages) keyed
+	// by URL path, mirroring how tool pages are cached. No token injection.
+	s.shared = map[string][]byte{}
+	if err := fs.WalkDir(assets, "shared", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(assets, p)
+		if err != nil {
+			return fmt.Errorf("embed read %s: %w", p, err)
+		}
+		s.shared["/"+p] = b
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 
 	pageFn := func(toolID string) ([]byte, bool) {
 		b, ok := toolPages[toolID]

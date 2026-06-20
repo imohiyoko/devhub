@@ -29,12 +29,21 @@ jobs:
             exit 1
           fi
 
+  # Native tests on every OS+arch combination that has a reliable hosted runner.
+  # macos-latest = Apple Silicon (arm64). macOS amd64 (Intel / macos-13) has an
+  # unreliable runner pool so it is covered by the cross-compile job instead.
+  # ubuntu-24.04-arm = Linux arm64 native runner.
+  # Windows arm64 has no GitHub-hosted runner, so it is covered by cross-compile only.
   go:
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - runner: ubuntu-latest      # Linux amd64
+          - runner: ubuntu-24.04-arm   # Linux arm64
+          - runner: macos-latest       # macOS arm64 (Apple Silicon)
+          - runner: windows-latest     # Windows amd64
     env:
       CGO_ENABLED: "0"
     steps:
@@ -52,9 +61,37 @@ jobs:
             ~/.cache/go-build
             ~/Library/Caches/go-build
             ~/AppData/Local/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-            ${{ runner.os }}-go-
+            ${{ runner.os }}-${{ runner.arch }}-go-
       - run: go vet ./...
       - run: go build ./...
       - run: go test ./...
+
+  # Verify that every goreleaser target cross-compiles cleanly from Linux.
+  # This catches GOOS/GOARCH-specific build errors that the native matrix above
+  # cannot cover (e.g. windows/arm64 has no hosted runner).
+  cross:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          version: ${{ env.MISE_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: cross-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: cross-go-
+      - name: cross-compile all targets
+        run: |
+          for GOOS in darwin linux windows; do
+            for GOARCH in amd64 arm64; do
+              echo "==> $GOOS/$GOARCH"
+              GOOS=$GOOS GOARCH=$GOARCH go build ./...
+            done
+          done
