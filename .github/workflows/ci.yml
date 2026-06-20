@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'push' ||
-      contains(github.event.pull_request.labels.*.name, 'area/backend') ||
-      contains(github.event.pull_request.labels.*.name, 'area/frontend')
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
@@ -43,8 +43,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     if: |
       github.event_name == 'push' ||
-      contains(github.event.pull_request.labels.*.name, 'area/backend') ||
-      contains(github.event.pull_request.labels.*.name, 'area/frontend')
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
     strategy:
       fail-fast: false
       matrix:
@@ -84,8 +84,8 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'push' ||
-      contains(github.event.pull_request.labels.*.name, 'area/backend') ||
-      contains(github.event.pull_request.labels.*.name, 'area/frontend')
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
     env:
       CGO_ENABLED: "0"
     steps:
