@@ -1,0 +1,30 @@
+area/backend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "cmd/**"
+          - "internal/**"
+          - "settings/**"
+          - "scripts/**"
+          - "assets.go"
+          - "go.mod"
+          - "go.sum"
+          - "Makefile"
+          - ".github/workflows/ci.yml"
+          - ".mise.toml"
+
+area/frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "dashboard/**"
+          - "tools/**"
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "*.md"
+
+area/site:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "site/**"
