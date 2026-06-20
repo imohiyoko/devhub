@@ -1,0 +1,24 @@
+# Normalize line endings to LF in the repository
+* text=auto eol=lf
+
+# Go source files must always use LF
+*.go text eol=lf
+
+# Shell scripts must always use LF
+*.sh text eol=lf
+
+# Windows batch files use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.db binary
