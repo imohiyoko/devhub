@@ -764,7 +764,7 @@ function render() {
     const envId = escapeHtml(env.id);
     const envName = escapeHtml(env.name || env.id);
     html += `
-      <div class="env-card" data-key="${envId}">
+      <div class="env-card" data-key="${eIdx}">
         <div class="env-header">
           <span class="drag-handle env-drag-handle" title="ドラッグで環境を並び替え">⠿</span>
           <h2>${envName}</h2>
@@ -797,7 +797,7 @@ function render() {
           : '';
 
         html += `
-          <div class="process-item" data-key="${procId}">
+          <div class="process-item" data-key="${pIdx}">
             <span class="drag-handle proc-drag-handle" title="ドラッグでプロセスを並び替え">⠿</span>
             <div class="process-info">
               <div class="process-label">${procLabel}</div>
@@ -840,19 +840,20 @@ function render() {
 }
 
 // 環境カードの並び替え：id 配列を並び替え→配列を再構築→保存（保存成功時に再描画）。
-function reorderEnvironments(srcId, dstId) {
+function reorderEnvironments(src, dst) {
   const envs = envsData.environments || [];
-  const order = DevhubReorder.move(envs.map(e => e.id), srcId, dstId);
-  envsData.environments = order.map(id => envs.find(e => e.id === id)).filter(Boolean);
+  const order = DevhubReorder.move(envs.map((_, i) => String(i)), src, dst);
+  envsData.environments = order.map(i => envs[Number(i)]);
   saveEnvsData();
 }
 
 // プロセスの並び替え：対象環境内でのみ。配列保存なので順序は永続化される。
-function reorderProcesses(envId, srcId, dstId) {
+function reorderProcesses(envId, src, dst) {
   const env = (envsData.environments || []).find(e => e.id === envId);
   if (!env || !env.processes) return;
-  const order = DevhubReorder.move(env.processes.map(p => p.id), srcId, dstId);
-  env.processes = order.map(id => env.processes.find(p => p.id === id)).filter(Boolean);
+  const procs = env.processes;
+  const order = DevhubReorder.move(procs.map((_, i) => String(i)), src, dst);
+  env.processes = order.map(i => procs[Number(i)]);
   saveEnvsData();
 }
 
@@ -1093,7 +1094,10 @@ async function openProcessModal(envIndex, procIndex = -1) {
     });
 
     // env は順序保持のため {key,value} の配列で保存している。
-    tempEnvVars = (Array.isArray(proc.env) ? proc.env : []).map(v => ({key: v.key, value: v.value}));
+    tempEnvVars = (Array.isArray(proc.env) ? proc.env : []).map(v => ({
+      key: String((v && v.key) ?? ''),
+      value: String((v && v.value) ?? ''),
+    }));
   } else {
     document.getElementById('procId').value = '';
     document.getElementById('procLabel').value = '';
@@ -1134,8 +1138,8 @@ function saveProcess() {
   // env は {key,value} の配列で保存し入力順を保持する（オブジェクトだと
   // Go の json.Marshal がキーをソートしてしまい順序が崩れる）。
   const envList = tempEnvVars
-    .filter(v => v.key.trim())
-    .map(v => ({key: v.key.trim(), value: v.value}));
+    .map(v => ({key: String(v.key ?? '').trim(), value: String(v.value ?? '')}))
+    .filter(v => v.key);
 
   const delayVal = document.getElementById('procDelay').value.trim();
   const portVal = document.getElementById('procPort').value.trim();
