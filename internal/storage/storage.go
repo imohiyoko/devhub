@@ -116,3 +116,13 @@ func kvSet(e execer, key string, value any) error {
 	)
 	return err
 }
+
+// LoadAIRules returns the raw JSON of AI rules.
+func (s *Store) LoadAIRules() (json.RawMessage, error) {
+	return s.kvGet("ai_rules")
+}
+
+// SaveAIRules saves the raw JSON of AI rules.
+func (s *Store) SaveAIRules(data json.RawMessage) error {
+	return kvSet(s.db, "ai_rules", data)
+}
