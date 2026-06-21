@@ -366,6 +366,10 @@ footer {
         <span class="mi-icon">↻</span> 再起動のみ
       </button>
       <div class="restart-menu-sep"></div>
+      <button class="restart-menu-item" id="rebuildMenuItem" onclick="doRebuild()">
+        <span class="mi-icon">⚒</span> リビルド + 再起動
+      </button>
+      <div class="restart-menu-sep"></div>
       <button class="restart-menu-item" id="copyMenuItem" onclick="copyCmd()">
         <span class="mi-icon">⎘</span> コマンドをコピー
       </button>
@@ -534,6 +538,72 @@ async function doRestart(mode) {
       location.reload();
     } catch { /* まだ起動中 */ }
   }, 800);
+}
+
+async function doRebuild() {
+  closeMenu();
+  const btn = document.getElementById('restartMainBtn');
+  btn.disabled = true;
+  btn.textContent = '⚒';
+
+  const resetBtn = (after = 3000) => {
+    btn.textContent = '✗';
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = '↻'; }, after);
+  };
+
+  // Start the rebuild; surface HTTP-level errors (e.g. 409 already-running).
+  try {
+    const res = await fetch('/api/rebuild', { method: 'POST' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(e.error || `リビルド開始に失敗しました (${res.status})`);
+      resetBtn();
+      return;
+    }
+  } catch (e) {
+    alert(e?.message || 'リビルド開始に失敗しました');
+    resetBtn();
+    return;
+  }
+
+  // Phase 1: poll /api/rebuild/status until the build finishes.
+  let statusKnown = false;
+  const statusPoll = setInterval(async () => {
+    try {
+      const statusRes = await fetch('/api/rebuild/status');
+      if (!statusRes.ok) throw new TypeError(`status ${statusRes.status}`);
+      const s = await statusRes.json();
+      if (!s.done) return;
+      clearInterval(statusPoll);
+      statusKnown = true;
+      if (s.error) {
+        alert(`ビルド失敗:\n${s.output || s.error}`);
+        resetBtn();
+        return;
+      }
+      waitForRestart(); // Phase 2
+    } catch (e) {
+      if (!statusKnown && e instanceof TypeError) {
+        // Server went away (network error) mid-poll → restart in progress.
+        clearInterval(statusPoll);
+        waitForRestart();
+      }
+    }
+  }, 1000);
+
+  // Phase 2: wait for the old server to go DOWN, then wait for the new one to
+  // come UP. Checking only for UP risks reloading against the still-alive old
+  // process during the ~300 ms window before os.Exit(0).
+  function waitForRestart() {
+    let wentDown = false;
+    const poll = setInterval(async () => {
+      try {
+        await fetch('/api/info');
+        if (wentDown) { clearInterval(poll); location.reload(); }
+      } catch { wentDown = true; }
+    }, 400);
+  }
 }
 
 async function copyCmd() {

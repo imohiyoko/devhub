@@ -50,6 +50,14 @@ instance can run alongside your main one without a clash:
 
 `DEVHUB_PORT=9000 mise run dev` works too.
 
+### Rebuilding from the UI
+
+When running from source, the dashboard's restart button (↻) has a **「リビルド + 再起動」** option in its dropdown. It compiles the project in the background and restarts via `go run` — no terminal needed. Build errors are shown inline; on success the page reloads automatically.
+
+This option is only available when devhub detects a `go.mod` alongside itself (i.e. source tree present). It does nothing when running a distributed binary.
+
+> **Note on subsequent restarts:** after a rebuild the process is `terminal → go run → <temp binary>`. The plain "再起動のみ" option re-execs that same temp binary (Go's build cache makes this effectively instant), so it stays consistent for the rest of the session. The next explicit rebuild will recompile from source again.
+
 ### Stopping
 
 Foreground: `Ctrl+C`. For a backgrounded / other-terminal instance:

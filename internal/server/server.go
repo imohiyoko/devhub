@@ -33,6 +33,12 @@ type Server struct {
 	allowedHosts map[string]bool
 	openBrowser  bool
 
+	// repoRoot is the directory that contains go.mod, used by the rebuild
+	// handler to run `go build` / `go run` from the correct working directory.
+	// Empty string means rebuild is unavailable (distributed binary with no
+	// source tree alongside it).
+	repoRoot string
+
 	// dashboard is the token-injected root page ("/"); toolPages holds each
 	// tool's token-injected page keyed by tool ID (served by the gateway).
 	dashboard []byte
@@ -57,6 +63,7 @@ type Server struct {
 // the token shim into the dashboard and every tool page.
 func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser bool, version string) (*Server, error) {
 	s := &Server{store: store, settings: settings, version: version}
+	s.repoRoot = findRepoRoot()
 
 	s.token = os.Getenv("DEVHUB_API_TOKEN")
 	if s.token == "" {
