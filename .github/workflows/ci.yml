@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, labeled]
+  workflow_run:
+    workflows: ["labeler"]
+    types: [completed]
 
 # mise itself is pinned to this exact version for reproducible CI runs.
 # Keep it in sync across all jobs here and in release.yml.
@@ -12,16 +15,68 @@ env:
   MISE_VERSION: "2026.6.11"
 
 jobs:
+  # Determine whether CI should run and which commit to check out.
+  # - push       → always run; sha = pushed commit
+  # - pull_request → check labels from event payload; sha = PR head
+  # - workflow_run → labeler just finished; fetch current PR labels via API
+  #                  so the label added by the bot is visible even though
+  #                  GITHUB_TOKEN-triggered events don't fire pull_request.labeled.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const event = context.eventName;
+
+            if (event === 'push') {
+              core.setOutput('run', 'true');
+              core.setOutput('sha', context.sha);
+              return;
+            }
+
+            let prNumber, sha;
+            if (event === 'workflow_run') {
+              const prs = context.payload.workflow_run.pull_requests;
+              if (!prs?.length) {
+                core.setOutput('run', 'false');
+                return;
+              }
+              prNumber = prs[0].number;
+              sha = context.payload.workflow_run.head_sha;
+            } else {
+              prNumber = context.payload.pull_request.number;
+              sha = context.payload.pull_request.head.sha;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            const labels = pr.labels.map(l => l.name);
+            const run = labels.some(l => l.startsWith('ci/core-') || l.startsWith('ci/tool-'));
+            core.setOutput('run', String(run));
+            core.setOutput('sha', sha);
+
   # Formatting is OS-independent, so it runs once on Linux rather than across the
   # build matrix. Fails if any file is not gofmt-clean.
   fmt:
+    needs: gate
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
+    if: needs.gate.outputs.run == 'true'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -40,11 +95,9 @@ jobs:
   # ubuntu-24.04-arm = Linux arm64 native runner.
   # Windows arm64 has no GitHub-hosted runner, so it is covered by cross-compile only.
   go:
+    needs: gate
     runs-on: ${{ matrix.runner }}
-    if: |
-      github.event_name == 'push' ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
+    if: needs.gate.outputs.run == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -57,6 +110,9 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -81,15 +137,16 @@ jobs:
   # This catches GOOS/GOARCH-specific build errors that the native matrix above
   # cannot cover (e.g. windows/arm64 has no hosted runner).
   cross:
+    needs: gate
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
+    if: needs.gate.outputs.run == 'true'
     env:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
