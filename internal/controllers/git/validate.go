@@ -12,7 +12,7 @@ import (
 // Conservative allowlist for branch names passed to git as positional args.
 // Intentionally stricter than git's real ref grammar in exchange for a small,
 // auditable character set.
-var branchNameRe = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
+var branchNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.+/-]+$`)
 
 // baseCommitRe is broader than branchNameRe (allows revspec chars ~^@{}#) because
 // a base commit is a revspec, not a branch name. The dash/.. guards still apply.
