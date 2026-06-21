@@ -138,7 +138,6 @@ header h1 { font-size: 15px; font-weight: 600; }
 }
 .restart-menu-item:hover { background: #ffffff10; }
 .mi-icon { font-size: 15px; line-height: 1; }
-.restart-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
 
 /* ── Settings panel ── */
 .settings-panel {
@@ -355,21 +354,10 @@ footer {
   <button class="header-btn" id="settingsBtn" title="設定">⚙</button>
   <div class="restart-wrap" id="restartWrap">
     <div class="restart-split" id="restartSplit">
-      <button class="restart-main-btn" id="restartMainBtn" title="再起動 + 自動リロード">↻</button>
-      <button class="restart-arrow-btn" id="restartArrowBtn" title="再起動オプション">▾</button>
+      <button class="restart-main-btn" id="restartMainBtn" title="リビルド + 再起動">↻</button>
+      <button class="restart-arrow-btn" id="restartArrowBtn" title="オプション">▾</button>
     </div>
     <div class="restart-menu" id="restartMenu">
-      <button class="restart-menu-item" onclick="doRestart('auto')">
-        <span class="mi-icon">↻</span> 再起動 + 自動リロード
-      </button>
-      <button class="restart-menu-item" onclick="doRestart('only')">
-        <span class="mi-icon">↻</span> 再起動のみ
-      </button>
-      <div class="restart-menu-sep"></div>
-      <button class="restart-menu-item" id="rebuildMenuItem" onclick="doRebuild()">
-        <span class="mi-icon">⚒</span> リビルド + 再起動
-      </button>
-      <div class="restart-menu-sep"></div>
       <button class="restart-menu-item" id="copyMenuItem" onclick="copyCmd()">
         <span class="mi-icon">⎘</span> コマンドをコピー
       </button>
@@ -496,7 +484,7 @@ document.getElementById('settingsBtn').addEventListener('click', () => {
 });
 
 /* ── Restart dropdown ── */
-document.getElementById('restartMainBtn').addEventListener('click', () => doRestart('auto'));
+document.getElementById('restartMainBtn').addEventListener('click', () => doRebuild());
 
 document.getElementById('restartArrowBtn').addEventListener('click', e => {
   e.stopPropagation();
@@ -514,30 +502,6 @@ document.addEventListener('click', e => {
 function closeMenu() {
   document.getElementById('restartMenu').classList.remove('open');
   document.getElementById('restartSplit').classList.remove('active');
-}
-
-async function doRestart(mode) {
-  closeMenu();
-  const btn = document.getElementById('restartMainBtn');
-  btn.disabled = true;
-  btn.textContent = '…';
-  try {
-    await fetch('/api/restart', { method: 'POST' });
-  } catch { /* 再起動でコネクションが切れるのは正常 */ }
-
-  if (mode === 'only') {
-    btn.textContent = '✓';
-    setTimeout(() => { btn.textContent = '↻'; btn.disabled = false; }, 2000);
-    return;
-  }
-
-  const poll = setInterval(async () => {
-    try {
-      await fetch('/api/info');
-      clearInterval(poll);
-      location.reload();
-    } catch { /* まだ起動中 */ }
-  }, 800);
 }
 
 async function doRebuild() {
