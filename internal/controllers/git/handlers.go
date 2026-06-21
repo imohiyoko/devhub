@@ -153,10 +153,11 @@ func (c *Controller) handleWorktrees(w http.ResponseWriter, repoPath string) err
 		mergedList = append(mergedList, b)
 	}
 	sort.Strings(mergedList)
+	localBranches := localBranchSet(repoPath)
 	closed := closedPRBranchSet(repoPath)
 	closedList := make([]string, 0, len(closed))
 	for b := range closed {
-		if !merged[b] {
+		if !merged[b] && localBranches[b] {
 			closedList = append(closedList, b)
 		}
 	}
@@ -266,7 +267,7 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		}
 		if boolData(data, "remote") {
 			remote, localBranch, found := strings.Cut(branch, "/")
-			if !found || remote == "" || localBranch == "" || strings.HasPrefix(remote, "-") {
+			if !found || remote == "" || localBranch == "" || strings.HasPrefix(remote, "-") || strings.HasPrefix(localBranch, "-") {
 				return httpx.Errorf(http.StatusBadRequest, "invalid remote branch ref (expected remote/branch)")
 			}
 			stdout, stderr, timedOut, err := runCmd(repoPath, 60*time.Second, gitEnvHardened(), "git", "push", remote, "--delete", localBranch)
