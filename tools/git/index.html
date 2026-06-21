@@ -2826,7 +2826,7 @@ function showForceRemoveToast(failedItems, repoAtShow) {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: repoAtShow, worktree_path: wt.path, force: true })
                 }).then(r => r.json());
-                if (res.error) { errors.push(`${wt.branch}: ${res.error}`); } else { ok++; }
+                if (res.error) { errors.push(`${wt.branch || '(detached)'}: ${res.error}`); } else { ok++; }
             } catch (e) { errors.push(`${wt.branch}: ${e.message}`); }
         }
         if (ok > 0) showRepoMsg(`${ok} 件の worktree を強制削除しました`, 'success');
