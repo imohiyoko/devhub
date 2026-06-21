@@ -266,8 +266,8 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 			return httpx.Errorf(http.StatusBadRequest, "invalid branch name")
 		}
 		if boolData(data, "remote") {
-			remote, localBranch, found := strings.Cut(branch, "/")
-			if !found || remote == "" || localBranch == "" || strings.HasPrefix(remote, "-") || strings.HasPrefix(localBranch, "-") {
+			remote, localBranch, ok := splitRemoteRef(branch)
+			if !ok {
 				return httpx.Errorf(http.StatusBadRequest, "invalid remote branch ref (expected remote/branch)")
 			}
 			stdout, stderr, timedOut, err := runCmd(repoPath, 60*time.Second, gitEnvHardened(), "git", "push", remote, "--delete", localBranch)

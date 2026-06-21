@@ -2756,26 +2756,9 @@ async function _removeMergedWorktrees(items, repoAtShow, deleteBranch) {
     if (failed.length) showError(`一部失敗: ${failed.join(' / ')}`);
 }
 
-async function _deleteMergedBranches(items, repoAtShow) {
-    let ok = 0; const failed = [];
-    for (const it of items) {
-        try {
-            // force (-D): these branches came from the backend's merged set, so
-            // their work is already in the base. -d would reject PR-merged
-            // branches whose remote tracking ref was pruned; the merged gate
-            // makes -D the correct choice (see _removeMergedWorktrees).
-            const res = await fetch('/api/git/branch/delete', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: repoAtShow, branch: it.branch, force: true })
-            }).then(r => r.json());
-            if (res.error) { failed.push(`${it.branch}: ${res.error}`); } else { ok++; }
-        } catch (e) { failed.push(`${it.branch}: ${e.message}`); }
-    }
-    if (ok > 0) showRepoMsg(`${ok} 件のローカルブランチを削除しました`, 'success');
-    if (failed.length) showError(`一部失敗: ${failed.join(' / ')}`);
-}
-
-async function _deleteClosedBranches(items, repoAtShow) {
+// _deleteLocalBranches force-deletes a list of local branches and reports results.
+// Used by both merged-branch cleanup and closed-PR-branch cleanup.
+async function _deleteLocalBranches(items, repoAtShow, successMsg) {
     let ok = 0; const failed = [];
     for (const it of items) {
         try {
@@ -2786,7 +2769,7 @@ async function _deleteClosedBranches(items, repoAtShow) {
             if (res.error) { failed.push(`${it.branch}: ${res.error}`); } else { ok++; }
         } catch (e) { failed.push(`${it.branch}: ${e.message}`); }
     }
-    if (ok > 0) showRepoMsg(`${ok} 件のローカルブランチを削除しました`, 'success');
+    if (ok > 0) showRepoMsg(successMsg.replace('{n}', ok), 'success');
     if (failed.length) showError(`一部失敗: ${failed.join(' / ')}`);
 }
 
@@ -2824,7 +2807,7 @@ function showCleanupToast(category, items) {
         merged: `マージ済みブランチの worktree が ${items.length} 件あります（${baseShort}）`,
         missing: `ディレクトリが見つからない worktree が ${items.length} 件あります`,
         branches: `マージ済みのローカルブランチが ${items.length} 件あります（worktree なし・${baseShort}）`,
-        closed: `クローズ済み PR のローカルブランチが ${items.length} 件あります`,
+        closed: `クローズ済み PR のローカルブランチが ${items.length} 件あります（未マージの可能性あり・削除すると作業が失われます）`,
     };
     const actionDefs = {
         merged: [
@@ -2835,10 +2818,10 @@ function showCleanupToast(category, items) {
             { label: 'クリーンアップ', cls: 'toast-confirm', run: () => _pruneMissingWorktrees(items, repoAtShow) },
         ],
         branches: [
-            { label: 'すべて削除', cls: 'toast-confirm', run: () => _deleteMergedBranches(items, repoAtShow) },
+            { label: 'すべて削除', cls: 'toast-confirm', run: () => _deleteLocalBranches(items, repoAtShow, '{n} 件のローカルブランチを削除しました') },
         ],
         closed: [
-            { label: 'すべて削除', cls: 'toast-confirm', run: () => _deleteClosedBranches(items, repoAtShow) },
+            { label: '強制削除（未マージ作業が消える恐れあり）', cls: 'toast-confirm', run: () => _deleteLocalBranches(items, repoAtShow, '{n} 件のローカルブランチを削除しました') },
         ],
     };
 
@@ -2855,7 +2838,7 @@ function showCleanupToast(category, items) {
     items.forEach(it => {
         const li = document.createElement('li');
         const branch = it.branch || (it.bare ? '(bare)' : '(detached)');
-        if (category === 'branches') {
+        if (category === 'branches' || category === 'closed') {
             li.innerHTML = `<span class="wt-branch">${escapeHtml(branch)}</span>`;
         } else {
             const folder = (it.path.split(/[\\/]/).filter(Boolean).pop()) || it.path;
