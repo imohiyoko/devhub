@@ -10,6 +10,19 @@ on:
     types: [completed]
   workflow_dispatch:
 
+# Group by PR number when available so that rapid label additions on the same PR
+# cancel any in-progress run instead of queuing a second one. Falls back to github.ref
+# for push/workflow_dispatch (where no PR number exists); push-to-main runs are never
+# cancelled so that all merge commits are recorded.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event.pull_request.number ||
+      github.event.workflow_run.pull_requests[0].number ||
+      github.ref
+    }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
 # mise itself is pinned to this exact version for reproducible CI runs.
 # Keep it in sync across all jobs here and in release.yml.
 env:
