@@ -355,21 +355,10 @@ footer {
   <button class="header-btn" id="settingsBtn" title="設定">⚙</button>
   <div class="restart-wrap" id="restartWrap">
     <div class="restart-split" id="restartSplit">
-      <button class="restart-main-btn" id="restartMainBtn" title="再起動 + 自動リロード">↻</button>
-      <button class="restart-arrow-btn" id="restartArrowBtn" title="再起動オプション">▾</button>
+      <button class="restart-main-btn" id="restartMainBtn" title="リビルド + 再起動">↻</button>
+      <button class="restart-arrow-btn" id="restartArrowBtn" title="オプション">▾</button>
     </div>
     <div class="restart-menu" id="restartMenu">
-      <button class="restart-menu-item" onclick="doRestart('auto')">
-        <span class="mi-icon">↻</span> 再起動 + 自動リロード
-      </button>
-      <button class="restart-menu-item" onclick="doRestart('only')">
-        <span class="mi-icon">↻</span> 再起動のみ
-      </button>
-      <div class="restart-menu-sep"></div>
-      <button class="restart-menu-item" id="rebuildMenuItem" onclick="doRebuild()">
-        <span class="mi-icon">⚒</span> リビルド + 再起動
-      </button>
-      <div class="restart-menu-sep"></div>
       <button class="restart-menu-item" id="copyMenuItem" onclick="copyCmd()">
         <span class="mi-icon">⎘</span> コマンドをコピー
       </button>
@@ -496,7 +485,7 @@ document.getElementById('settingsBtn').addEventListener('click', () => {
 });
 
 /* ── Restart dropdown ── */
-document.getElementById('restartMainBtn').addEventListener('click', () => doRestart('auto'));
+document.getElementById('restartMainBtn').addEventListener('click', () => doRebuild());
 
 document.getElementById('restartArrowBtn').addEventListener('click', e => {
   e.stopPropagation();
