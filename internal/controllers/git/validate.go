@@ -183,6 +183,25 @@ func mergedBranchSet(repoPath, baseRef string) map[string]bool {
 	return set
 }
 
+// closedPRBranchSet returns head branch names of closed (unmerged) PRs on
+// GitHub, according to `gh pr list`. Returns empty set if gh is unavailable
+// or not authenticated. Best-effort (empty set on any failure).
+func closedPRBranchSet(repoPath string) map[string]bool {
+	set := map[string]bool{}
+	out, _, _, err := runCmd(repoPath, 8*time.Second, nil,
+		"gh", "pr", "list", "--state", "closed", "--limit", "100",
+		"--json", "headRefName", "-q", ".[].headRefName")
+	if err != nil {
+		return set
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if s := strings.TrimSpace(line); s != "" && isValidBranchName(s) {
+			set[s] = true
+		}
+	}
+	return set
+}
+
 func isDigits(s string) bool {
 	if s == "" {
 		return false
