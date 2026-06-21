@@ -2736,7 +2736,7 @@ async function _removeMergedWorktrees(items, repoAtShow, deleteBranch) {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ path: repoAtShow, worktree_path: wt.path, force: false })
             }).then(r => r.json());
-            if (res.error) { failed.push(`${wt.branch}: ${res.error}`); continue; }
+            if (res.error) { failed.push({ wt, error: res.error }); continue; }
             ok++;
             if (deleteBranch && wt.branch) {
                 // force (-D): the backend already confirmed this branch is merged
@@ -2748,12 +2748,98 @@ async function _removeMergedWorktrees(items, repoAtShow, deleteBranch) {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: repoAtShow, branch: wt.branch, force: true })
                 }).then(r => r.json());
-                if (del.error) failed.push(`ブランチ ${wt.branch}: ${del.error}`);
+                if (del.error) failed.push({ wt, error: `ブランチ削除失敗: ${del.error}` });
             }
-        } catch (e) { failed.push(`${wt.branch}: ${e.message}`); }
+        } catch (e) { failed.push({ wt, error: e.message }); }
     }
     if (ok > 0) showRepoMsg(`${ok} 件の worktree を削除しました`, 'success');
-    if (failed.length) showError(`一部失敗: ${failed.join(' / ')}`);
+    if (failed.length) showForceRemoveToast(failed, repoAtShow);
+}
+
+// Show a recovery toast when batch worktree removal partially fails.
+// Each failed item gets an "Open Worktree" button; a single "Force Remove"
+// button retries all failed items with --force.
+function showForceRemoveToast(failedItems, repoAtShow) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast cleanup info';
+
+    const closeToast = () => { if (toast.parentNode) toast.remove(); };
+
+    const head = document.createElement('div'); head.className = 'toast-head';
+    const titleEl = document.createElement('span'); titleEl.className = 'toast-title';
+    titleEl.textContent = `${failedItems.length} 件の worktree を削除できませんでした（未コミットの変更があります）`;
+    const closeBtn = document.createElement('span'); closeBtn.className = 'close'; closeBtn.textContent = '×';
+    closeBtn.onclick = closeToast;
+    head.appendChild(titleEl); head.appendChild(closeBtn);
+    toast.appendChild(head);
+
+    const list = document.createElement('ul'); list.className = 'toast-list';
+    failedItems.forEach(({ wt }) => {
+        const li = document.createElement('li');
+        li.style.display = 'flex'; li.style.alignItems = 'center'; li.style.gap = '6px';
+        const branch = wt.branch || '(detached)';
+        const folder = (wt.path.split(/[\\/]/).filter(Boolean).pop()) || wt.path;
+        const label = document.createElement('span');
+        label.innerHTML = `<span class="wt-branch">${escapeHtml(branch)}</span> <span>[${escapeHtml(folder)}]</span>`;
+        label.title = wt.path;
+        li.appendChild(label);
+
+        const btnWrap = document.createElement('span');
+        btnWrap.style.cssText = 'margin-left:auto;flex-shrink:0;display:flex;gap:4px';
+
+        const wsBtn = document.createElement('button');
+        wsBtn.type = 'button'; wsBtn.className = 'toast-undo'; wsBtn.textContent = 'ワークスペースで開く';
+        wsBtn.style.cssText = 'padding:2px 8px;font-size:11px';
+        wsBtn.onclick = () => { fetch(`/api/open?path=${encodeURIComponent(wt.path)}`); };
+        btnWrap.appendChild(wsBtn);
+
+        const openBtn = document.createElement('button');
+        openBtn.type = 'button'; openBtn.className = 'toast-undo'; openBtn.textContent = 'Worktreeを開く';
+        openBtn.style.cssText = 'padding:2px 8px;font-size:11px';
+        openBtn.onclick = () => {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            const wtTab = document.querySelector('.tab[data-tab="worktrees"]');
+            if (wtTab) wtTab.classList.add('active');
+            activeTab = 'worktrees';
+            const idx = (gitData.worktrees || []).findIndex(w => normalizePath(w.path) === normalizePath(wt.path));
+            if (idx >= 0) selectedItemIndex = idx;
+            renderTabContent();
+            closeToast();
+        };
+        btnWrap.appendChild(openBtn);
+        li.appendChild(btnWrap);
+        list.appendChild(li);
+    });
+    toast.appendChild(list);
+
+    const actions = document.createElement('div'); actions.className = 'toast-actions';
+    const forceBtn = document.createElement('button');
+    forceBtn.type = 'button'; forceBtn.className = 'toast-confirm';
+    forceBtn.textContent = '強制削除（未保存の変更は失われます）';
+    forceBtn.onclick = async () => {
+        forceBtn.disabled = true; forceBtn.textContent = '処理中...';
+        let ok = 0; const errors = [];
+        for (const { wt } of failedItems) {
+            try {
+                const res = await fetch('/api/git/worktree/remove', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: repoAtShow, worktree_path: wt.path, force: true })
+                }).then(r => r.json());
+                if (res.error) { errors.push(`${wt.branch || '(detached)'}: ${res.error}`); } else { ok++; }
+            } catch (e) { errors.push(`${wt.branch}: ${e.message}`); }
+        }
+        if (ok > 0) showRepoMsg(`${ok} 件の worktree を強制削除しました`, 'success');
+        if (errors.length) showError(`強制削除に失敗: ${errors.join(' / ')}`);
+        await refreshData();
+        selectedItemIndex = 0;
+        renderTabContent();
+        closeToast();
+    };
+    actions.appendChild(forceBtn);
+    toast.appendChild(actions);
+
+    container.appendChild(toast);
 }
 
 // _deleteLocalBranches force-deletes a list of local branches and reports results.
