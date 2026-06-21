@@ -79,6 +79,16 @@ func (s *Server) serveSystem(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, err)
 		}
 		return
+	case r.Method == http.MethodPost && path == "/api/rebuild":
+		if err := s.handleRebuild(w, r); err != nil {
+			httpx.WriteError(w, err)
+		}
+		return
+	case r.Method == http.MethodGet && path == "/api/rebuild/status":
+		if err := s.handleRebuildStatus(w, r); err != nil {
+			httpx.WriteError(w, err)
+		}
+		return
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shared/"):
 		if body, ok := s.shared[path]; ok {
 			writeAsset(w, body, "application/javascript; charset=utf-8")
