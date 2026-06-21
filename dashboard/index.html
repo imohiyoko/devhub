@@ -138,7 +138,6 @@ header h1 { font-size: 15px; font-weight: 600; }
 }
 .restart-menu-item:hover { background: #ffffff10; }
 .mi-icon { font-size: 15px; line-height: 1; }
-.restart-menu-sep { height: 1px; background: var(--border); margin: 4px 0; }
 
 /* ── Settings panel ── */
 .settings-panel {
@@ -503,30 +502,6 @@ document.addEventListener('click', e => {
 function closeMenu() {
   document.getElementById('restartMenu').classList.remove('open');
   document.getElementById('restartSplit').classList.remove('active');
-}
-
-async function doRestart(mode) {
-  closeMenu();
-  const btn = document.getElementById('restartMainBtn');
-  btn.disabled = true;
-  btn.textContent = '…';
-  try {
-    await fetch('/api/restart', { method: 'POST' });
-  } catch { /* 再起動でコネクションが切れるのは正常 */ }
-
-  if (mode === 'only') {
-    btn.textContent = '✓';
-    setTimeout(() => { btn.textContent = '↻'; btn.disabled = false; }, 2000);
-    return;
-  }
-
-  const poll = setInterval(async () => {
-    try {
-      await fetch('/api/info');
-      clearInterval(poll);
-      location.reload();
-    } catch { /* まだ起動中 */ }
-  }, 800);
 }
 
 async function doRebuild() {
