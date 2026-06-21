@@ -183,6 +183,18 @@ func mergedBranchSet(repoPath, baseRef string) map[string]bool {
 	return set
 }
 
+// splitRemoteRef parses a remote-tracking short name (e.g. "origin/feature")
+// into its remote ("origin") and branch ("feature") components. Returns ok=false
+// for any ref that would be unsafe to pass to git: missing slash, empty parts,
+// or a leading dash on either component.
+func splitRemoteRef(ref string) (remote, branch string, ok bool) {
+	r, b, found := strings.Cut(ref, "/")
+	if !found || r == "" || b == "" || strings.HasPrefix(r, "-") || strings.HasPrefix(b, "-") {
+		return "", "", false
+	}
+	return r, b, true
+}
+
 // localBranchSet returns the short names of all local branches. Best-effort
 // (empty set on failure).
 func localBranchSet(repoPath string) map[string]bool {
