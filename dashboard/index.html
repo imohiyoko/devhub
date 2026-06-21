@@ -546,40 +546,63 @@ async function doRebuild() {
   btn.disabled = true;
   btn.textContent = '⚒';
 
+  const resetBtn = (after = 3000) => {
+    btn.textContent = '✗';
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = '↻'; }, after);
+  };
+
+  // Start the rebuild; surface HTTP-level errors (e.g. 409 already-running).
   try {
-    await fetch('/api/rebuild', { method: 'POST' });
-  } catch { /* 接続断は正常 */ }
+    const res = await fetch('/api/rebuild', { method: 'POST' });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(e.error || `リビルド開始に失敗しました (${res.status})`);
+      resetBtn();
+      return;
+    }
+  } catch (e) {
+    alert(e?.message || 'リビルド開始に失敗しました');
+    resetBtn();
+    return;
+  }
 
   // Phase 1: poll /api/rebuild/status until the build finishes.
   let statusKnown = false;
   const statusPoll = setInterval(async () => {
     try {
-      const s = await fetch('/api/rebuild/status').then(r => r.json());
+      const statusRes = await fetch('/api/rebuild/status');
+      if (!statusRes.ok) throw new TypeError(`status ${statusRes.status}`);
+      const s = await statusRes.json();
       if (!s.done) return;
       clearInterval(statusPoll);
       statusKnown = true;
       if (s.error) {
-        btn.textContent = '✗';
-        btn.disabled = false;
         alert(`ビルド失敗:\n${s.output || s.error}`);
-        setTimeout(() => { btn.textContent = '↻'; }, 3000);
+        resetBtn();
         return;
       }
       waitForRestart(); // Phase 2
-    } catch {
-      // Server went away mid-poll → it restarted successfully.
-      if (!statusKnown) { clearInterval(statusPoll); waitForRestart(); }
+    } catch (e) {
+      if (!statusKnown && e instanceof TypeError) {
+        // Server went away (network error) mid-poll → restart in progress.
+        clearInterval(statusPoll);
+        waitForRestart();
+      }
     }
   }, 1000);
 
+  // Phase 2: wait for the old server to go DOWN, then wait for the new one to
+  // come UP. Checking only for UP risks reloading against the still-alive old
+  // process during the ~300 ms window before os.Exit(0).
   function waitForRestart() {
+    let wentDown = false;
     const poll = setInterval(async () => {
       try {
         await fetch('/api/info');
-        clearInterval(poll);
-        location.reload();
-      } catch { /* まだ起動中 */ }
-    }, 800);
+        if (wentDown) { clearInterval(poll); location.reload(); }
+      } catch { wentDown = true; }
+    }, 400);
   }
 }
 

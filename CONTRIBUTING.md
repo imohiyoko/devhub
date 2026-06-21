@@ -56,6 +56,8 @@ When running from source, the dashboard's restart button (↻) has a **「リビ
 
 This option is only available when devhub detects a `go.mod` alongside itself (i.e. source tree present). It does nothing when running a distributed binary.
 
+> **Note on subsequent restarts:** after a rebuild the process is `terminal → go run → <temp binary>`. The plain "再起動のみ" option re-execs that same temp binary (Go's build cache makes this effectively instant), so it stays consistent for the rest of the session. The next explicit rebuild will recompile from source again.
+
 ### Stopping
 
 Foreground: `Ctrl+C`. For a backgrounded / other-terminal instance:

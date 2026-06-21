@@ -22,9 +22,10 @@ type rebuildState struct {
 var rebuildSt rebuildState
 
 // handleRebuild serves POST /api/rebuild.
-// It verifies compilation, then restarts via `go run ./cmd/devhub` so no
-// binary is left in the repository (development use only).
-// Returns 409 if repoRoot is empty (distributed binary with no source tree).
+// It verifies compilation via a unique temp binary (discarded after the check),
+// then restarts via `go run ./cmd/devhub` so no binary is left in the repository.
+// Returns 409 when repoRoot is empty (distributed binary with no source tree)
+// or when a build is already in progress.
 func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 	if s.repoRoot == "" {
 		return httpx.Errorf(http.StatusConflict, "ソースツリーが見つかりません（配布バイナリでは使用できません）")
@@ -49,18 +50,36 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 	token := s.token
 	repoRoot := s.repoRoot
 	go func() {
-		// Build to a temp file outside the repository just to catch errors.
-		// The binary is discarded; the actual restart uses `go run`.
-		tmpExe := filepath.Join(os.TempDir(), "devhub_build_check.exe")
-		_ = os.Remove(tmpExe)
+		// Use a unique temp file to avoid collisions across concurrent instances.
+		tmp, err := os.CreateTemp("", "devhub_build_check-*")
+		if err != nil {
+			setRebuildDone("一時ファイル作成に失敗: "+err.Error(), "")
+			return
+		}
+		tmpExe := tmp.Name()
+		_ = tmp.Close()
+		defer os.Remove(tmpExe)
 
 		checkCmd := exec.Command("go", "build", "-o", tmpExe, "./cmd/devhub")
 		checkCmd.Dir = repoRoot
 		out, buildErr := checkCmd.CombinedOutput()
-		_ = os.Remove(tmpExe)
-
 		if buildErr != nil {
 			setRebuildDone(buildErr.Error(), string(out))
+			return
+		}
+
+		// Start `go run ./cmd/devhub` as the new process.
+		// Mark done only after Start succeeds so the frontend never sees
+		// done=true,error="" while the restart has already silently failed.
+		runCmd := exec.Command("go", "run", "./cmd/devhub")
+		runCmd.Dir = repoRoot
+		runCmd.Args = append(runCmd.Args, os.Args[1:]...)
+		runCmd.Env = append(os.Environ(), "DEVHUB_API_TOKEN="+token)
+		runCmd.Stdout = os.Stdout
+		runCmd.Stderr = os.Stderr
+		runCmd.Stdin = os.Stdin
+		if err := runCmd.Start(); err != nil {
+			setRebuildDone("起動に失敗: "+err.Error(), string(out))
 			return
 		}
 
@@ -70,20 +89,6 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 		rebuildSt.output = string(out)
 		rebuildSt.mu.Unlock()
 
-		// Start `go run ./cmd/devhub` as the new process, then exit.
-		runCmd := exec.Command("go", "run", "./cmd/devhub")
-		runCmd.Dir = repoRoot
-		runCmd.Args = append(runCmd.Args, os.Args[1:]...)
-		runCmd.Env = append(os.Environ(), "DEVHUB_API_TOKEN="+token)
-		runCmd.Stdout = os.Stdout
-		runCmd.Stderr = os.Stderr
-		runCmd.Stdin = os.Stdin
-		if err := runCmd.Start(); err != nil {
-			rebuildSt.mu.Lock()
-			rebuildSt.errMsg = "起動に失敗: " + err.Error()
-			rebuildSt.mu.Unlock()
-			return
-		}
 		time.Sleep(300 * time.Millisecond)
 		os.Exit(0)
 	}()
@@ -91,6 +96,7 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 }
 
 // handleRebuildStatus serves GET /api/rebuild/status.
+// The available field indicates whether rebuild is supported (source tree present).
 func (s *Server) handleRebuildStatus(w http.ResponseWriter, _ *http.Request) error {
 	rebuildSt.mu.Lock()
 	defer rebuildSt.mu.Unlock()
@@ -114,12 +120,18 @@ func setRebuildDone(errMsg, output string) {
 }
 
 // findRepoRoot walks up from the working directory looking for go.mod.
-// Returns empty string if not found (e.g. distributed binary).
+// Returns an empty string if not found (e.g. distributed binary without source).
 func findRepoRoot() string {
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
+	return findRepoRootFrom(dir)
+}
+
+// findRepoRootFrom walks up from dir looking for go.mod. Separated from
+// findRepoRoot so tests can pass an arbitrary start directory without chdir.
+func findRepoRootFrom(dir string) string {
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
