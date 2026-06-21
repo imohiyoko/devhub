@@ -4,7 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [labeled]
+  workflow_run:
+    workflows: ["labeler"]
+    types: [completed]
 
 # mise itself is pinned to this exact version for reproducible CI runs.
 # Keep it in sync across all jobs here and in release.yml.
@@ -12,16 +15,47 @@ env:
   MISE_VERSION: "2026.6.11"
 
 jobs:
+  # Resolve the PR's current labels regardless of how this workflow was triggered.
+  # - workflow_run: fired after the labeler completes; fetches labels via API
+  # - pull_request/labeled: human-added label; reads from event payload
+  # - push: no PR context; outputs empty string (other jobs gate on event_name == 'push')
+  get_labels:
+    runs-on: ubuntu-latest
+    outputs:
+      names: ${{ steps.labels.outputs.names }}
+    steps:
+      - id: labels
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            let names = []
+            if (context.eventName === 'workflow_run') {
+              const pr = context.payload.workflow_run.pull_requests?.[0]
+              if (pr) {
+                const { data } = await github.rest.pulls.get({
+                  ...context.repo,
+                  pull_number: pr.number,
+                })
+                names = data.labels.map(l => l.name)
+              }
+            } else if (context.eventName === 'pull_request') {
+              names = context.payload.pull_request.labels.map(l => l.name)
+            }
+            core.setOutput('names', names.join(','))
+
   # Formatting is OS-independent, so it runs once on Linux rather than across the
   # build matrix. Fails if any file is not gofmt-clean.
   fmt:
+    needs: get_labels
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'push' ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
+      contains(needs.get_labels.outputs.names, 'ci/core-') ||
+      contains(needs.get_labels.outputs.names, 'ci/tool-')
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -40,11 +74,12 @@ jobs:
   # ubuntu-24.04-arm = Linux arm64 native runner.
   # Windows arm64 has no GitHub-hosted runner, so it is covered by cross-compile only.
   go:
+    needs: get_labels
     runs-on: ${{ matrix.runner }}
     if: |
       github.event_name == 'push' ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
+      contains(needs.get_labels.outputs.names, 'ci/core-') ||
+      contains(needs.get_labels.outputs.names, 'ci/tool-')
     strategy:
       fail-fast: false
       matrix:
@@ -57,6 +92,8 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -81,15 +118,18 @@ jobs:
   # This catches GOOS/GOARCH-specific build errors that the native matrix above
   # cannot cover (e.g. windows/arm64 has no hosted runner).
   cross:
+    needs: get_labels
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'push' ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/core-') ||
-      contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
+      contains(needs.get_labels.outputs.names, 'ci/core-') ||
+      contains(needs.get_labels.outputs.names, 'ci/tool-')
     env:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
