@@ -6,6 +6,8 @@ on:
   pull_request:
     types: [labeled]
   workflow_run:
+    # labeler.yml uses pull_request_target with no types, so GitHub applies the defaults:
+    # opened, synchronize, reopened. CI therefore fires after labeler for all three.
     workflows: ["labeler"]
     types: [completed]
   workflow_dispatch:
@@ -84,7 +86,7 @@ jobs:
       - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           persist-credentials: false
-          ref: ${{ needs.get_labels.outputs.head_sha }}
+          ref: ${{ needs.get_labels.outputs.head_sha || github.sha }}
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -126,7 +128,7 @@ jobs:
       - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           persist-credentials: false
-          ref: ${{ needs.get_labels.outputs.head_sha }}
+          ref: ${{ needs.get_labels.outputs.head_sha || github.sha }}
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -164,7 +166,7 @@ jobs:
       - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           persist-credentials: false
-          ref: ${{ needs.get_labels.outputs.head_sha }}
+          ref: ${{ needs.get_labels.outputs.head_sha || github.sha }}
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
