@@ -46,6 +46,8 @@ jobs:
                 })
                 names = data.labels.map(l => l.name)
                 headSha = data.head.sha
+              } else {
+                core.info('workflow_run has no associated PR — all CI jobs will be skipped')
               }
             } else if (context.eventName === 'pull_request') {
               names = context.payload.pull_request.labels.map(l => l.name)
@@ -118,7 +120,7 @@ jobs:
       # mise-action caches the toolchain, not Go's module/build caches — restore
       # those here. The cross-OS build-cache paths are all listed; cache silently
       # ignores the ones that don't exist on a given runner.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/go/pkg/mod
@@ -153,7 +155,7 @@ jobs:
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/go/pkg/mod
