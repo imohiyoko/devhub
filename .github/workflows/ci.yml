@@ -3,8 +3,11 @@ name: ci
 on:
   push:
     branches: [main]
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
 
 # mise itself is pinned to this exact version for reproducible CI runs.
 # Keep it in sync across all jobs here and in release.yml.
@@ -22,6 +25,8 @@ jobs:
       contains(join(github.event.pull_request.labels.*.name, ','), 'ci/tool-')
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -57,6 +62,8 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -90,6 +97,8 @@ jobs:
       CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
