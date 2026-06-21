@@ -654,12 +654,11 @@ select {
 </div>
 
 <div class="tabs">
-  <div class="tab" data-tab="status">1:Status</div>
-  <div class="tab active" data-tab="files">2:Files</div>
-  <div class="tab" data-tab="branches">3:Branches</div>
-  <div class="tab" data-tab="commits">4:Commits</div>
-  <div class="tab" data-tab="stash">5:Stash</div>
-  <div class="tab" data-tab="worktrees">6:Worktrees</div>
+  <div class="tab active" data-tab="status">1:Status</div>
+  <div class="tab" data-tab="branches">2:Branches</div>
+  <div class="tab" data-tab="commits">3:Commits</div>
+  <div class="tab" data-tab="stash">4:Stash</div>
+  <div class="tab" data-tab="worktrees">5:Worktrees</div>
 </div>
 
 <div class="main-content" id="main-content">
@@ -709,13 +708,13 @@ function saveCurrentRepo() {
 // Active tab is persisted in localStorage so a reload (Cmd+R) keeps the
 // current tab instead of resetting to the default.
 const TAB_STORAGE_KEY = 'git-tool-active-tab';
-const VALID_TABS = ['status', 'files', 'branches', 'commits', 'stash', 'worktrees'];
+const VALID_TABS = ['status', 'branches', 'commits', 'stash', 'worktrees'];
 function loadActiveTab() {
     try {
         const saved = localStorage.getItem(TAB_STORAGE_KEY);
         if (VALID_TABS.includes(saved)) return saved;
     } catch (e) {}
-    return 'files';
+    return 'status';
 }
 let activeTab = loadActiveTab();
 
@@ -739,7 +738,6 @@ function showError(msg) {
   closeBtn.onclick = () => toast.remove();
   toast.appendChild(text); toast.appendChild(closeBtn);
   container.appendChild(toast);
-  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 5000);
 }
 
 // A neutral toast with a one-click action (e.g. "元に戻す") for undoable
@@ -952,6 +950,7 @@ async function refreshData(withSuggestion = true) {
             gitData.worktrees = worktrees.worktrees || [];
             gitData.baseBranch = worktrees.base_branch || null;
             gitData.mergedBranches = worktrees.merged_branches || [];
+            gitData.closedBranches = worktrees.closed_branches || [];
             // env-launcher launch registry: used to badge worktrees devhub created.
             const map = {};
             ((launches && launches.launches) || []).forEach(l => {
@@ -1023,16 +1022,23 @@ let lastFetchedDiff = null;
 // poll; keys are `${currentRepo}|${path}` so dismissal is scoped per repo.
 // `activeCleanupToasts` holds the currently-open toast per category to avoid
 // stacking duplicates while one is already visible.
-const dismissedCleanup = { merged: new Set(), missing: new Set(), branches: new Set() };
-const activeCleanupToasts = { merged: null, missing: null, branches: null };
+const dismissedCleanup = { merged: new Set(), missing: new Set(), branches: new Set(), closed: new Set() };
+const activeCleanupToasts = { merged: null, missing: null, branches: null, closed: null };
 
 function renderTabContent() {
     const container = document.getElementById('tab-content');
     container.innerHTML = '';
     currentListItems = [];
 
-    if (activeTab === 'files') {
+    if (activeTab === 'status') {
+        const headBranch = parseBranchLines().find(b => b.isHead);
+        const branch = headBranch ? headBranch.shortName : 'Unknown';
         const { staged, unstaged } = parseStatus(gitData.status);
+
+        const branchHeader = document.createElement('div');
+        branchHeader.style.cssText = 'padding:8px; font-weight:bold; border-bottom:1px solid var(--border); color:var(--green);';
+        branchHeader.textContent = `Branch: ${branch}`;
+        container.appendChild(branchHeader);
 
         const renderSection = (title, items, isStaged) => {
             const h = document.createElement('div');
@@ -1040,10 +1046,10 @@ function renderTabContent() {
             h.style.padding = '8px'; h.style.fontWeight = 'bold'; h.style.borderBottom = '1px solid var(--border)';
             container.appendChild(h);
 
-            items.forEach((item, idx) => {
+            items.forEach((item) => {
                 const el = document.createElement('div');
                 el.className = 'list-item';
-                const s = document.createElement('span'); s.className = `file-status ${isStaged?'staged':'unstaged'}`; s.textContent = isStaged ? item.status : item.status;
+                const s = document.createElement('span'); s.className = `file-status ${isStaged?'staged':'unstaged'}`; s.textContent = item.status;
                 const f = document.createElement('span'); f.textContent = item.file;
                 el.appendChild(s); el.appendChild(f);
 
@@ -1076,6 +1082,13 @@ function renderTabContent() {
             btn.onclick = () => doCommit(ta.value);
             cb.appendChild(ta); cb.appendChild(btn);
             container.appendChild(cb);
+        }
+
+        if (!staged.length && !unstaged.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'padding:14px 10px; color:var(--muted); font-size:12px;';
+            empty.textContent = 'No changes';
+            container.appendChild(empty);
         }
 
     } else if (activeTab === 'branches') {
@@ -1263,13 +1276,6 @@ function renderTabContent() {
         const el = document.createElement('pre'); el.style.padding = '10px'; el.style.fontFamily = 'monospace';
         el.textContent = gitData.log;
         container.appendChild(el);
-    } else if (activeTab === 'status') {
-         const el = document.createElement('div'); el.style.padding = '10px';
-         const headBranch = parseBranchLines().find(b => b.isHead);
-         const branch = headBranch ? headBranch.shortName : 'Unknown';
-         const { staged, unstaged } = parseStatus(gitData.status);
-         el.innerHTML = `<strong>Branch:</strong> ${escapeHtml(branch)}<br><br><strong>Staged files:</strong> ${staged.length}<br><strong>Unstaged files:</strong> ${unstaged.length}`;
-         container.appendChild(el);
     }
 }
 
@@ -1437,9 +1443,9 @@ document.getElementById('btn-save-settings').addEventListener('click', () => {
 function updateFooterHints() {
     const hints = [];
     const k = gitConfig.keybindings;
-    hints.push(`1-6: Tabs`);
+    hints.push(`1-5: Tabs`);
     hints.push(`${k.refresh}: Refresh`);
-    if(activeTab === 'files') {
+    if(activeTab === 'status') {
         hints.push(`${k.stage}: Stage/Unstage`);
         hints.push(`${k.commit}: Focus Commit`);
     } else if (activeTab === 'branches') {
@@ -1484,7 +1490,7 @@ document.addEventListener('keydown', (e) => {
 
     const selObj = currentListItems[selectedItemIndex];
 
-    if (activeTab === 'files') {
+    if (activeTab === 'status') {
         if (e.key === k.stage && selObj) {
             const endpoint = selObj.isStaged ? '/api/git/unstage' : '/api/git/stage';
             doPost(endpoint, { files: [selObj.data.file] });
@@ -2230,6 +2236,16 @@ function renderBranchDetails(branchName, isHead, wtEntry, isRemote) {
         };
         btnRow.appendChild(btnDelForce);
     }
+
+    if (!isHead && isRemote) {
+        const btnDelRemote = makeButton('Delete Remote Branch', 'danger');
+        btnDelRemote.onclick = async () => {
+            if (confirm(`Delete remote branch "${branchName}"?\nThis will remove the branch from the remote repository.`)) {
+                await doPost('/api/git/branch/delete', { branch: branchName, remote: true });
+            }
+        };
+        btnRow.appendChild(btnDelRemote);
+    }
     
     container.appendChild(btnRow);
     right.appendChild(container);
@@ -2575,6 +2591,31 @@ function renderWorktreeDetails(wt, isMain) {
     };
     btnRow.appendChild(btnPull);
 
+    const btnPush = makeButton('Push', 'secondary');
+    btnPush.onclick = async () => {
+        btnPush.disabled = true;
+        btnPush.textContent = 'Pushing...';
+        try {
+            const res = await fetch('/api/git/worktree/push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: currentRepo, worktree_path: wt.path })
+            }).then(r => r.json());
+            if (res.error) {
+                showError(`Push failed: ${res.error}`);
+            } else {
+                showRepoMsg((res.output || '').trim() || 'Push complete', 'success');
+                await refreshData();
+            }
+        } catch (e) {
+            showError(`Push failed: ${e.message}`);
+        } finally {
+            btnPush.disabled = false;
+            btnPush.textContent = 'Push';
+        }
+    };
+    btnRow.appendChild(btnPush);
+
     if (!isMain) {
         const btnRemove = makeButton('Remove Worktree', 'danger');
         btnRemove.onclick = async () => {
@@ -2663,9 +2704,15 @@ function checkWorktreeCleanup() {
         .filter(b => !wtBranches.has(b))
         .map(b => ({ branch: b, path: `branch:${b}` }));
 
+    // Closed (unmerged) PR branches that exist locally but the PR was closed.
+    const closedItems = (gitData.closedBranches || [])
+        .filter(b => !wtBranches.has(b))
+        .map(b => ({ branch: b, path: `closed:${b}` }));
+
     maybeShowCleanupToast('merged', merged);
     maybeShowCleanupToast('missing', missing);
     maybeShowCleanupToast('branches', branchItems);
+    maybeShowCleanupToast('closed', closedItems);
 }
 
 function maybeShowCleanupToast(category, items) {
@@ -2728,6 +2775,21 @@ async function _deleteMergedBranches(items, repoAtShow) {
     if (failed.length) showError(`一部失敗: ${failed.join(' / ')}`);
 }
 
+async function _deleteClosedBranches(items, repoAtShow) {
+    let ok = 0; const failed = [];
+    for (const it of items) {
+        try {
+            const res = await fetch('/api/git/branch/delete', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: repoAtShow, branch: it.branch, force: true })
+            }).then(r => r.json());
+            if (res.error) { failed.push(`${it.branch}: ${res.error}`); } else { ok++; }
+        } catch (e) { failed.push(`${it.branch}: ${e.message}`); }
+    }
+    if (ok > 0) showRepoMsg(`${ok} 件のローカルブランチを削除しました`, 'success');
+    if (failed.length) showError(`一部失敗: ${failed.join(' / ')}`);
+}
+
 async function _pruneMissingWorktrees(items, repoAtShow) {
     const res = await fetch('/api/git/worktree/prune', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2762,6 +2824,7 @@ function showCleanupToast(category, items) {
         merged: `マージ済みブランチの worktree が ${items.length} 件あります（${baseShort}）`,
         missing: `ディレクトリが見つからない worktree が ${items.length} 件あります`,
         branches: `マージ済みのローカルブランチが ${items.length} 件あります（worktree なし・${baseShort}）`,
+        closed: `クローズ済み PR のローカルブランチが ${items.length} 件あります`,
     };
     const actionDefs = {
         merged: [
@@ -2773,6 +2836,9 @@ function showCleanupToast(category, items) {
         ],
         branches: [
             { label: 'すべて削除', cls: 'toast-confirm', run: () => _deleteMergedBranches(items, repoAtShow) },
+        ],
+        closed: [
+            { label: 'すべて削除', cls: 'toast-confirm', run: () => _deleteClosedBranches(items, repoAtShow) },
         ],
     };
 
@@ -2833,7 +2899,7 @@ function showCleanupToast(category, items) {
 // Init
 (async () => {
     // Sync the visually active tab with the persisted activeTab (the HTML
-    // markup hardcodes 'files' as active).
+    // markup hardcodes 'status' as active).
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
     await loadSystemInfo();
     await loadAppConfig();
