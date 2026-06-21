@@ -77,6 +77,8 @@ jobs:
   fmt:
     needs: get_labels
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     if: |
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
@@ -107,6 +109,8 @@ jobs:
   go:
     needs: get_labels
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     # contains() substring-matches the comma-joined label string; 'ci/core-' and 'ci/tool-'
     # intentionally match all labels under those prefixes without listing each one explicitly.
     if: |
@@ -155,6 +159,8 @@ jobs:
   cross:
     needs: get_labels
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     if: |
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
