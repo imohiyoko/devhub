@@ -3,7 +3,7 @@ package git
 import "testing"
 
 func TestIsValidBranchName(t *testing.T) {
-	valid := []string{"main", "feat/x", "a_b.c-d", "release/1.2.3"}
+	valid := []string{"main", "feat/x", "a_b.c-d", "release/1.2.3", "worktree-feat+go-migration"}
 	for _, b := range valid {
 		if !isValidBranchName(b) {
 			t.Errorf("isValidBranchName(%q) = false, want true", b)
