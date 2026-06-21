@@ -153,6 +153,15 @@ func (c *Controller) handleWorktrees(w http.ResponseWriter, repoPath string) err
 		mergedList = append(mergedList, b)
 	}
 	sort.Strings(mergedList)
+	localBranches := localBranchSet(repoPath)
+	closed := closedPRBranchSet(repoPath)
+	closedList := make([]string, 0, len(closed))
+	for b := range closed {
+		if !merged[b] && localBranches[b] {
+			closedList = append(closedList, b)
+		}
+	}
+	sort.Strings(closedList)
 	var baseBranch any
 	if baseRef != "" {
 		baseBranch = baseRef
@@ -161,6 +170,7 @@ func (c *Controller) handleWorktrees(w http.ResponseWriter, repoPath string) err
 		"worktrees":       worktrees,
 		"base_branch":     baseBranch,
 		"merged_branches": mergedList,
+		"closed_branches": closedList,
 	})
 	return nil
 }
@@ -234,6 +244,16 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		}
 		stdout, stderr, timedOut, err := runCmd(wt, 60*time.Second, gitEnvHardened(), "git", "pull")
 		return writeRun(w, true, stdout, stderr, timedOut, err, "pull timed out")
+	case "/api/git/worktree/push":
+		wt := strData(data, "worktree_path")
+		if wt == "" {
+			return httpx.Errorf(http.StatusBadRequest, "missing worktree_path")
+		}
+		if msg := validateWorktreePath(wt); msg != "" {
+			return httpx.Errorf(http.StatusBadRequest, "%s", msg)
+		}
+		stdout, stderr, timedOut, err := runCmd(wt, 60*time.Second, gitEnvHardened(), "git", "push")
+		return writeRun(w, true, stdout, stderr, timedOut, err, "push timed out")
 	case "/api/git/worktree/prune":
 		stdout, stderr, timedOut, err := runCmd(repoPath, 30*time.Second, nil, "git", "worktree", "prune", "-v")
 		return writeRun(w, true, stdout, stderr, timedOut, err, "git worktree prune timed out")
@@ -244,6 +264,14 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		}
 		if !isValidBranchName(branch) {
 			return httpx.Errorf(http.StatusBadRequest, "invalid branch name")
+		}
+		if boolData(data, "remote") {
+			remote, localBranch, ok := splitRemoteRef(branch)
+			if !ok {
+				return httpx.Errorf(http.StatusBadRequest, "invalid remote branch ref (expected remote/branch)")
+			}
+			stdout, stderr, timedOut, err := runCmd(repoPath, 60*time.Second, gitEnvHardened(), "git", "push", remote, "--delete", localBranch)
+			return writeRun(w, true, stdout, stderr, timedOut, err, "git push delete timed out")
 		}
 		flag := "-d"
 		if boolData(data, "force") {

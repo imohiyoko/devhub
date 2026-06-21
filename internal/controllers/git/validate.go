@@ -183,6 +183,53 @@ func mergedBranchSet(repoPath, baseRef string) map[string]bool {
 	return set
 }
 
+// splitRemoteRef parses a remote-tracking short name (e.g. "origin/feature")
+// into its remote ("origin") and branch ("feature") components. Returns ok=false
+// for any ref that would be unsafe to pass to git: missing slash, empty parts,
+// or a leading dash on either component.
+func splitRemoteRef(ref string) (remote, branch string, ok bool) {
+	r, b, found := strings.Cut(ref, "/")
+	if !found || r == "" || b == "" || strings.HasPrefix(r, "-") || strings.HasPrefix(b, "-") {
+		return "", "", false
+	}
+	return r, b, true
+}
+
+// localBranchSet returns the short names of all local branches. Best-effort
+// (empty set on failure).
+func localBranchSet(repoPath string) map[string]bool {
+	set := map[string]bool{}
+	out, _, _, err := runCmd(repoPath, 15*time.Second, nil, "git", "branch", "--format=%(refname:short)")
+	if err != nil {
+		return set
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			set[s] = true
+		}
+	}
+	return set
+}
+
+// closedPRBranchSet returns head branch names of closed (unmerged) PRs on
+// GitHub, according to `gh pr list`. Returns empty set if gh is unavailable
+// or not authenticated. Best-effort (empty set on any failure).
+func closedPRBranchSet(repoPath string) map[string]bool {
+	set := map[string]bool{}
+	out, _, _, err := runCmd(repoPath, 8*time.Second, nil,
+		"gh", "pr", "list", "--state", "closed", "--limit", "100",
+		"--json", "headRefName", "-q", ".[].headRefName")
+	if err != nil {
+		return set
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if s := strings.TrimSpace(line); s != "" && isValidBranchName(s) {
+			set[s] = true
+		}
+	}
+	return set
+}
+
 func isDigits(s string) bool {
 	if s == "" {
 		return false
