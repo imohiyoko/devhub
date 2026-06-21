@@ -22,6 +22,8 @@ jobs:
   # - push/workflow_dispatch: no PR context; outputs empty (other jobs gate on event_name)
   get_labels:
     runs-on: ubuntu-latest
+    # Skip if the labeler itself failed — stale labels from a previous run could mislead CI.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: read
       pull-requests: read
@@ -50,6 +52,7 @@ jobs:
               headSha = context.payload.pull_request.head.sha
             }
             core.setOutput('names', names.join(','))
+            // Empty string is intentional for push/workflow_dispatch: actions/checkout falls back to GITHUB_SHA.
             core.setOutput('head_sha', headSha)
 
   # Formatting is OS-independent, so it runs once on Linux rather than across the
@@ -67,7 +70,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.get_labels.outputs.head_sha }}
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
       - name: gofmt
@@ -87,6 +90,8 @@ jobs:
   go:
     needs: get_labels
     runs-on: ${{ matrix.runner }}
+    # contains() substring-matches the comma-joined label string; 'ci/core-' and 'ci/tool-'
+    # intentionally match all labels under those prefixes without listing each one explicitly.
     if: |
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
@@ -107,7 +112,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.get_labels.outputs.head_sha }}
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
       # mise-action caches the toolchain, not Go's module/build caches — restore
@@ -145,7 +150,7 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.get_labels.outputs.head_sha }}
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
       - uses: actions/cache@v4
