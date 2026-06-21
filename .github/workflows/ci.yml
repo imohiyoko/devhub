@@ -8,6 +8,7 @@ on:
   workflow_run:
     workflows: ["labeler"]
     types: [completed]
+  workflow_dispatch:
 
 # mise itself is pinned to this exact version for reproducible CI runs.
 # Keep it in sync across all jobs here and in release.yml.
@@ -16,19 +17,24 @@ env:
 
 jobs:
   # Resolve the PR's current labels regardless of how this workflow was triggered.
-  # - workflow_run: fired after the labeler completes; fetches labels via API
+  # - workflow_run: fired after the labeler completes; fetches labels and head SHA via API
   # - pull_request/labeled: human-added label; reads from event payload
-  # - push: no PR context; outputs empty string (other jobs gate on event_name == 'push')
+  # - push/workflow_dispatch: no PR context; outputs empty (other jobs gate on event_name)
   get_labels:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       names: ${{ steps.labels.outputs.names }}
+      head_sha: ${{ steps.labels.outputs.head_sha }}
     steps:
       - id: labels
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
             let names = []
+            let headSha = ''
             if (context.eventName === 'workflow_run') {
               const pr = context.payload.workflow_run.pull_requests?.[0]
               if (pr) {
@@ -37,11 +43,14 @@ jobs:
                   pull_number: pr.number,
                 })
                 names = data.labels.map(l => l.name)
+                headSha = data.head.sha
               }
             } else if (context.eventName === 'pull_request') {
               names = context.payload.pull_request.labels.map(l => l.name)
+              headSha = context.payload.pull_request.head.sha
             }
             core.setOutput('names', names.join(','))
+            core.setOutput('head_sha', headSha)
 
   # Formatting is OS-independent, so it runs once on Linux rather than across the
   # build matrix. Fails if any file is not gofmt-clean.
@@ -50,12 +59,14 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
       contains(needs.get_labels.outputs.names, 'ci/core-') ||
       contains(needs.get_labels.outputs.names, 'ci/tool-')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           persist-credentials: false
+          ref: ${{ needs.get_labels.outputs.head_sha }}
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -78,6 +89,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     if: |
       github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
       contains(needs.get_labels.outputs.names, 'ci/core-') ||
       contains(needs.get_labels.outputs.names, 'ci/tool-')
     strategy:
@@ -91,9 +103,10 @@ jobs:
     env:
       CGO_ENABLED: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           persist-credentials: false
+          ref: ${{ needs.get_labels.outputs.head_sha }}
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
@@ -122,14 +135,16 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
       contains(needs.get_labels.outputs.names, 'ci/core-') ||
       contains(needs.get_labels.outputs.names, 'ci/tool-')
     env:
       CGO_ENABLED: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           persist-credentials: false
+          ref: ${{ needs.get_labels.outputs.head_sha }}
       - uses: jdx/mise-action@v2
         with:
           version: ${{ env.MISE_VERSION }}
