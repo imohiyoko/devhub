@@ -183,6 +183,22 @@ func mergedBranchSet(repoPath, baseRef string) map[string]bool {
 	return set
 }
 
+// localBranchSet returns the short names of all local branches. Best-effort
+// (empty set on failure).
+func localBranchSet(repoPath string) map[string]bool {
+	set := map[string]bool{}
+	out, _, _, err := runCmd(repoPath, 15*time.Second, nil, "git", "branch", "--format=%(refname:short)")
+	if err != nil {
+		return set
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if s := strings.TrimSpace(line); s != "" {
+			set[s] = true
+		}
+	}
+	return set
+}
+
 // closedPRBranchSet returns head branch names of closed (unmerged) PRs on
 // GitHub, according to `gh pr list`. Returns empty set if gh is unavailable
 // or not authenticated. Best-effort (empty set on any failure).
