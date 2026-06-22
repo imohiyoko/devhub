@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -60,7 +61,8 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 		_ = tmp.Close()
 		defer os.Remove(tmpExe)
 
-		checkCmd := exec.Command("go", "build", "-o", tmpExe, "./cmd/devhub")
+		goExe := goBin()
+		checkCmd := exec.Command(goExe, "build", "-o", tmpExe, "./cmd/devhub")
 		checkCmd.Dir = repoRoot
 		out, buildErr := checkCmd.CombinedOutput()
 		if buildErr != nil {
@@ -71,7 +73,7 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 		// Start `go run ./cmd/devhub` as the new process.
 		// Mark done only after Start succeeds so the frontend never sees
 		// done=true,error="" while the restart has already silently failed.
-		runCmd := exec.Command("go", "run", "./cmd/devhub")
+		runCmd := exec.Command(goExe, "run", "./cmd/devhub")
 		runCmd.Dir = repoRoot
 		runCmd.Args = append(runCmd.Args, os.Args[1:]...)
 		runCmd.Env = append(os.Environ(), "DEVHUB_API_TOKEN="+token)
@@ -93,6 +95,26 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 		os.Exit(0)
 	}()
 	return nil
+}
+
+// goBin resolves the `go` executable used by the rebuild action. It prefers
+// the one on PATH, but a devhub launched outside an activated shell — e.g. from
+// the macOS GUI, or with a version manager like mise/asdf that only exports go
+// onto PATH in interactive shells — has no `go` on PATH, so a bare
+// exec.Command("go", …) fails with `exec: "go": executable file not found in
+// $PATH`. Fall back to the toolchain that built this binary ($GOROOT/bin/go),
+// then to a bare "go" as a last resort (preserving the previous behaviour).
+func goBin() string {
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	if gr := runtime.GOROOT(); gr != "" {
+		cand := filepath.Join(gr, "bin", "go")
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return cand
+		}
+	}
+	return "go"
 }
 
 // handleRebuildStatus serves GET /api/rebuild/status.
