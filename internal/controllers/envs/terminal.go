@@ -156,8 +156,11 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 	case "Darwin":
 		switch emulator {
 		case "ghostty":
+			// Inline env as exports (cmdWithEnv), like the other emulators: ghostty
+			// runs the command via login(1), which does not forward our cmd.Env to
+			// the spawned shell, so process-env injection alone is silently dropped.
 			args := append([]string{"--working-directory=" + cwd, "--wait-after-command=true", "-e", shell}, shellArgs...)
-			args = append(args, "-c", command)
+			args = append(args, "-c", cmdWithEnv)
 			cmd := exec.Command("ghostty", args...)
 			cmd.Env = merged
 			start(cmd)
