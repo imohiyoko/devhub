@@ -16,11 +16,11 @@ func TestIsDevhubProcessRejectsSelf(t *testing.T) {
 	}
 }
 
-// With a real (non-devhub) listener on the port, reclaim must refuse to kill it
-// and return 0. This exercises the full path (lsof + ps + guard) on platforms
-// where lsof is present; where it is absent the loop is simply empty and the
-// result is still 0.
-func TestReclaimSpareNonDevhubListener(t *testing.T) {
+// reclaim must never kill the current process, even when it is the one holding
+// the port: the pid==self branch makes it a no-op (returns 0). The non-self
+// "foreign holder" guard is covered separately by
+// TestIsDevhubProcessRejectsForeignProcess.
+func TestReclaimSkipsSelfListener(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("cannot bind a probe listener: %v", err)
@@ -29,13 +29,22 @@ func TestReclaimSpareNonDevhubListener(t *testing.T) {
 	port := ln.Addr().(*net.TCPAddr).Port
 
 	if pid := reclaimStaleDevhubPort(port); pid != 0 {
-		t.Fatalf("reclaimStaleDevhubPort(%d) = %d; want 0 (must not kill a non-devhub listener)", port, pid)
+		t.Fatalf("reclaimStaleDevhubPort(self-held %d) = %d; want 0", port, pid)
 	}
-	// The probe listener must still be alive afterwards.
-	if err := ln.Close(); err != nil {
-		// Already closed by us via defer only at function end, so a failure here
-		// would indicate the socket was torn down unexpectedly.
-		t.Fatalf("probe listener was disturbed: %v", err)
+}
+
+// A real, separate process whose name is not "devhub" must fail the guard, so
+// reclaim would never target it. This exercises the lsof-independent ps path of
+// the guard against an actual foreign PID.
+func TestIsDevhubProcessRejectsForeignProcess(t *testing.T) {
+	cmd := exec.Command("sleep", "10")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("cannot start probe process: %v", err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+
+	if isDevhubProcess(cmd.Process.Pid) {
+		t.Fatalf("isDevhubProcess(sleep pid %d) = true; want false", cmd.Process.Pid)
 	}
 }
 

@@ -16,6 +16,13 @@ import (
 // that happens to hold the port is never touched. Returns the PID it killed, or
 // 0 when there was nothing safe to reclaim.
 //
+// The guard is by name only, not by liveness: an orphaned rebuild child is a
+// fully functional, responsive devhub, so there is no signal that distinguishes
+// it from an "intentional" instance. This therefore takes over a healthy but
+// parentless devhub as well — which is the intended semantics, since devhub is
+// single-instance per fixed port and "newest launch wins". The caller logs the
+// reclaim to stderr so the takeover is visible.
+//
 // Implemented for unix via lsof + ps; on platforms where those tools are absent
 // listenerPIDs yields nothing and this is a no-op, leaving the caller's plain
 // bind-retry behaviour unchanged.
@@ -29,6 +36,10 @@ func reclaimStaleDevhubPort(port int) int {
 		if err != nil {
 			continue
 		}
+		// SIGKILL, not the SIGTERM that internal/controllers/ports uses: the
+		// holder is by definition not winding down on its own, and devhub
+		// installs no graceful-shutdown handler, so a hard kill loses nothing
+		// and releases the LISTEN socket promptly.
 		if proc.Kill() == nil {
 			return pid
 		}
