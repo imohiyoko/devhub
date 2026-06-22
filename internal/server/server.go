@@ -161,10 +161,25 @@ func (s *Server) Run() error {
 	var ln net.Listener
 	var err error
 	deadline := time.Now().Add(2 * time.Second)
+	reclaimed := false
 	for {
 		ln, err = net.Listen("tcp", addr)
 		if err == nil {
 			break
+		}
+		// A previous devhub instance may still own the port — most often an
+		// orphaned process left behind by a failed rebuild (e.g. the compiled
+		// child of `go run` whose parent was killed). Reclaim it once, then keep
+		// retrying so the freed port can be bound. reclaimStaleDevhubPort only
+		// ever kills a process named "devhub", never an unrelated application,
+		// so a genuine port clash with another tool still surfaces as an error.
+		if !reclaimed {
+			if pid := reclaimStaleDevhubPort(s.port); pid != 0 {
+				fmt.Fprintf(os.Stderr, "devhub: reclaimed port %d from a stale instance (pid %d)\n", s.port, pid)
+				reclaimed = true
+				deadline = time.Now().Add(2 * time.Second)
+				continue
+			}
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("listen %s: %w", addr, err)
