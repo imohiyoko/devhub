@@ -1,5 +1,7 @@
 // Package portutil holds port-number helpers shared by the settings and ports
 // controllers.
+//
+// (temporary CI-labeling probe — this PR will be closed without merging)
 package portutil
 
 import (
