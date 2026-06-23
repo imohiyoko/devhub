@@ -1,15 +1,15 @@
+# This is a single Go module, so any .go change rebuilds/tests the whole module
+# and must run the Go CI. `**/*.go` is the safety net that GUARANTEES no Go change
+# is ever missed as new packages/files are added (the previous explicit per-package
+# list silently dropped e.g. internal/portutil). The finer-grained ci/tool-*-api
+# labels below still apply on top for human triage; ci/core-backend just also marks
+# any backend Go change so the gate (contains 'ci/core-') can never under-trigger.
 ci/core-backend:
   - changed-files:
       - any-glob-to-any-file:
+          - "**/*.go"
+          - "internal/**"
           - "cmd/**"
-          - "internal/approval/**"
-          - "internal/controllers/**"
-          - "internal/core/**"
-          - "internal/httpx/**"
-          - "internal/pathutil/**"
-          - "internal/platform/**"
-          - "internal/sanitize/**"
-          - "internal/server/**"
           - "assets.go"
           - "go.mod"
           - "go.sum"
