@@ -7,11 +7,17 @@ on:
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
-# Group by PR number (or ref for push/dispatch) so rapid pushes / label changes on
-# the same PR cancel the in-progress run instead of queuing a second one. Push-to-main
-# runs are never cancelled so every merge commit is built.
+# Group by PR branch (head_ref) so a new push to the same PR cancels the previous
+# in-progress run. That cancelled run is on the SUPERSEDED commit, never the PR head,
+# so it does not show up as a red check on the PR. push / workflow_dispatch have no
+# head_ref and fall back to github.ref; push-to-main is never cancelled so every merge
+# commit is built.
+#
+# Grouping by head_ref/ref (rather than pull_request.number) also keeps this group
+# distinct from the legacy ci.yml's workflow_run group on main during the transition,
+# so the old main-context run cannot cancel this PR's run before this change merges.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
 # mise itself is pinned to this exact version for reproducible CI runs.
