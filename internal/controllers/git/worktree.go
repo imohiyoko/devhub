@@ -156,6 +156,14 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 		return nil, httpx.Errorf(http.StatusBadRequest, "%s", stderr)
 	}
 
+	// Resolve FETCH_HEAD to a concrete SHA now: FETCH_HEAD is per-worktree, so a
+	// freshly created worktree has none. The SHA is reused below to fast-forward a
+	// reused branch (objects are shared across worktrees).
+	prHead := ""
+	if out, _, _, err := runCmd(repoPath, 15*time.Second, env, "git", "rev-parse", "FETCH_HEAD"); err == nil {
+		prHead = strings.TrimSpace(out)
+	}
+
 	// Prune stale worktrees before adding (best-effort).
 	_, _, _, _ = runCmd(repoPath, 30*time.Second, nil, "git", "worktree", "prune")
 
@@ -164,8 +172,12 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 		return nil, httpx.Errorf(http.StatusGatewayTimeout, "git worktree add timed out")
 	}
 	reused := false
+	atPRHead := true // fresh worktrees are created directly at the fetched PR head
 	if err != nil {
-		if !strings.Contains(stderr, "already exists") {
+		atPRHead = false
+		// Match the branch-collision message specifically: a stale target directory
+		// also yields "already exists" but is not a branch-reuse situation.
+		if !strings.Contains(stderr, "a branch named") {
 			return nil, httpx.Errorf(http.StatusBadRequest, "%s", stderr)
 		}
 		// The branch already exists locally (the PR was imported before and its
@@ -185,9 +197,14 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 			}
 		}
 		reused = true
-		// Fast-forward only; skipped silently when the branch has diverged or
-		// carries local commits (never discards work).
-		_, _, _, _ = runCmd(worktreePath, 60*time.Second, env, "git", "merge", "--ff-only", "FETCH_HEAD")
+		// Fast-forward only, against the resolved SHA (FETCH_HEAD does not exist in
+		// this new worktree). A non-zero exit means the branch has diverged or
+		// carries local commits; leave it as-is (never discards work).
+		if prHead != "" {
+			if _, _, _, mErr := runCmd(worktreePath, 60*time.Second, env, "git", "merge", "--ff-only", prHead); mErr == nil {
+				atPRHead = true
+			}
+		}
 	}
 
 	return map[string]any{
@@ -195,6 +212,7 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 		"worktree_path": worktreePath,
 		"branch":        branch,
 		"pr_number":     number,
+		"at_pr_head":    atPRHead,
 		"used_gh":       usedGh,
 		"reused_branch": reused,
 	}, nil

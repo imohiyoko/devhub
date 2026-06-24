@@ -2313,7 +2313,9 @@ function renderAddWorktreeForm(preselectedBranch = '') {
             if (res.error) {
                 showError(`Error: ${res.error}`);
             } else {
-                const reusedNote = res.reused_branch ? '（既存ブランチを再利用・最新の PR head へ ff 更新）' : '';
+                const reusedNote = res.reused_branch
+                    ? (res.at_pr_head ? '（既存ブランチを再利用・最新の PR head へ ff 更新）' : '（既存ブランチを再利用・diverged のため更新せず据え置き）')
+                    : '';
                 showRepoMsg(`Worktree created from PR #${res.pr_number} (${res.branch})${reusedNote}`, 'success');
                 await refreshData();
                 const index = gitData.worktrees.findIndex(w => normalizePath(w.path) === normalizePath(res.worktree_path));
