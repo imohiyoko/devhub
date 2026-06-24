@@ -517,6 +517,18 @@ async function doRebuild() {
     setTimeout(() => { btn.textContent = '↻'; }, after);
   };
 
+  // Capture the current process's instance id BEFORE triggering the rebuild.
+  // Restart detection compares against this: when /api/info reports a different
+  // instance, we know the replacement process is up. This is immune to the race
+  // that froze the UI before — a fast `go run` restart whose brief down-window
+  // fell between status polls, after which the fresh process kept reporting
+  // done:false forever.
+  let origInstance = null;
+  try {
+    const info = await fetch('/api/info').then(r => r.json());
+    origInstance = info.instance ?? null;
+  } catch { /* best-effort; the null-baseline case is handled in the poll below */ }
+
   // Start the rebuild; surface HTTP-level errors (e.g. 409 already-running).
   try {
     const res = await fetch('/api/rebuild', { method: 'POST' });
@@ -532,49 +544,57 @@ async function doRebuild() {
     return;
   }
 
-  // Phase 1: poll /api/rebuild/status until the build finishes.
-  let statusKnown = false;
-  const statusPoll = setInterval(async () => {
+  // Poll for one of two terminal outcomes, whichever comes first:
+  //   success → /api/info reports a new instance id (the replacement is up)
+  //   failure → /api/rebuild/status reports done with an error (build failed,
+  //             old process stays alive so the instance never changes)
+  // Network errors are expected while the server is transitioning and are
+  // ignored. A hard deadline guarantees the button can never freeze forever.
+  const startedAt = Date.now();
+  const DEADLINE_MS = 120000;
+  const poll = setInterval(async () => {
+    if (Date.now() - startedAt > DEADLINE_MS) {
+      clearInterval(poll);
+      alert('再起動の確認がタイムアウトしました。手動でリロードしてください。');
+      resetBtn();
+      return;
+    }
+
+    // Build failure: the rebuild never restarts, so catch it via status.
     try {
-      const statusRes = await fetch('/api/rebuild/status');
-      if (!statusRes.ok) throw new TypeError(`status ${statusRes.status}`);
-      const s = await statusRes.json();
-      if (!s.done) return;
-      clearInterval(statusPoll);
-      statusKnown = true;
-      if (s.error) {
+      const s = await fetch('/api/rebuild/status').then(r => r.ok ? r.json() : null);
+      if (s && s.done && s.error) {
+        clearInterval(poll);
         alert(`ビルド失敗:\n${s.output || s.error}`);
         resetBtn();
         return;
       }
-      waitForRestart(); // Phase 2
-    } catch (e) {
-      if (!statusKnown && e instanceof TypeError) {
-        // Server went away (network error) mid-poll → restart in progress.
-        clearInterval(statusPoll);
-        waitForRestart();
-      }
-    }
-  }, 1000);
+    } catch { /* transitioning — ignore */ }
 
-  // Phase 2: wait for the old server to go DOWN, then wait for the new one to
-  // come UP. Checking only for UP risks reloading against the still-alive old
-  // process during the ~300 ms window before os.Exit(0).
-  function waitForRestart() {
-    let wentDown = false;
-    const poll = setInterval(async () => {
-      try {
-        await fetch('/api/info');
-        if (wentDown) {
+    // Success: the replacement process advertises a different instance id.
+    try {
+      const info = await fetch('/api/info').then(r => r.ok ? r.json() : null);
+      if (info && info.instance) {
+        // Pre-rebuild baseline was missed (the GET above failed — only possible
+        // if the server was unreachable at click time). Adopt the first instance
+        // we see as the baseline. Correct as long as that first observation is
+        // still the OLD process; in the narrow case where the old process has
+        // already exited and we first observe the NEW one, the instance never
+        // appears to change and we fall through to the deadline timeout below
+        // instead of reloading. Practically unreachable: the rebuild POST just
+        // succeeded against this same (alive) server.
+        if (origInstance === null) {
+          origInstance = info.instance;
+        } else if (info.instance !== origInstance) {
           clearInterval(poll);
           // Wake every other open devhub tab (storage fires in other tabs only),
           // then reload this one. See /shared/rebuild-reload.js.
           localStorage.setItem('devhub:reloaded', String(Date.now()));
           location.reload();
         }
-      } catch { wentDown = true; }
-    }, 400);
-  }
+      }
+    } catch { /* transitioning — ignore */ }
+  }, 500);
 }
 
 async function copyCmd() {
