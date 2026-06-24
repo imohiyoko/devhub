@@ -92,6 +92,24 @@ DEVHUB_PORT=9000 DEVHUB_HOME="$HOME/.devhub-verify" scripts/dev.sh run
 repo root, use `mise run build` or `scripts/dev.sh build` (→ `./devhub`;
 `scripts\dev.ps1 build` → `devhub.exe`). Both outputs are gitignored.
 
+### Updating the `devhub` command from source
+
+`install.sh` installs a **pinned, checksum-verified release** binary — that's for
+end users, and it does **not** pick up changes you merge to `main` until a new
+release is cut. When you work on devhub itself, the global `devhub` command
+should track *your* code instead. Two ways:
+
+- **Active development:** just use `scripts/dev.sh run` (runs `go run` from the
+  current checkout — always reflects edits, no install step).
+- **Update the installed command:** `make install` (or `scripts/dev.sh install`)
+  builds from the current source and atomically replaces
+  `~/.devhub/bin/devhub` (the target of the `~/.local/bin/devhub` symlink),
+  stamping the version as `dev-<short-sha>`. Override the destination with
+  `DEVHUB_INSTALL_DIR` / `DEVHUB_BIN_DIR` (same vars as `install.sh`).
+
+The replace is atomic, so a running instance keeps serving its old code until you
+restart it: `scripts/dev.sh stop` then `devhub` (or the dashboard's ↻ rebuild).
+
 ## Add a tool
 
 ```bash

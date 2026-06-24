@@ -1,7 +1,12 @@
-.PHONY: build test vet fmt fmt-check new-tool
+.PHONY: build install test vet fmt fmt-check new-tool
 
 build:
 	go build ./...
+
+# Build from the current source and update the `devhub` command on PATH
+# (no release needed). See scripts/dev.sh install.
+install:
+	@scripts/dev.sh install
 
 test:
 	go test ./...
