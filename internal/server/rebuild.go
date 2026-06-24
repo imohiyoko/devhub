@@ -80,6 +80,10 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 		runCmd.Stdout = os.Stdout
 		runCmd.Stderr = os.Stderr
 		runCmd.Stdin = os.Stdin
+		// Detach into a new session so the replacement is not killed by the
+		// SIGHUP that follows when the old process exits and a terminal-launched
+		// `go run` parent tears down its pty (see detachAttr).
+		runCmd.SysProcAttr = detachAttr()
 		if err := runCmd.Start(); err != nil {
 			setRebuildDone("起動に失敗: "+err.Error(), string(out))
 			return

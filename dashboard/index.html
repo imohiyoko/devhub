@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>devhub</title>
 <script src="/shared/reorder.js"></script>
+<script src="/shared/rebuild-reload.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -564,7 +565,13 @@ async function doRebuild() {
     const poll = setInterval(async () => {
       try {
         await fetch('/api/info');
-        if (wentDown) { clearInterval(poll); location.reload(); }
+        if (wentDown) {
+          clearInterval(poll);
+          // Wake every other open devhub tab (storage fires in other tabs only),
+          // then reload this one. See /shared/rebuild-reload.js.
+          localStorage.setItem('devhub:reloaded', String(Date.now()));
+          location.reload();
+        }
       } catch { wentDown = true; }
     }, 400);
   }
