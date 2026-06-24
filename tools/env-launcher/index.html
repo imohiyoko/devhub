@@ -399,6 +399,12 @@ main {
 
 <script>
 let envsData = { environments: [] };
+// Guard against overwriting the stored envs with the empty default when the
+// initial GET /api/envs failed (e.g. the page loaded during a server
+// rebuild/restart). saveEnvsData() does a full-document replace, so a save
+// issued before a successful load would wipe every environment. Only flip this
+// true once a load has actually populated envsData.
+let envsLoaded = false;
 let currentEnvIndex = -1;
 let currentProcIndex = -1;
 
@@ -494,13 +500,21 @@ async function fetchEnvs() {
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to fetch environments');
     envsData = data;
+    envsLoaded = true;
     render();
   } catch(e) {
-    alert('Error fetching environments: ' + e.message);
+    // Leave envsLoaded false so saves stay blocked until a reload succeeds.
+    alert('環境の読み込みに失敗しました。保存は無効化されています。ページを再読み込みしてください: ' + e.message);
   }
 }
 
 async function saveEnvsData() {
+  // Never persist before a successful load, or we'd replace the stored
+  // document with the empty/partial default and lose every environment.
+  if (!envsLoaded) {
+    alert('環境がまだ読み込まれていないため保存できません。ページを再読み込みしてください。');
+    return;
+  }
   try {
     const res = await fetch('/api/envs', {
       method: 'POST',
