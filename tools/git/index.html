@@ -593,6 +593,7 @@ select {
         <div class="repo-hidden-wrap" id="repo-hidden-wrap"></div>
       </div>
     </div>
+    <button class="btn-icon" id="btn-fetch" title="Fetch（git fetch --prune）">⬇</button>
     <button class="btn-icon" id="btn-remove-repo" title="このリポジトリを非表示にする（後で『非表示』から戻せます）">✕</button>
     <button class="btn-icon" id="btn-add-repo" title="リポジトリを追加">＋</button>
     <button class="btn-icon" id="btn-refresh" title="Refresh">↻</button>
@@ -1365,6 +1366,31 @@ document.addEventListener('dragend', (e) => {
 });
 
 document.getElementById('btn-refresh').addEventListener('click', refreshData);
+
+document.getElementById('btn-fetch').addEventListener('click', async () => {
+    if (!currentRepo) { showError('リポジトリが選択されていません'); return; }
+    const btn = document.getElementById('btn-fetch');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.classList.add('active');
+    try {
+        const res = await fetch('/api/git/fetch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentRepo })
+        }).then(r => r.json());
+        if (res.error) {
+            showError(`Fetch failed: ${res.error}`);
+        } else {
+            await refreshData();
+        }
+    } catch (e) {
+        showError(`Fetch failed: ${e.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove('active');
+    }
+});
 
 document.querySelectorAll('.tab').forEach(t => {
     t.addEventListener('click', () => {
