@@ -163,15 +163,31 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 	if timedOut {
 		return nil, httpx.Errorf(http.StatusGatewayTimeout, "git worktree add timed out")
 	}
+	reused := false
 	if err != nil {
-		if strings.Contains(stderr, "already exists") {
+		if !strings.Contains(stderr, "already exists") {
+			return nil, httpx.Errorf(http.StatusBadRequest, "%s", stderr)
+		}
+		// The branch already exists locally (the PR was imported before and its
+		// worktree later removed, leaving the branch behind). Reuse it instead of
+		// failing: add a worktree on the existing branch, then best-effort
+		// fast-forward to the freshly fetched PR head so it reflects the latest PR.
+		stdout, stderr, timedOut, err = runCmd(repoPath, 120*time.Second, env, "git", "worktree", "add", worktreePath, branch)
+		if timedOut {
+			return nil, httpx.Errorf(http.StatusGatewayTimeout, "git worktree add timed out")
+		}
+		if err != nil {
+			// Typically the branch is already checked out in another worktree.
 			return nil, &httpx.HTTPError{
 				Status: http.StatusConflict,
-				Msg:    fmt.Sprintf("ブランチ '%s' は既に存在します（この PR は取り込み済みかもしれません）", branch),
+				Msg:    fmt.Sprintf("ブランチ '%s' は別の worktree で使用中の可能性があります", branch),
 				Extra:  map[string]any{"stderr": stderr},
 			}
 		}
-		return nil, httpx.Errorf(http.StatusBadRequest, "%s", stderr)
+		reused = true
+		// Fast-forward only; skipped silently when the branch has diverged or
+		// carries local commits (never discards work).
+		_, _, _, _ = runCmd(worktreePath, 60*time.Second, env, "git", "merge", "--ff-only", "FETCH_HEAD")
 	}
 
 	return map[string]any{
@@ -180,5 +196,6 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 		"branch":        branch,
 		"pr_number":     number,
 		"used_gh":       usedGh,
+		"reused_branch": reused,
 	}, nil
 }
