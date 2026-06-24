@@ -69,13 +69,18 @@ cmd_build() {
 # 配置は install.sh と同じ（$DEVHUB_INSTALL_DIR/bin/devhub に実体、$DEVHUB_BIN_DIR に symlink）。
 cmd_install() {
   require go
-  local dir bindir dest sha tmp
+  local dir bindir dest sha
   dir="${DEVHUB_INSTALL_DIR:-$HOME/.devhub}"
   bindir="${DEVHUB_BIN_DIR:-$HOME/.local/bin}"
   dest="$dir/bin/devhub"
   sha=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
   mkdir -p "$dir/bin" "$bindir"
+  # tmp は EXIT trap（グローバルスコープで実行される）から参照するため、あえて
+  # local にしない。local だと set -u 下で trap 実行時に unbound variable になり
+  # 掃除されない。ビルド失敗・中断時に temp を残さない（install.sh と同じ作法）。
+  # 成功して mv した後は $tmp が無くなるので EXIT 時の rm は no-op。
   tmp=$(mktemp "$dir/bin/.devhub.XXXXXX")
+  trap 'rm -f "$tmp"' EXIT
   go build -ldflags "-X main.version=dev-$sha" -o "$tmp" ./cmd/devhub
   [ "$(uname)" = "Darwin" ] && xattr -c "$tmp" 2>/dev/null || true
   mv -f "$tmp" "$dest"          # 原子的差し替え: 起動中インスタンスは旧 inode を掴んだまま
