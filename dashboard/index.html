@@ -527,7 +527,7 @@ async function doRebuild() {
   try {
     const info = await fetch('/api/info').then(r => r.json());
     origInstance = info.instance ?? null;
-  } catch { /* fall through; a missing baseline only weakens, never breaks, detection */ }
+  } catch { /* best-effort; the null-baseline case is handled in the poll below */ }
 
   // Start the rebuild; surface HTTP-level errors (e.g. 409 already-running).
   try {
@@ -575,8 +575,14 @@ async function doRebuild() {
     try {
       const info = await fetch('/api/info').then(r => r.ok ? r.json() : null);
       if (info && info.instance) {
-        // If the pre-rebuild baseline was missed, adopt the first observed
-        // instance as the baseline rather than reloading against it.
+        // Pre-rebuild baseline was missed (the GET above failed — only possible
+        // if the server was unreachable at click time). Adopt the first instance
+        // we see as the baseline. Correct as long as that first observation is
+        // still the OLD process; in the narrow case where the old process has
+        // already exited and we first observe the NEW one, the instance never
+        // appears to change and we fall through to the deadline timeout below
+        // instead of reloading. Practically unreachable: the rebuild POST just
+        // succeeded against this same (alive) server.
         if (origInstance === null) {
           origInstance = info.instance;
         } else if (info.instance !== origInstance) {
