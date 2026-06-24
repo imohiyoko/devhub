@@ -156,6 +156,14 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 		return nil, httpx.Errorf(http.StatusBadRequest, "%s", stderr)
 	}
 
+	// Resolve FETCH_HEAD to a concrete SHA now: FETCH_HEAD is per-worktree, so a
+	// freshly created worktree has none. The SHA is reused below to fast-forward a
+	// reused branch (objects are shared across worktrees).
+	prHead := ""
+	if out, _, _, err := runCmd(repoPath, 15*time.Second, env, "git", "rev-parse", "FETCH_HEAD"); err == nil {
+		prHead = strings.TrimSpace(out)
+	}
+
 	// Prune stale worktrees before adding (best-effort).
 	_, _, _, _ = runCmd(repoPath, 30*time.Second, nil, "git", "worktree", "prune")
 
@@ -163,15 +171,40 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 	if timedOut {
 		return nil, httpx.Errorf(http.StatusGatewayTimeout, "git worktree add timed out")
 	}
+	reused := false
+	atPRHead := true // fresh worktrees are created directly at the fetched PR head
 	if err != nil {
-		if strings.Contains(stderr, "already exists") {
+		atPRHead = false
+		// Match the branch-collision message specifically: a stale target directory
+		// also yields "already exists" but is not a branch-reuse situation.
+		if !strings.Contains(stderr, "a branch named") {
+			return nil, httpx.Errorf(http.StatusBadRequest, "%s", stderr)
+		}
+		// The branch already exists locally (the PR was imported before and its
+		// worktree later removed, leaving the branch behind). Reuse it instead of
+		// failing: add a worktree on the existing branch, then best-effort
+		// fast-forward to the freshly fetched PR head so it reflects the latest PR.
+		stdout, stderr, timedOut, err = runCmd(repoPath, 120*time.Second, env, "git", "worktree", "add", worktreePath, branch)
+		if timedOut {
+			return nil, httpx.Errorf(http.StatusGatewayTimeout, "git worktree add timed out")
+		}
+		if err != nil {
+			// Typically the branch is already checked out in another worktree.
 			return nil, &httpx.HTTPError{
 				Status: http.StatusConflict,
-				Msg:    fmt.Sprintf("ブランチ '%s' は既に存在します（この PR は取り込み済みかもしれません）", branch),
+				Msg:    fmt.Sprintf("ブランチ '%s' は別の worktree で使用中の可能性があります", branch),
 				Extra:  map[string]any{"stderr": stderr},
 			}
 		}
-		return nil, httpx.Errorf(http.StatusBadRequest, "%s", stderr)
+		reused = true
+		// Fast-forward only, against the resolved SHA (FETCH_HEAD does not exist in
+		// this new worktree). A non-zero exit means the branch has diverged or
+		// carries local commits; leave it as-is (never discards work).
+		if prHead != "" {
+			if _, _, _, mErr := runCmd(worktreePath, 60*time.Second, env, "git", "merge", "--ff-only", prHead); mErr == nil {
+				atPRHead = true
+			}
+		}
 	}
 
 	return map[string]any{
@@ -179,6 +212,8 @@ func ensureWorktreeFromPR(repoPath, prURL, worktreePath string) (map[string]any,
 		"worktree_path": worktreePath,
 		"branch":        branch,
 		"pr_number":     number,
+		"at_pr_head":    atPRHead,
 		"used_gh":       usedGh,
+		"reused_branch": reused,
 	}, nil
 }
