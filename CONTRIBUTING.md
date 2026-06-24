@@ -58,9 +58,13 @@ This option is only available when devhub detects a `go.mod` alongside itself (i
 
 > **Note on subsequent restarts:** after a rebuild the process is `terminal → go run → <temp binary>`. The plain "再起動のみ" option re-execs that same temp binary (Go's build cache makes this effectively instant), so it stays consistent for the rest of the session. The next explicit rebuild will recompile from source again.
 
+> **Note on the terminal:** the rebuilt process is started in its own session (`setsid`), detached from the terminal that launched it. This is required so it survives the moment the old `go run` parent exits and the terminal tears down its pty (otherwise the replacement is killed by SIGHUP and the port never comes back). The practical consequence: **after a rebuild, `Ctrl+C` in the original terminal no longer stops the instance** — use `scripts/dev.sh stop` (see below).
+
 ### Stopping
 
-Foreground: `Ctrl+C`. For a backgrounded / other-terminal instance:
+Foreground: `Ctrl+C` (but note: a UI rebuild detaches the process, so `Ctrl+C`
+stops only an instance that has *not* been rebuilt this session). For a
+backgrounded / rebuilt / other-terminal instance:
 
 ```bash
 DEVHUB_PORT=9000 scripts/dev.sh stop   # stop the instance on :9000
