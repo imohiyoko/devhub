@@ -37,11 +37,13 @@ usage() {
 
   run       ソースから起動（既定）。`run -- <引数>` で devhub 本体へ透過
   build     ./devhub にバイナリをビルド
+  install   ソースからビルドして PATH 上の `devhub` を更新（リリース不要）
   stop      DEVHUB_PORT を LISTEN している devhub を停止
   restart   stop してから run
   status    DEVHUB_PORT の LISTEN 状況を表示
 
 環境変数: DEVHUB_PORT（既定 8765） / DEVHUB_HOME（既定 ~/.devhub）
+          install 先: DEVHUB_INSTALL_DIR（既定 ~/.devhub） / DEVHUB_BIN_DIR（既定 ~/.local/bin）
 EOF
 }
 
@@ -61,6 +63,25 @@ cmd_build() {
   require go
   go build -o devhub ./cmd/devhub
   echo "ビルド完了: $REPO_ROOT/devhub" >&2
+}
+
+# 配布リリース(install.sh)を待たず、いま手元のソースから `devhub` コマンドを更新する。
+# 配置は install.sh と同じ（$DEVHUB_INSTALL_DIR/bin/devhub に実体、$DEVHUB_BIN_DIR に symlink）。
+cmd_install() {
+  require go
+  local dir bindir dest sha tmp
+  dir="${DEVHUB_INSTALL_DIR:-$HOME/.devhub}"
+  bindir="${DEVHUB_BIN_DIR:-$HOME/.local/bin}"
+  dest="$dir/bin/devhub"
+  sha=$(git rev-parse --short HEAD 2>/dev/null || echo dev)
+  mkdir -p "$dir/bin" "$bindir"
+  tmp=$(mktemp "$dir/bin/.devhub.XXXXXX")
+  go build -ldflags "-X main.version=dev-$sha" -o "$tmp" ./cmd/devhub
+  [ "$(uname)" = "Darwin" ] && xattr -c "$tmp" 2>/dev/null || true
+  mv -f "$tmp" "$dest"          # 原子的差し替え: 起動中インスタンスは旧 inode を掴んだまま
+  ln -sf "$dest" "$bindir/devhub"
+  echo "インストール完了: $dest (dev-$sha)" >&2
+  echo "反映には起動中インスタンスの再起動が必要です（scripts/dev.sh stop → devhub）。" >&2
 }
 
 cmd_stop() {
@@ -99,6 +120,7 @@ if [ "${1:-}" = "--" ]; then shift; fi
 case "$action" in
   run)            cmd_run "$@" ;;
   build)          cmd_build ;;
+  install)        cmd_install ;;
   stop)           cmd_stop ;;
   restart)        cmd_restart "$@" ;;
   status)         cmd_status ;;
