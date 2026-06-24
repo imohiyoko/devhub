@@ -96,6 +96,12 @@ func TestAPIRequiresToken(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"port":8765`) {
 		t.Errorf("/api/info body = %s, want port 8765", rr.Body.String())
 	}
+	// The frontend's rebuild restart-detection depends on a non-empty per-process
+	// `instance` id; a regression that dropped it would silently reintroduce the
+	// "restart never finishes" hang.
+	if !strings.Contains(rr.Body.String(), `"instance":"`) {
+		t.Errorf("/api/info body = %s, want non-empty instance", rr.Body.String())
+	}
 }
 
 func TestSecFetchSite(t *testing.T) {
