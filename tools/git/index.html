@@ -1018,6 +1018,10 @@ function parseStatus(statusStr) {
 let selectedItemIndex = 0;
 let currentListItems = []; // For keyboard navigation
 let lastFetchedDiff = null;
+// Normalized paths of worktrees checked in the list for bulk removal. Survives
+// re-renders (so a slow poll mid-selection keeps the checks) and is pruned in
+// renderTabContent once a worktree disappears.
+let selectedWorktreePaths = new Set();
 
 // Worktree cleanup suggestions. `dismissedCleanup` remembers which suggestions
 // the user dismissed (or already acted on) so they are not re-shown on every
@@ -1191,32 +1195,77 @@ function renderTabContent() {
             container.appendChild(el);
         });
     } else if (activeTab === 'worktrees') {
+        const wts = gitData.worktrees || [];
+        // Removable = everything except the main repo and bare worktrees (those
+        // have no removable working directory). Prune the selection to current
+        // removable paths so a just-removed worktree drops out of the count.
+        const removableKeys = new Set(
+            wts.filter(wt => !wt.bare && normalizePath(wt.path) !== normalizePath(currentRepo))
+               .map(wt => normalizePath(wt.path)));
+        for (const k of [...selectedWorktreePaths]) {
+            if (!removableKeys.has(k)) selectedWorktreePaths.delete(k);
+        }
+
+        // Bulk-removal action bar. Not a list-item, so it stays out of keyboard
+        // navigation; it is hidden until at least one worktree is checked.
+        const bar = document.createElement('div');
+        bar.id = 'wt-bulk-bar';
+        renderWtBulkBar(bar);
+        container.appendChild(bar);
+
         const addEl = document.createElement('div');
         addEl.className = 'list-item';
         addEl.style.fontWeight = 'bold';
         addEl.style.color = 'var(--accent)';
         addEl.textContent = '＋ Add Worktree';
-        
+
         const addObj = { type: 'add_wt_btn', el: addEl };
         addEl.onclick = () => {
             selectedItemIndex = 0;
             renderTabContent();
         };
         currentListItems.push(addObj);
-        
+
         if (selectedItemIndex === 0) {
             addEl.classList.add('selected');
             renderAddWorktreeForm();
         }
         container.appendChild(addEl);
-        
-        const wts = gitData.worktrees || [];
+
         wts.forEach((wt, idx) => {
             const isMain = normalizePath(wt.path) === normalizePath(currentRepo);
-            
+            const removable = !wt.bare && !isMain;
+
             const el = document.createElement('div');
             el.className = 'list-item';
-            
+
+            // Per-row checkbox for multi-select removal. Omitted for the main repo
+            // and bare worktrees. Clicking it must not also open the detail pane,
+            // so the click is stopped from bubbling to the row's onclick.
+            if (removable) {
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.className = 'wt-select';
+                cb.style.marginRight = '8px';
+                cb.style.flexShrink = '0';
+                cb.checked = selectedWorktreePaths.has(normalizePath(wt.path));
+                cb.onclick = (e) => e.stopPropagation();
+                cb.onchange = () => {
+                    const key = normalizePath(wt.path);
+                    if (cb.checked) selectedWorktreePaths.add(key);
+                    else selectedWorktreePaths.delete(key);
+                    renderWtBulkBar(document.getElementById('wt-bulk-bar'));
+                };
+                el.appendChild(cb);
+            } else {
+                // Spacer keeps branch names aligned with the checkboxed rows.
+                const spacer = document.createElement('span');
+                spacer.style.display = 'inline-block';
+                spacer.style.width = '21px';
+                spacer.style.flexShrink = '0';
+                el.appendChild(spacer);
+            }
+
             const branchSpan = document.createElement('span');
             branchSpan.style.color = 'var(--green)';
             branchSpan.style.fontFamily = 'monospace';
@@ -2708,6 +2757,68 @@ function renderWorktreeDetails(wt, isMain) {
     
     container.appendChild(btnRow);
     right.appendChild(container);
+}
+
+// --- Worktree bulk removal -------------------------------------------------
+// renderWtBulkBar fills the worktrees-list action bar from the current checkbox
+// selection. Hidden when nothing is selected so the list looks unchanged until
+// the user starts picking worktrees.
+function renderWtBulkBar(bar) {
+    if (!bar) return;
+    bar.innerHTML = '';
+    const n = selectedWorktreePaths.size;
+    if (n === 0) { bar.style.display = 'none'; return; }
+    bar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--surface);';
+
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size:12px;color:var(--text);';
+    label.textContent = `${n} 件選択中`;
+    bar.appendChild(label);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = '🗑 選択を削除';
+    removeBtn.style.cssText = 'background:transparent;border:1px solid var(--red);color:var(--red);padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;';
+    removeBtn.onclick = () => bulkRemoveSelectedWorktrees(removeBtn);
+    bar.appendChild(removeBtn);
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.textContent = 'クリア';
+    clearBtn.style.cssText = 'background:transparent;border:none;color:var(--muted);padding:4px 6px;cursor:pointer;font-size:12px;';
+    clearBtn.onclick = () => { selectedWorktreePaths.clear(); renderTabContent(); };
+    bar.appendChild(clearBtn);
+}
+
+// Remove every checked worktree in one pass, reusing the single-remove endpoint.
+// Mirrors the merged-cleanup flow: a plain remove first, then any failures
+// (typically uncommitted changes / locks) are handed to the existing
+// force-remove recovery toast so the user can retry with --force.
+async function bulkRemoveSelectedWorktrees(btn) {
+    const repoAtShow = currentRepo;
+    const targets = (gitData.worktrees || [])
+        .filter(wt => selectedWorktreePaths.has(normalizePath(wt.path)));
+    if (targets.length === 0) return;
+    if (!confirm(`選択した ${targets.length} 件の worktree を削除しますか？`)) return;
+
+    if (btn) { btn.disabled = true; btn.textContent = '削除中...'; }
+    let ok = 0; const failed = [];
+    for (const wt of targets) {
+        try {
+            const res = await fetch('/api/git/worktree/remove', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: repoAtShow, worktree_path: wt.path, force: false })
+            }).then(r => r.json());
+            if (res.error) { failed.push({ wt, error: res.error }); continue; }
+            ok++;
+        } catch (e) { failed.push({ wt, error: e.message }); }
+    }
+    if (ok > 0) showRepoMsg(`${ok} 件の worktree を削除しました`, 'success');
+    selectedWorktreePaths.clear();
+    await refreshData();
+    selectedItemIndex = 0;
+    renderTabContent();
+    if (failed.length) showForceRemoveToast(failed, repoAtShow);
 }
 
 // --- Worktree cleanup suggestions -----------------------------------------
