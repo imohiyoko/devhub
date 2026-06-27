@@ -85,6 +85,8 @@ devhub --version     # バージョンを表示
 ```
 
 > 配布バイナリを使えない環境などで**ソースから実行**したい開発者は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください（ポート分離・worktree ベースの起動方法を記載）。
+>
+> 手元のソースを `devhub` コマンドとして PATH に登録するには `make install`（Windows は `scripts\dev.ps1 install`）を実行します。固定バイナリではなく `go run` で**現在のチェックアウトをそのまま起動するシム**が置かれるため、編集が再ビルドなしで即反映されます（この場合 `devhub --version` は `dev` を表示）。
 
 ## 設定
 
