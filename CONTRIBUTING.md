@@ -101,14 +101,18 @@ should track *your* code instead. Two ways:
 
 - **Active development:** just use `scripts/dev.sh run` (runs `go run` from the
   current checkout — always reflects edits, no install step).
-- **Update the installed command:** `make install` (or `scripts/dev.sh install`)
-  builds from the current source and atomically replaces
-  `~/.devhub/bin/devhub` (the target of the `~/.local/bin/devhub` symlink),
-  stamping the version as `dev-<short-sha>`. Override the destination with
-  `DEVHUB_INSTALL_DIR` / `DEVHUB_BIN_DIR` (same vars as `install.sh`).
+- **Update the installed command:** `make install` (or `scripts/dev.sh install`;
+  `scripts\dev.ps1 install` on Windows) writes a small shim onto your PATH that
+  runs *this checkout* from source via `go run`. It does **not** compile a fixed
+  binary, so edits take effect on the next `devhub` launch with no rebuild — no
+  more stale-binary surprises. The shim lands at `~/.local/bin/devhub` (Unix) or
+  `%USERPROFILE%\bin\devhub.cmd` (Windows); override the directory with
+  `DEVHUB_BIN_DIR` (same var as the release installer). `devhub --version`
+  reports `dev` in this mode.
 
-The replace is atomic, so a running instance keeps serving its old code until you
-restart it: `scripts/dev.sh stop` then `devhub` (or the dashboard's ↻ rebuild).
+A `go run` launch compiles to a temp binary, so a running instance keeps serving
+its old code until you restart it: `scripts/dev.sh stop` (`scripts\dev.ps1 stop`
+on Windows) then `devhub` (or the dashboard's ↻ rebuild).
 
 ## Add a tool
 
