@@ -1246,6 +1246,7 @@ function renderTabContent() {
                 const cb = document.createElement('input');
                 cb.type = 'checkbox';
                 cb.className = 'wt-select';
+                cb.setAttribute('aria-label', `${wt.path} を削除対象に選択`);
                 cb.style.marginRight = '8px';
                 cb.style.flexShrink = '0';
                 cb.checked = selectedWorktreePaths.has(normalizePath(wt.path));
@@ -2801,24 +2802,34 @@ async function bulkRemoveSelectedWorktrees(btn) {
     if (targets.length === 0) return;
     if (!confirm(`選択した ${targets.length} 件の worktree を削除しますか？`)) return;
 
+    const originalText = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = '削除中...'; }
-    let ok = 0; const failed = [];
-    for (const wt of targets) {
-        try {
-            const res = await fetch('/api/git/worktree/remove', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: repoAtShow, worktree_path: wt.path, force: false })
-            }).then(r => r.json());
-            if (res.error) { failed.push({ wt, error: res.error }); continue; }
-            ok++;
-        } catch (e) { failed.push({ wt, error: e.message }); }
+    let rendered = false;
+    try {
+        let ok = 0; const failed = [];
+        for (const wt of targets) {
+            try {
+                const res = await fetch('/api/git/worktree/remove', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: repoAtShow, worktree_path: wt.path, force: false })
+                }).then(r => r.json());
+                if (res.error) { failed.push({ wt, error: res.error }); continue; }
+                ok++;
+            } catch (e) { failed.push({ wt, error: e.message }); }
+        }
+        if (ok > 0) showRepoMsg(`${ok} 件の worktree を削除しました`, 'success');
+        selectedWorktreePaths.clear();
+        await refreshData();
+        selectedItemIndex = 0;
+        renderTabContent();
+        rendered = true;
+        if (failed.length) showForceRemoveToast(failed, repoAtShow);
+    } finally {
+        if (!rendered && btn) {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
     }
-    if (ok > 0) showRepoMsg(`${ok} 件の worktree を削除しました`, 'success');
-    selectedWorktreePaths.clear();
-    await refreshData();
-    selectedItemIndex = 0;
-    renderTabContent();
-    if (failed.length) showForceRemoveToast(failed, repoAtShow);
 }
 
 // --- Worktree cleanup suggestions -----------------------------------------
