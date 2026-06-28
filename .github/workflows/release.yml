@@ -37,6 +37,16 @@ env:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest # CGO_ENABLED=0 cross-compiles all targets from one runner
+    # GitHub App の秘密鍵（TAP_APP_ID / TAP_APP_PRIVATE_KEY）はこの Environment に
+    # 紐づけて登録する。required reviewers を設定しておくと、リリースを人が承認した
+    # ときだけ鍵がジョブに渡るため、汚染コードが勝手に実行されても鍵に触れない。
+    # （CI 経路の露出を絞る対策。鍵が CI 以外の経路で漏れた場合は別途、鍵の回転・
+    #  tap の branch protection・push 監視で多層防御すること。）
+    environment: release
+    env:
+      # 後段の step の if で「tap 公開の初期設定が済んでいるか」を判定するために
+      # App ID を env へ写す（secrets コンテキストは step の if 条件で直接参照できない）。
+      TAP_APP_ID: ${{ secrets.TAP_APP_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,9 +94,48 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
 
+      # 別リポジトリ imohiyoko/homebrew-devhub へ Cask を push するためのトークンを
+      # GitHub App から「その実行限り」の短命トークンとして発行する。長期保管する
+      # PAT を持たずに済む（秘密として保持するのは App ID と秘密鍵のみ）。
+      # App は homebrew-devhub に Contents: write 権限でインストールしておくこと。
+      # TAP_APP_ID 未設定（= tap 公開の初期設定が未完了）のときはこのステップを
+      # スキップする。コアのリリース（バイナリ + GitHub Release）を tap 公開の
+      # 成否に依存させないため、トークン発行の失敗でジョブを落とさない。
+      - name: Generate tap token
+        id: tap_token
+        if: ${{ env.TAP_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          # トークンのスコープを tap リポジトリ 1 つに限定する。
+          owner: imohiyoko
+          repositories: homebrew-devhub
+          # 権限も Contents:write だけに絞る（未指定だと installation の全権限を継承）。
+          permission-contents: write
+
+      # tap トークンを発行できたときだけ Cask を公開する。発行できなければ
+      # --skip=homebrew を付けてバイナリと GitHub Release だけを公開し、tap 公開の
+      # 不備でリリース全体を落とさない（Cask パイプは skips.Homebrew で切り離せる）。
+      - name: Resolve goreleaser args
+        id: goreleaser_args
+        env:
+          TAP_TOKEN: ${{ steps.tap_token.outputs.token }}
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then
+            echo "args=release --clean" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::TAP_APP_ID/秘密鍵が未設定のため Homebrew Cask 公開をスキップします（バイナリと GitHub Release は通常どおり公開）"
+            echo "args=release --clean --skip=homebrew" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
+          args: ${{ steps.goreleaser_args.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Cask の push 先（別リポジトリ）用。上で発行した短命 App トークンを渡す。
+          # GITHUB_TOKEN は同一リポジトリにしか書けないため別途必要。
+          # 未発行時は空（このとき args に --skip=homebrew が付くので参照されない）。
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}

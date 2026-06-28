@@ -46,6 +46,34 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+# Homebrew Cask（macOS 向け）。ビルド済みバイナリの配布は Homebrew 公式が Cask を
+# 推奨しており、goreleaser でも現行のメンテ対象（旧 brews=Formula は非推奨）。
+# darwin のアーカイブのみが対象になる（Cask は macOS 専用。Linux は install.sh）。
+# 公開先は別リポジトリ imohiyoko/homebrew-devhub。push には別リポジトリへの
+# 書き込み権限が要る。release ワークフローが GitHub App から発行した短命トークンを
+# HOMEBREW_TAP_GITHUB_TOKEN として渡す（長期保管する PAT を持たない方式）。
+# 利用者は `brew install --cask imohiyoko/devhub/devhub` で導入できる。
+homebrew_casks:
+  - name: devhub
+    repository:
+      owner: imohiyoko
+      name: homebrew-devhub
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/imohiyoko/devhub"
+    description: "ローカル開発補助ツールを localhost:8765 に集約するダッシュボード"
+    # コミット作者（tap リポジトリへの自動コミット）。
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    # 未署名バイナリが Gatekeeper にブロックされないよう quarantine 属性を除去する。
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/devhub"]
+          end
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
