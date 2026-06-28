@@ -103,6 +103,8 @@ jobs:
           # トークンのスコープを tap リポジトリ 1 つに限定する。
           owner: imohiyoko
           repositories: homebrew-devhub
+          # 権限も Contents:write だけに絞る（未指定だと installation の全権限を継承）。
+          permission-contents: write
 
       - uses: goreleaser/goreleaser-action@v6
         with:
