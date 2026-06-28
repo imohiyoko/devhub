@@ -32,6 +32,16 @@ devhub は単一バイナリで配布されます。インストーラは GitHub
   - **mysql** コマンド … db-table で MySQL / MariaDB を編集する場合
   - VSCode / Cursor / Windsurf など … workspace からエディタで開く場合
 
+### Homebrew（macOS）
+
+```bash
+brew install --cask imohiyoko/devhub/devhub
+```
+
+初回のみ `brew tap imohiyoko/devhub` 相当が自動で行われます。更新は `brew upgrade --cask devhub`、削除は `brew uninstall --cask devhub`。Cask は SHA256 を検証してから配置し、未署名バイナリの Gatekeeper 隔離属性も自動で除去します。
+
+> Linux / Windows は下のクイックセットアップ（インストーラ）を使ってください（Homebrew Cask は macOS 専用です）。
+
 ### クイックセットアップ
 
 macOS / Linux:

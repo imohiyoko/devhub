@@ -37,6 +37,12 @@ env:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest # CGO_ENABLED=0 cross-compiles all targets from one runner
+    # GitHub App の秘密鍵（TAP_APP_ID / TAP_APP_PRIVATE_KEY）はこの Environment に
+    # 紐づけて登録する。required reviewers を設定しておくと、リリースを人が承認した
+    # ときだけ鍵がジョブに渡るため、汚染コードが勝手に実行されても鍵に触れない。
+    # （CI 経路の露出を絞る対策。鍵が CI 以外の経路で漏れた場合は別途、鍵の回転・
+    #  tap の branch protection・push 監視で多層防御すること。）
+    environment: release
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,9 +90,26 @@ jobs:
         with:
           version: ${{ env.MISE_VERSION }}
 
+      # 別リポジトリ imohiyoko/homebrew-devhub へ Cask を push するためのトークンを
+      # GitHub App から「その実行限り」の短命トークンとして発行する。長期保管する
+      # PAT を持たずに済む（秘密として保持するのは App ID と秘密鍵のみ）。
+      # App は homebrew-devhub に Contents: write 権限でインストールしておくこと。
+      - name: Generate tap token
+        id: tap_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          # トークンのスコープを tap リポジトリ 1 つに限定する。
+          owner: imohiyoko
+          repositories: homebrew-devhub
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Cask の push 先（別リポジトリ）用。上で発行した短命 App トークンを渡す。
+          # GITHUB_TOKEN は同一リポジトリにしか書けないため別途必要。
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
