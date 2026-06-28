@@ -59,13 +59,18 @@ homebrew_casks:
       owner: imohiyoko
       name: homebrew-devhub
       branch: main
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: "{{ index .Env \"HOMEBREW_TAP_GITHUB_TOKEN\" }}"
     homepage: "https://github.com/imohiyoko/devhub"
     description: "ローカル開発補助ツールを localhost:8765 に集約するダッシュボード"
     # コミット作者（tap リポジトリへの自動コミット）。
     commit_author:
       name: github-actions[bot]
       email: 41898282+github-actions[bot]@users.noreply.github.com
+    # Caskとして登録するバイナリファイル名
+    binaries:
+      - devhub
+    # 環境変数がない（ローカル実行や未設定）場合はアップロードをスキップする
+    skip_upload: "{{ not (index .Env \"HOMEBREW_TAP_GITHUB_TOKEN\") }}"
     # 未署名バイナリが Gatekeeper にブロックされないよう quarantine 属性を除去する。
     hooks:
       post:
