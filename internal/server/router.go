@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,6 +38,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			action := "api_write"
 			detail := r.Method + " " + origPath
+
+			// Include a redacted preview of the request body so the approval
+			// prompt — and any always-allow rule derived from it — reflects WHAT
+			// is being written (e.g. setting `editor` to a shell command), not
+			// just the endpoint. Read then restore the body so the downstream
+			// handler still sees it; secret-bearing fields are masked so they
+			// never reach the prompt or a persisted rule.
+			if r.Body != nil {
+				body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes))
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				if summary := summarizeApprovalBody(body); summary != "" {
+					detail += " " + summary
+				}
+			}
 
 			if !s.approvalMgr.ShouldAutoApprove(action, detail) {
 				req := s.approvalMgr.Register(action, detail)
