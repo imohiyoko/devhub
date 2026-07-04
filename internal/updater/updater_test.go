@@ -41,6 +41,27 @@ func TestAssetNameStripsLeadingV(t *testing.T) {
 	}
 }
 
+func TestCosignMajor(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want int
+	}{
+		// Real `cosign version` output: an ASCII-art banner followed by the
+		// GitVersion line (cosign v2 installs report v2.x).
+		{"v2 with banner", "  ______   ______ ...banner...\ncosign: A tool for Container Signing.\n\nGitVersion:    v2.5.2\nGitCommit:     abc\n", 2},
+		{"v3", "GitVersion:    v3.0.1\n", 3},
+		{"no v prefix", "GitVersion: 3.1.0\n", 3},
+		{"garbage", "command not found", 0},
+		{"empty", "", 0},
+	}
+	for _, c := range cases {
+		if got := cosignMajor([]byte(c.out)); got != c.want {
+			t.Errorf("%s: cosignMajor = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
 func TestChecksumFor(t *testing.T) {
 	dir := t.TempDir()
 	sums := filepath.Join(dir, "checksums.txt")

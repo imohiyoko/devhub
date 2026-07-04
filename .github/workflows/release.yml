@@ -117,6 +117,12 @@ jobs:
           version: ${{ env.MISE_VERSION }}
 
       # checksums.txt を keyless 署名するための cosign CLI を導入する。
+      # 注: installer v3（cosign v2.5 系）へのピンは意図的（issue #109 の移行構成）。
+      # .goreleaser.yaml は cosign v2 の --new-bundle-format で sigstore bundle と
+      # 従来の .sig/.pem の両形式を添付している。installer v4（cosign v3、
+      # sign-blob は --bundle 必須で --output-signature/--output-certificate 廃止）
+      # へ上げるのは、.sig/.pem の添付を撤去して .goreleaser.yaml の signs を
+      # v3 流へ書き換えるときに合わせて行うこと。
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       # 別リポジトリ imohiyoko/homebrew-devhub へ Cask を push するためのトークンを

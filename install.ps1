@@ -43,20 +43,48 @@ try {
     # checksums.txt. Set DEVHUB_VERIFY_SIGNATURE=1 to additionally prove the
     # checksums.txt was produced by this repo's release workflow (defends against
     # a compromised release that swaps the binary AND checksums.txt together).
+    #
+    # cosign v3+ verifies the sigstore bundle (checksums.txt.sigstore.json); v2
+    # lacks bundle-by-default and keeps verifying the legacy pair
+    # (checksums.txt.sig / .pem). Releases attach both formats during the
+    # migration window (issue #109).
     if ($env:DEVHUB_VERIFY_SIGNATURE -eq "1") {
         if (-not (Get-Command cosign -ErrorAction SilentlyContinue)) {
             throw "cosign が見つかりません（DEVHUB_VERIFY_SIGNATURE=1 には cosign が必要です）。"
         }
         Write-Host "Verifying checksums.txt signature (cosign) ..."
-        Invoke-WebRequest -Uri "$base/checksums.txt.sig" -OutFile (Join-Path $tmp "checksums.txt.sig")
-        Invoke-WebRequest -Uri "$base/checksums.txt.pem" -OutFile (Join-Path $tmp "checksums.txt.pem")
-        & cosign verify-blob `
-            --certificate (Join-Path $tmp "checksums.txt.pem") `
-            --signature (Join-Path $tmp "checksums.txt.sig") `
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
-            --certificate-identity-regexp "^https://github.com/$Repo/\.github/workflows/release\.yml@refs/" `
-            (Join-Path $tmp "checksums.txt")
-        if ($LASTEXITCODE -ne 0) { throw "checksums.txt の署名検証に失敗しました。" }
+        # stderr は敢えてリダイレクトしない（PowerShell 5.1 は EAP=Stop 下で
+        # 2>&1 リダイレクトされた stderr 出力を NativeCommandError にしてしまう）。
+        # バージョンを判定できないときは 0 のまま → 従来形式で検証する。
+        $cosignMajor = 0
+        try {
+            $verText = (& cosign version | Out-String)
+            if ($verText -match "GitVersion:\s*v?(\d+)") { $cosignMajor = [int]$Matches[1] }
+        } catch {}
+        if ($cosignMajor -ge 3) {
+            $bundle = Join-Path $tmp "checksums.txt.sigstore.json"
+            try {
+                Invoke-WebRequest -Uri "$base/checksums.txt.sigstore.json" -OutFile $bundle
+            } catch {
+                throw "sigstore bundle (checksums.txt.sigstore.json) を取得できませんでした。bundle 添付前の古いリリースの可能性があります（cosign v2 なら .sig/.pem で検証できます）。"
+            }
+            & cosign verify-blob `
+                --bundle $bundle `
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
+                --certificate-identity-regexp "^https://github.com/$Repo/\.github/workflows/release\.yml@refs/" `
+                (Join-Path $tmp "checksums.txt")
+            if ($LASTEXITCODE -ne 0) { throw "checksums.txt の署名検証に失敗しました。" }
+        } else {
+            Invoke-WebRequest -Uri "$base/checksums.txt.sig" -OutFile (Join-Path $tmp "checksums.txt.sig")
+            Invoke-WebRequest -Uri "$base/checksums.txt.pem" -OutFile (Join-Path $tmp "checksums.txt.pem")
+            & cosign verify-blob `
+                --certificate (Join-Path $tmp "checksums.txt.pem") `
+                --signature (Join-Path $tmp "checksums.txt.sig") `
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
+                --certificate-identity-regexp "^https://github.com/$Repo/\.github/workflows/release\.yml@refs/" `
+                (Join-Path $tmp "checksums.txt")
+            if ($LASTEXITCODE -ne 0) { throw "checksums.txt の署名検証に失敗しました。" }
+        }
         Write-Host "✓ 署名検証 OK (cosign keyless)"
     }
 

@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -167,12 +169,54 @@ func checksumFor(sumsPath, asset string) (string, error) {
 	return "", fmt.Errorf("%s のチェックサムが見つかりません", asset)
 }
 
+// cosignGitVersionRe matches the GitVersion line of `cosign version` output
+// (e.g. "GitVersion:    v2.5.2") and captures the major version.
+var cosignGitVersionRe = regexp.MustCompile(`GitVersion:\s*v?([0-9]+)`)
+
+// cosignMajor extracts the cosign major version from `cosign version` output,
+// or 0 if it cannot be determined (callers then take the legacy path).
+func cosignMajor(versionOutput []byte) int {
+	m := cosignGitVersionRe.FindSubmatch(versionOutput)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // verifyCosign mirrors the install scripts' cosign verify-blob invocation. It
 // requires the cosign CLI on PATH when DEVHUB_VERIFY_SIGNATURE=1.
+//
+// cosign v3+ verifies the sigstore bundle (checksums.txt.sigstore.json); v2
+// lacks bundle-by-default and keeps verifying the legacy .sig/.pem pair.
+// Releases attach both formats during the migration window (issue #109).
 func verifyCosign(ctx context.Context, base, work, sumsPath string) error {
 	if _, err := exec.LookPath("cosign"); err != nil {
 		return fmt.Errorf("cosign が見つかりません（DEVHUB_VERIFY_SIGNATURE=1 には cosign が必要です）")
 	}
+	identity := "^https://github.com/" + repo() + "/\\.github/workflows/release\\.yml@refs/"
+
+	verOut, _ := exec.CommandContext(ctx, "cosign", "version").CombinedOutput() //execaudit:self-update-verify
+	if cosignMajor(verOut) >= 3 {
+		bundle := filepath.Join(work, "checksums.txt.sigstore.json")
+		if err := download(ctx, base+"/checksums.txt.sigstore.json", bundle); err != nil {
+			return fmt.Errorf("sigstore bundle の取得に失敗（bundle 添付前の古いリリースは cosign v2 で検証できます）: %w", err)
+		}
+		cmd := exec.CommandContext(ctx, "cosign", "verify-blob", //execaudit:self-update-verify
+			"--bundle", bundle,
+			"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+			"--certificate-identity-regexp", identity,
+			sumsPath,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("checksums.txt の署名検証に失敗しました: %v: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+
 	sig := filepath.Join(work, "checksums.txt.sig")
 	pem := filepath.Join(work, "checksums.txt.pem")
 	if err := download(ctx, base+"/checksums.txt.sig", sig); err != nil {
@@ -181,7 +225,6 @@ func verifyCosign(ctx context.Context, base, work, sumsPath string) error {
 	if err := download(ctx, base+"/checksums.txt.pem", pem); err != nil {
 		return fmt.Errorf("証明書(.pem)の取得に失敗: %w", err)
 	}
-	identity := "^https://github.com/" + repo() + "/\\.github/workflows/release\\.yml@refs/"
 	cmd := exec.CommandContext(ctx, "cosign", "verify-blob", //execaudit:self-update-verify
 		"--certificate", pem,
 		"--signature", sig,
