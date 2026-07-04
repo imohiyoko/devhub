@@ -28,12 +28,16 @@ devhub status               # 設定ポートの稼働確認（非稼働なら e
 devhub stop                 # そのインスタンスを停止（devhub であることを確認してから kill）
 devhub doctor               # 「何が起動するか / 何が動いているか」を診断（スロット・PATH・稼働状況）
 devhub env list             # env-launcher の環境一覧と稼働中ポート
+devhub env start <env-id>   # 環境を起動（worktree 解決・依存順・offset 採番も UI と同一）
 devhub env stop <env-id>    # その環境のポートで LISTEN 中のプロセスを kill
 devhub version / help
 ```
 
-`env stop` はサーバー停止中でも動作します。保護ポート（ports ツールで設定）と
-devhub 本体のポートは kill されません。
+`env start` / `env stop` はサーバー停止中でも動作します。`env stop` では保護
+ポート（ports ツールで設定）と devhub 本体のポートは kill されません。
+`env start` の baton プロセスは宣言ポートを奪取します（kill 内容を表示）。
+また、既に古い devhub が居座るポートへの `devhub` 起動は、Windows でも
+「新しい起動が勝つ」（devhub という名前のプロセスに限り reclaim）ようになりました。
 詳細は [docs/env-launcher/0002](docs/env-launcher/0002-cli-env-stop.md) と
 [docs/root/0002](docs/root/0002-single-command-slot-and-cli.md)。
 

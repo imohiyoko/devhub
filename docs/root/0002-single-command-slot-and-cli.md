@@ -38,6 +38,12 @@
    通さない — `ports.KillPID` を CLI 専用に公開）。
 5. 入口も整備する: `devhub help` / `devhub version`、未知サブコマンドはサーバー起動に
    フォールバックせずエラー + usage（typo で意図せずサーバーが立つ事故を防ぐ）。
+6. **Windows でもポート reclaim を有効化**（上書き起動の成立）: 従来 reclaim は
+   lsof/ps 前提で Windows では no-op、新しい `devhub` は bind エラーで死に古い
+   インスタンスが黙って生き残っていた。listener 探索を ports ツールの一覧
+   （netstat/lsof）に寄せ、プロセス名ガードを per-OS（ps / tasklist）にして、
+   unix と同じ「newest launch wins」を Windows でも成立させる。ガードは従来どおり
+   実行ファイル名がちょうど devhub（.exe）のものだけ。
 
 ## Consequences（結果）
 
@@ -52,8 +58,9 @@
   flag 引数 `-no-browser` 等は従来どおり）。
 - doctor の PATHEXT 判定は既定順（.com/.exe/.bat/.cmd）を仮定する。カスタム PATHEXT
   には追従しない（稀すぎるため）。
-- Windows の「古いインスタンスが生き残る」根本（reclaim の Windows 実装）は今回
-  スコープ外。doctor / status がバージョン不一致を警告することで可視化に留める。
+- ~~Windows の「古いインスタンスが生き残る」根本（reclaim の Windows 実装）は今回
+  スコープ外。~~ → 決定 6 で同 PR 内に実装した。doctor / status のバージョン不一致
+  警告は「稼働中のものが古い」ことの可視化として引き続き有効。
 
 ## Alternatives considered（検討した代替案）
 
