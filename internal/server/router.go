@@ -60,8 +60,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if r.Body != nil {
 				body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes))
 				r.Body = io.NopCloser(bytes.NewReader(body))
+				// Always record a body component so the detail — and any always-allow
+				// rule derived from it — is specific to WHAT is written. A bodyless
+				// write must not collapse to a bare "METHOD /path" pattern that, under
+				// prefix matching, would then auto-approve a later write of ANY body to
+				// the same path (e.g. setting `editor` to a shell command).
 				if summary := summarizeApprovalBody(body); summary != "" {
 					detail += " " + summary
+				} else {
+					detail += " (no request body)"
 				}
 			}
 
