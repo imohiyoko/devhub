@@ -91,17 +91,14 @@ func marshalJSON(v any) ([]byte, error) {
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
-// kvGet returns the raw JSON stored under key, or nil if absent.
+// kvGet returns the raw JSON stored under key, or nil if absent. It is the
+// JSON-typed view over the same bytes Get returns.
 func (s *Store) kvGet(key string) (json.RawMessage, error) {
-	var v string
-	err := s.db.QueryRow("SELECT value FROM kv WHERE key = ?", key).Scan(&v)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
+	b, err := s.Get(key)
 	if err != nil {
 		return nil, err
 	}
-	return json.RawMessage(v), nil
+	return json.RawMessage(b), nil
 }
 
 func kvSet(e execer, key string, value any) error {
