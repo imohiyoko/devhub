@@ -48,7 +48,7 @@ jobs:
       # App ID を env へ写す（secrets コンテキストは step の if 条件で直接参照できない）。
       TAP_APP_ID: ${{ secrets.TAP_APP_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           fetch-depth: 0 # full history for the changelog and tag computation
 
@@ -90,7 +90,7 @@ jobs:
           git tag -a "${next}" -m "release ${next}"
           git push origin "${next}"
 
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
 
@@ -104,7 +104,7 @@ jobs:
       - name: Generate tap token
         id: tap_token
         if: ${{ env.TAP_APP_ID != '' }}
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
           app-id: ${{ secrets.TAP_APP_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
@@ -114,9 +114,9 @@ jobs:
           # 権限も Contents:write だけに絞る（未指定だと installation の全権限を継承）。
           permission-contents: write
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
-          version: "~> v2"
+          version: "v2.16.0" # 固定版で再現性を担保（従来は "~> v2"）
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
