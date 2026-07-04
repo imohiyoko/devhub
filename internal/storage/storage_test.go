@@ -53,14 +53,30 @@ func TestConfigSeededFromExample(t *testing.T) {
 	}
 }
 
-func TestToolSettingsRoundTrip(t *testing.T) {
+// TestKVSeamRoundTrip covers the raw core.Store seam (Get/Set) that *Store now
+// satisfies, including the absent-key nil contract callers rely on.
+func TestKVSeamRoundTrip(t *testing.T) {
 	st, _ := openTest(t)
-	if err := st.SaveToolSettings("git", map[string]any{"foo": "bar"}); err != nil {
-		t.Fatalf("SaveToolSettings: %v", err)
+	if b, err := st.Get("tool:git"); err != nil || b != nil {
+		t.Fatalf("Get(absent) = %v, %v; want nil, nil", b, err)
 	}
-	got, _ := st.LoadToolSettings("git")
-	if got["foo"] != "bar" {
-		t.Errorf("tool settings = %v, want foo=bar", got)
+	if err := st.Set("tool:git", []byte(`{"foo":"bar"}`)); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	got, err := st.Get("tool:git")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if string(got) != `{"foo":"bar"}` {
+		t.Errorf("Get = %q, want the bytes written verbatim", got)
+	}
+	// Set must overwrite, not append.
+	if err := st.Set("tool:git", []byte(`{"foo":"baz"}`)); err != nil {
+		t.Fatalf("Set overwrite: %v", err)
+	}
+	got, _ = st.Get("tool:git")
+	if string(got) != `{"foo":"baz"}` {
+		t.Errorf("after overwrite Get = %q", got)
 	}
 }
 
