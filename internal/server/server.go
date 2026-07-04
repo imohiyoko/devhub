@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,13 @@ type Server struct {
 	// keyed by URL path ("/shared/reorder.js"). Served by serveSystem; not
 	// token-injected (these are plain JS, not HTML pages).
 	shared map[string][]byte
+
+	// toolAssets holds embedded per-tool static assets under tools/<tool>/ (the
+	// CSS/JS a tool page splits its inline code into), keyed by URL path
+	// ("/tools/git/git.css"). Served by serveSystem exactly like shared/ and not
+	// token-injected. index.html files are deliberately excluded: those are the
+	// token-injected pages served by the gateway and must never be served raw.
+	toolAssets map[string][]byte
 
 	httpSrv *http.Server
 
@@ -138,6 +146,28 @@ func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser 
 			return fmt.Errorf("embed read %s: %w", p, err)
 		}
 		s.shared["/"+p] = b
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	// Pre-read tools/ sub-assets (the CSS/JS that tool pages reference via
+	// <link>/<script src>) keyed by URL path, mirroring shared/. index.html files
+	// are skipped: the gateway serves those token-injected, so serving them raw
+	// here would leak an un-shimmed page.
+	s.toolAssets = map[string][]byte{}
+	if err := fs.WalkDir(assets, "tools", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if path.Base(p) == "index.html" {
+			return nil
+		}
+		b, err := fs.ReadFile(assets, p)
+		if err != nil {
+			return fmt.Errorf("embed read %s: %w", p, err)
+		}
+		s.toolAssets["/"+p] = b
 		return nil
 	}); err != nil {
 		return nil, err
