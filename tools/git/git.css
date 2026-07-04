@@ -1,0 +1,557 @@
+:root {
+  --blue: #79c0ff;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.hub-link {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.hub-link:hover { color: var(--text); background: var(--border); }
+.divider { width: 1px; height: 16px; background: var(--border); }
+header h1 { font-size: 15px; font-weight: 600; }
+
+.header-controls { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+/* ── Repo switcher (search / reorder / hide) ───────── */
+.repo-switcher { position: relative; }
+.repo-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  max-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.repo-switcher-btn:hover { border-color: var(--accent); }
+.repo-switcher-btn #repo-current-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.repo-switcher-btn .caret { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+.repo-switcher.open .caret { color: var(--text); }
+
+.repo-switcher-panel {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 380px;
+  max-width: 80vw;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  z-index: 100;
+  flex-direction: column;
+  overflow: hidden;
+}
+.repo-switcher.open .repo-switcher-panel { display: flex; }
+
+#repo-search {
+  background: var(--bg);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 12px;
+  font-size: 13px;
+  outline: none;
+}
+#repo-search:focus { border-bottom-color: var(--accent); }
+
+.repo-switcher-list { max-height: 360px; overflow-y: auto; padding: 4px 0; }
+
+.repo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.repo-row:hover { background: var(--border); }
+.repo-row.active { background: rgba(56,139,253,0.18); }
+.repo-row.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+.repo-row .drag-handle {
+  color: var(--muted);
+  cursor: grab;
+  flex-shrink: 0;
+  font-size: 13px;
+  user-select: none;
+}
+.repo-row .repo-name {
+  color: var(--text);
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-row .repo-path {
+  color: var(--muted);
+  font-size: 11px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-row .repo-hide-btn,
+.repo-row .repo-unhide-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.repo-row:hover .repo-hide-btn,
+.repo-row:hover .repo-unhide-btn { opacity: 1; }
+.repo-row .repo-hide-btn:hover { color: var(--red); border-color: var(--red); }
+.repo-row .repo-unhide-btn { color: var(--green); border-color: var(--green); opacity: 1; }
+
+.repo-switcher-empty { padding: 16px 12px; color: var(--muted); font-size: 12px; text-align: center; }
+
+.repo-hidden-wrap { border-top: 1px solid var(--border); }
+.repo-hidden-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--muted);
+  text-align: left;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.repo-hidden-toggle:hover { color: var(--text); background: var(--bg); }
+.repo-hidden-list { max-height: 200px; overflow-y: auto; padding: 2px 0 4px; }
+.repo-hidden-list .repo-row .repo-name { color: var(--muted); }
+
+.btn-icon {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.btn-icon:hover, .btn-icon.active {
+  color: var(--text); background: var(--border);
+}
+.btn-icon.danger:hover {
+  color: var(--red); border-color: var(--red); background: rgba(248,81,73,0.1);
+}
+
+.settings-panel {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 16px;
+  display: none;
+  flex-shrink: 0;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.settings-panel.open { display: flex; gap: 24px; flex-wrap: wrap; }
+.settings-col { display: flex; flex-direction: column; gap: 8px; }
+.settings-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 4px;
+}
+
+.setting-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.setting-row input[type="text"], .setting-row input[type="number"], .setting-row textarea {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 8px; border-radius: 4px;
+}
+
+.tabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  padding: 8px 16px;
+  cursor: pointer;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.left-pane {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  position: relative;
+}
+
+.resizer-x {
+  width: 5px;
+  cursor: col-resize;
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+}
+.resizer-x:hover { background: var(--accent); opacity: 0.3; }
+
+.right-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 10px;
+  font-family: monospace;
+  white-space: pre-wrap;
+  background: var(--bg);
+}
+
+.log-panel {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+  font-family: monospace;
+  padding: 10px;
+  position: relative;
+}
+
+.resizer-y {
+  height: 5px;
+  cursor: row-resize;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+}
+.resizer-y:hover { background: var(--accent); opacity: 0.3; }
+
+.footer {
+  height: 24px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--muted);
+  gap: 16px;
+}
+
+.list-item {
+  padding: 4px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.list-item:hover, .list-item.selected {
+  background: var(--border);
+}
+
+.diff-add { color: var(--green); }
+.diff-del { color: var(--red); }
+.diff-info { color: var(--blue); }
+
+.file-status {
+  font-family: monospace;
+  margin-right: 8px;
+  color: var(--muted);
+}
+.file-status.staged { color: var(--green); }
+.file-status.unstaged { color: var(--red); }
+
+.commit-box {
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.commit-box textarea {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px;
+  border-radius: 4px;
+  resize: vertical;
+}
+.commit-box button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.commit-box button:hover { opacity: 0.8; }
+
+.toast-container {
+  position: fixed;
+  bottom: 30px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 1000;
+}
+.toast {
+  background: var(--surface);
+  border: 1px solid var(--red);
+  color: var(--text);
+  padding: 10px 15px;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  animation: slideIn 0.3s ease;
+  max-width: 400px;
+  word-wrap: break-word;
+}
+@keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+.toast .close {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: bold;
+}
+.toast .close:hover { color: var(--text); }
+/* Neutral (non-error) toast used for undoable actions like hiding a repo. */
+.toast.info { border-color: var(--border); }
+.toast .toast-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.toast .toast-undo {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.toast .toast-undo:hover { background: var(--accent); color: #fff; }
+/* Cleanup-suggestion toast: a vertical card listing affected worktrees with a
+   batch action. Persists (no auto-dismiss) so the user can act on or dismiss it. */
+.toast.cleanup { flex-direction: column; align-items: stretch; max-width: 440px; }
+.toast.cleanup .toast-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.toast.cleanup .toast-head .toast-title { font-weight: 600; font-size: 13px; }
+.toast.cleanup .toast-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.toast.cleanup .toast-list li { font-size: 11px; color: var(--muted); font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast.cleanup .toast-list .wt-branch { color: var(--green); }
+.toast.cleanup .toast-actions { justify-content: flex-end; margin-top: 10px; }
+.toast.cleanup .toast-confirm {
+  background: var(--red);
+  border: 1px solid var(--red);
+  color: #fff;
+  border-radius: 4px;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.toast.cleanup .toast-confirm:hover { opacity: 0.85; }
+.toast.cleanup .toast-confirm:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Add Repo Panel ─────────────────────────────── */
+.add-repo-panel {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: none;
+  flex-direction: column;
+  flex-shrink: 0;
+  max-height: 380px;
+  animation: panelSlide 0.15s ease;
+}
+.add-repo-panel.open { display: flex; }
+@keyframes panelSlide { from { opacity: 0; max-height: 0; } to { opacity: 1; max-height: 380px; } }
+
+.add-repo-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.add-repo-path-bar input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'SF Mono', monospace;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.add-repo-path-bar input:focus { border-color: var(--accent); }
+.add-repo-path-bar .path-action {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.add-repo-path-bar .path-action:hover { background: var(--accent); color: #fff; }
+.add-repo-path-bar .path-hint {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.add-repo-msg {
+  padding: 2px 14px 4px;
+  font-size: 11px;
+  min-height: 0;
+  transition: color 0.15s;
+}
+
+.add-repo-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.add-repo-picker .picker-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.add-repo-dir-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 2px 0;
+}
+
+.dir-entry {
+  display: flex;
+  align-items: center;
+  padding: 5px 14px;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+.dir-entry:hover { background: rgba(48,54,61,0.6); }
+.dir-entry .dir-icon { width: 18px; text-align: center; flex-shrink: 0; }
+.dir-entry .dir-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dir-entry .dir-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.dir-entry .btn-pin {
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 2px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.dir-entry .btn-pin:hover { background: var(--accent); color: #fff; }
+.dir-entry .btn-pin.added {
+  border-color: var(--green);
+  color: var(--green);
+  pointer-events: none;
+  opacity: 0.7;
+}
+.dir-entry .dir-arrow { color: var(--muted); font-size: 11px; }
+
+/* ── Empty state ────────────────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 10px;
+  color: var(--muted);
+  text-align: center;
+  padding: 40px 30px;
+}
+.empty-state .empty-icon { font-size: 38px; opacity: 0.4; }
+.empty-state .empty-title { font-size: 14px; color: var(--text); font-weight: 500; }
+.empty-state .empty-desc { font-size: 12px; line-height: 1.7; max-width: 340px; }
+.empty-state .empty-btn {
+  margin-top: 6px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 7px 18px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: opacity 0.15s;
+}
+.empty-state .empty-btn:hover { opacity: 0.85; }
