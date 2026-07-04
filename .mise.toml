@@ -1,10 +1,11 @@
 # Dev environment toolchain — single source of truth for local + CI.
 # Run `mise install` to provision exactly these versions.
-#   go : matches the `go` directive in go.mod and setup in CI.
+#   go : full patch version so CI/release builds pick up stdlib security
+#        fixes; keep in sync with the `toolchain` directive in go.mod.
 min_version = "2026.1.0"
 
 [tools]
-go = "1.26"
+go = "1.26.4"
 
 # 開発用タスク（ソースから実行）。配布バイナリを使えない環境向けに、
 # いまの worktree のコードを go run / go build で動かす。クロスプラットフォーム。
