@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -70,6 +71,52 @@ func TestSQLiteReadOnlyOpenRejectsWrites(t *testing.T) {
 	defer rwDB.Close()
 	if _, err := rwDB.Exec(`INSERT INTO items(name) VALUES ('beta')`); err != nil {
 		t.Errorf("INSERT through openSQLiteRW should succeed: %v", err)
+	}
+}
+
+// TestSQLiteOpenSpecialCharPath guards against the file: DSN opening the wrong
+// database when the path contains URI-reserved characters. A path with '#',
+// '%', or a space must resolve to the actual file (so views see the seeded
+// table, not an empty auto-created DB) and must still open read-only.
+func TestSQLiteOpenSpecialCharPath(t *testing.T) {
+	for _, dir := range []string{"with space", "hash#name", "pct%20name"} {
+		t.Run(dir, func(t *testing.T) {
+			d := filepath.Join(t.TempDir(), dir)
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(d, "open.db")
+			db, err := sql.Open("sqlite", path) // bare path: unambiguous, seeds the real file
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`INSERT INTO items(name) VALUES ('alpha')`); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+
+			// The view path must find the seeded table — not a wrong/empty DB.
+			tables, err := sqliteTables(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tables) != 1 || tables[0]["name"] != "items" || asInt(tables[0]["count"]) != 1 {
+				t.Fatalf("tables = %+v (opened the wrong database?)", tables)
+			}
+
+			// And it must still be read-only.
+			roDB, err := openSQLiteRO(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer roDB.Close()
+			if _, err := roDB.Exec(`INSERT INTO items(name) VALUES ('beta')`); err == nil {
+				t.Error("INSERT through openSQLiteRO should return an error")
+			}
+		})
 	}
 }
 

@@ -6,17 +6,21 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/imohiyoko/devhub/internal/pathutil"
+
 	_ "modernc.org/sqlite"
 )
 
 // sqliteDSN builds a modernc.org/sqlite DSN opening the existing file at path in
 // the given access mode ("ro" or "rw"; never "rwc" — we never create the target,
-// existence is validated upstream in sqliteDBPath). PRAGMAs live in the DSN so
-// every pooled connection inherits them: busy_timeout(5000) makes a lock held by
-// another writer wait up to 5s and retry, instead of surfacing an immediate
-// "database is locked" to the UI.
+// existence is validated upstream in sqliteDBPath). The path is rendered as a
+// percent-encoded file: URI (pathutil.FileURI) because the driver hands a "file:"
+// DSN to SQLite's URI parser: a raw path with '#' or '%' would otherwise open the
+// wrong file. PRAGMAs live in the DSN so every pooled connection inherits them:
+// busy_timeout(5000) makes a lock held by another writer wait up to 5s and retry,
+// instead of surfacing an immediate "database is locked" to the UI.
 func sqliteDSN(path, mode string) string {
-	return "file:" + path + "?mode=" + mode + "&_pragma=busy_timeout(5000)"
+	return pathutil.FileURI(path) + "?mode=" + mode + "&_pragma=busy_timeout(5000)"
 }
 
 // openSQLiteRO opens the SQLite file read-only, so viewing operations
