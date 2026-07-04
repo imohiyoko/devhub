@@ -51,3 +51,12 @@ run = [
   "go build ./...",
   "go test ./...",
 ]
+
+# 新ツールのスキャフォールド（Go 実装・OS 非依存・registry を自動結線）。
+# 引数は -- の後ろに渡す:
+#   mise run new-tool -- <id> [--page-only] [--go-name <Name>]
+#   例: mise run new-tool -- notes
+#       mise run new-tool -- my-tool --page-only
+[tasks.new-tool]
+description = "Scaffold a new tool. Pass args after --: <id> [--page-only] [--go-name <Name>]"
+run = "go run ./scripts/newtool"
