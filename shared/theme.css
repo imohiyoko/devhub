@@ -1,0 +1,21 @@
+/* Shared theme for devhub — the single source of truth for the GitHub-dark
+   palette used by the dashboard and every tool page. Loaded via
+   <link rel="stylesheet" href="/shared/theme.css">, so a palette change is a
+   one-file edit that reaches all pages.
+
+   Tool-specific tokens stay inline in each page's <style> (e.g. git's --blue,
+   db-table's --panel / --yellow). Inline rules load after this file, so a page
+   can still override a token locally if it ever needs to. */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #0d1117;
+  --surface: #161b22;
+  --border:  #30363d;
+  --text:    #e6edf3;
+  --muted:   #7d8590;
+  --accent:  #388bfd;
+  --green:   #3fb950;
+  --red:     #f85149;
+}

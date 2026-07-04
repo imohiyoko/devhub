@@ -136,7 +136,7 @@ func (s *Server) serveSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shared/"):
 		if body, ok := s.shared[path]; ok {
-			writeAsset(w, body, "application/javascript; charset=utf-8")
+			writeAsset(w, body, sharedContentType(path))
 			return
 		}
 		httpx.WriteError(w, httpx.Errorf(http.StatusNotFound, "not found"))
@@ -169,7 +169,18 @@ func writePage(w http.ResponseWriter, body []byte) {
 	_, _ = w.Write(body)
 }
 
-// writeAsset writes an embedded static asset (e.g. shared JS) with the given
+// sharedContentType picks the Content-Type for a /shared/ asset by extension.
+// Only JS and CSS are served today; anything else keeps the historical JS
+// default so existing assets are unaffected. A CSS file needs text/css or the
+// browser refuses to apply it as a stylesheet under strict MIME checking.
+func sharedContentType(path string) string {
+	if strings.HasSuffix(path, ".css") {
+		return "text/css; charset=utf-8"
+	}
+	return "application/javascript; charset=utf-8"
+}
+
+// writeAsset writes an embedded static asset (e.g. shared JS/CSS) with the given
 // content type. no-store keeps a restarted server from serving stale bytes.
 func writeAsset(w http.ResponseWriter, body []byte, contentType string) {
 	h := w.Header()
