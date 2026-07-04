@@ -108,14 +108,6 @@ var Registry = []Surface{
 		Notes:    "All git operations funnel through the single runCmd() call site in internal/controllers/git/exec.go.",
 	},
 	{
-		ID:       "mysql",
-		Binaries: []string{"mysql"},
-		Kind:     Fixed,
-		Trigger:  "GET/POST /api/db/* (mysql profiles)",
-		Input:    "Fixed argv (`mysql --xml ...`); SQL is built server-side with identifier quoting/sqlLiteral; password via MYSQL_PWD env, never argv; `--` guards the database name; host constrained by db_local_only.",
-		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval for writes (/ai-api).",
-	},
-	{
 		ID:       "portreclaim",
 		Binaries: []string{"lsof", "ps"},
 		Kind:     Fixed,
