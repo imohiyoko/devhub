@@ -8,15 +8,22 @@ dashboard.
 
 ## Toolchain
 
-`go` is pinned in `.mise.toml`. Run `mise install` to provision it, then:
+`go` is pinned in `.mise.toml`. Run `mise install` to provision it, then use
+either `make` (POSIX shell) or `mise run` (cross-platform, incl. PowerShell-only
+Windows). Both mirror the CI gate:
 
 ```bash
-make build    # go build ./...
-make test     # go test ./...
-make vet      # go vet ./...
-make fmt      # gofmt -w .
-make fmt-check # the CI format gate
+make build     # go build ./...          mise run build      # → ./devhub binary
+make test      # go test ./...           mise run test
+make vet       # go vet ./...            mise run vet
+make fmt       # gofmt -w .              mise run fmt
+make fmt-check # the CI format gate      mise run fmt-check
+#                                        mise run check   # fmt-check + vet + build + test
 ```
+
+Prefer `mise run …` on Windows: it needs neither `make` nor Git Bash, so the
+same CI gate is reachable from PowerShell. `mise run check` runs the whole Go
+job (format, vet, build, test) in one shot before you push.
 
 CI runs `gofmt` (must be clean), `go vet`, `go build`, and `go test` on
 Linux/macOS/Windows.

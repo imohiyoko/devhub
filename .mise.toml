@@ -19,3 +19,35 @@ run = "go run ./cmd/devhub"
 [tasks.build]
 description = "Build the devhub binary into ./devhub"
 run = "go build -o devhub ./cmd/devhub"
+
+# CI と同じゲート（gofmt クリーン / vet / test）をローカルで踏むためのタスク。
+# mise はクロスプラットフォームなので、make + Git Bash がない Windows でも
+# PowerShell だけで CI 相当の判定を得られる。
+[tasks.test]
+description = "Run the Go test suite (go test ./...)"
+run = "go test ./..."
+
+[tasks.vet]
+description = "Run go vet ./..."
+run = "go vet ./..."
+
+[tasks.fmt]
+description = "Format all Go sources in place (gofmt -w .)"
+run = "gofmt -w ."
+
+# fmt-check は「差分があれば非ゼロ終了」だが、その判定を sh/cmd どちらでも
+# 同じにするため Go ヘルパ（scripts/fmtcheck）に寄せている。CI の gofmt ゲートと同判定。
+[tasks.fmt-check]
+description = "Fail if any Go source is not gofmt-clean (CI format gate)"
+run = "go run ./scripts/fmtcheck"
+
+# push 前のワンショット。CI の Go ジョブ（fmt / vet / build / test）を丸ごと再現する。
+# 各ステップは順に実行され、最初の失敗で停止する。
+[tasks.check]
+description = "Run the full CI gate locally: fmt-check, vet, build, test"
+run = [
+  "go run ./scripts/fmtcheck",
+  "go vet ./...",
+  "go build ./...",
+  "go test ./...",
+]
