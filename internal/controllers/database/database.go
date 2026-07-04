@@ -16,14 +16,22 @@ import (
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/pathutil"
 	"github.com/imohiyoko/devhub/internal/sanitize"
-	"github.com/imohiyoko/devhub/internal/storage"
 )
 
+// settingsReader is the narrow persistence the database controller needs: it
+// only reads the shared settings document (for the db_local_only guard). It
+// reads the global document rather than owning a keyspace, so it depends on the
+// typed LoadSettings helper, not the raw key/value seam. *storage.Store
+// satisfies it.
+type settingsReader interface {
+	LoadSettings() (map[string]any, error)
+}
+
 // Controller serves db-table endpoints. It reads db_local_only from settings.
-type Controller struct{ store *storage.Store }
+type Controller struct{ store settingsReader }
 
 // New returns a database controller.
-func New(store *storage.Store) *Controller { return &Controller{store: store} }
+func New(store settingsReader) *Controller { return &Controller{store: store} }
 
 // connProfile is a normalized connection (sqlite path or mysql coordinates).
 // engine is the backend resolved from driver at parse time, so handlers dispatch

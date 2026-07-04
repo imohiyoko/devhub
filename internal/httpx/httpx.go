@@ -5,13 +5,13 @@
 package httpx
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"strconv"
+
+	"github.com/imohiyoko/devhub/internal/jsonx"
 )
 
 // HTTPError carries an explicit status code (and optional extra fields) for an
@@ -30,13 +30,11 @@ func Errorf(status int, format string, a ...any) *HTTPError {
 	return &HTTPError{Status: status, Msg: fmt.Sprintf(format, a...)}
 }
 
-// WriteJSON serializes data as compact JSON (HTML escaping disabled) and writes
-// it with the given status.
+// WriteJSON serializes data as compact JSON (HTML escaping disabled, via
+// jsonx.Marshal — the single shared encoder) and writes it with the given status.
 func WriteJSON(w http.ResponseWriter, status int, data any) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(data); err != nil {
+	b, err := jsonx.Marshal(data)
+	if err != nil {
 		b := []byte(`{"error":"encode failed"}`)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
@@ -44,7 +42,6 @@ func WriteJSON(w http.ResponseWriter, status int, data any) {
 		_, _ = w.Write(b)
 		return
 	}
-	b := bytes.TrimRight(buf.Bytes(), "\n")
 	h := w.Header()
 	h.Set("Content-Type", "application/json; charset=utf-8")
 	h.Set("Content-Length", strconv.Itoa(len(b)))

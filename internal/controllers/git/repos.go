@@ -9,14 +9,22 @@ import (
 	"path/filepath"
 
 	"github.com/imohiyoko/devhub/internal/pathutil"
-	"github.com/imohiyoko/devhub/internal/storage"
 )
 
+// configStore is the narrow persistence the git controller needs: it only reads
+// the git-tool config document (scan_roots / pinned_repos / excludes …) to
+// discover repos. It reads a shared document rather than owning a keyspace, so
+// it depends on the typed LoadConfig helper, not the raw key/value seam.
+// *storage.Store satisfies it.
+type configStore interface {
+	LoadConfig() (map[string]any, error)
+}
+
 // Controller serves repo discovery and git operations backed by the store.
-type Controller struct{ store *storage.Store }
+type Controller struct{ store configStore }
 
 // New returns a git controller.
-func New(store *storage.Store) *Controller { return &Controller{store: store} }
+func New(store configStore) *Controller { return &Controller{store: store} }
 
 // Repo is a discovered git repository (name + absolute path).
 type Repo struct {

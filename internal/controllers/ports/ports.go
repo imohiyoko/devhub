@@ -17,7 +17,6 @@ import (
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/platform"
 	"github.com/imohiyoko/devhub/internal/portutil"
-	"github.com/imohiyoko/devhub/internal/storage"
 )
 
 var listenNameRe = regexp.MustCompile(`(?:TCP\s+)?(.+):(\d+)\s+\(LISTEN\)$`)
@@ -42,11 +41,21 @@ type rawPort struct {
 	port    int
 }
 
+// settingsStore is the narrow persistence the ports controller needs: it reads
+// and writes the shared settings document, where port_labels and protected_ports
+// live (in the settings allowlist). It does not own a private keyspace, so it
+// depends on these typed helpers, not the raw key/value seam. *storage.Store
+// satisfies it.
+type settingsStore interface {
+	LoadSettings() (map[string]any, error)
+	SaveSettings(patch map[string]any) error
+}
+
 // Controller serves port endpoints backed by the store (labels/protected list).
-type Controller struct{ store *storage.Store }
+type Controller struct{ store settingsStore }
 
 // New returns a ports controller.
-func New(store *storage.Store) *Controller { return &Controller{store: store} }
+func New(store settingsStore) *Controller { return &Controller{store: store} }
 
 func (c *Controller) portLabels() map[string]string {
 	settings, _ := c.store.LoadSettings()

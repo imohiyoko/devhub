@@ -16,7 +16,6 @@ import (
 	workspacectl "github.com/imohiyoko/devhub/internal/controllers/workspace"
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/pathutil"
-	"github.com/imohiyoko/devhub/internal/storage"
 )
 
 var (
@@ -24,16 +23,32 @@ var (
 	envVarRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
+// launchStore is the persistence the env-launcher needs. It is the one rich
+// consumer: besides the envs and settings documents it drives the launch
+// registry, whose load->mutate->save must be serialized under a mutex. That
+// mutex is a *storage.Store field an interface cannot express, so the two
+// mutating registry operations are encapsulated behind AppendLaunch /
+// RemoveLaunch — keeping this a pure method interface that a fake can satisfy.
+// *storage.Store satisfies it.
+type launchStore interface {
+	LoadEnvs() (map[string]any, error)
+	SaveEnvs(data map[string]any) error
+	LoadLaunches() (map[string]any, error)
+	AppendLaunch(record map[string]any) error
+	RemoveLaunch(launchID string) error
+	LoadSettings() (map[string]any, error)
+}
+
 // Controller serves env-launcher endpoints, reusing git/ports/workspace.
 type Controller struct {
-	store     *storage.Store
+	store     launchStore
 	git       *gitctl.Controller
 	ports     *portsctl.Controller
 	workspace *workspacectl.Controller
 }
 
 // New returns an env-launcher controller.
-func New(store *storage.Store, git *gitctl.Controller, ports *portsctl.Controller, workspace *workspacectl.Controller) *Controller {
+func New(store launchStore, git *gitctl.Controller, ports *portsctl.Controller, workspace *workspacectl.Controller) *Controller {
 	return &Controller{store: store, git: git, ports: ports, workspace: workspace}
 }
 
