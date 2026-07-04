@@ -182,7 +182,7 @@ func verifyCosign(ctx context.Context, base, work, sumsPath string) error {
 		return fmt.Errorf("証明書(.pem)の取得に失敗: %w", err)
 	}
 	identity := "^https://github.com/" + repo() + "/\\.github/workflows/release\\.yml@refs/"
-	cmd := exec.CommandContext(ctx, "cosign", "verify-blob",
+	cmd := exec.CommandContext(ctx, "cosign", "verify-blob", //execaudit:self-update-verify
 		"--certificate", pem,
 		"--signature", sig,
 		"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",

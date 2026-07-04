@@ -52,7 +52,7 @@ func listenerPIDs(port int) []int {
 	// -t prints just PIDs. lsof exits non-zero when some handles are
 	// inaccessible but still prints the ones it can see, so stdout is parsed
 	// regardless of the exit status (mirrors internal/controllers/ports).
-	out, _ := exec.Command("lsof", "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-t").Output()
+	out, _ := exec.Command("lsof", "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN", "-t").Output() //execaudit:portreclaim
 	var pids []int
 	for _, f := range strings.Fields(string(out)) {
 		if pid, err := strconv.Atoi(f); err == nil {
@@ -67,7 +67,7 @@ func listenerPIDs(port int) []int {
 // `go run` parent reports "go", an editor or proxy reports its own name, and
 // only a real devhub binary (installed or the go-run compiled child) matches.
 func isDevhubProcess(pid int) bool {
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output() //execaudit:portreclaim
 	if err != nil {
 		return false
 	}
