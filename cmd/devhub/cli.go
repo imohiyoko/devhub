@@ -23,6 +23,7 @@ Usage:
   devhub stop               stop that instance after verifying it is devhub
   devhub doctor             diagnose command slot / PATH / running instance (exit 1 on warnings)
   devhub env list           list env-launcher environments and their live ports
+  devhub env start <env-id> launch an environment (baton ports are taken over)
   devhub env stop <env-id>  kill the live processes of an environment
   devhub version            print version info (same as -version)
   devhub help               show this help
