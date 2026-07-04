@@ -1,0 +1,13 @@
+# Dependabot: Go モジュールと GitHub Actions の依存を週次で監視し、
+# 脆弱性修正・版数更新の PR を自動作成する。Actions は SHA ピン運用のため、
+# ピンの更新もここが追従する。
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
