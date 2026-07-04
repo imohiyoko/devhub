@@ -46,6 +46,25 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+# checksums.txt を cosign の keyless 署名（GitHub Actions OIDC → Fulcio 発行の
+# 短命証明書、Rekor 透明性ログに記録）で署名する。同一リリース内の checksums.txt は
+# SHA256 でバイナリを縛るが、リリース書き込み権限を奪われるとバイナリと
+# checksums.txt を同時に差し替え得る。cosign 署名は「imohiyoko/devhub の release
+# ワークフローが発行した」ことを証明し、長期鍵を保持せずにこの経路を塞ぐ。生成した
+# 署名(.sig)と証明書(.pem)はリリースに添付され、インストーラ側で検証できる。
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - "sign-blob"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "--yes"
+      - "${artifact}"
+    output: true
+
 # Homebrew Cask（macOS 向け）。ビルド済みバイナリの配布は Homebrew 公式が Cask を
 # 推奨しており、goreleaser でも現行のメンテ対象（旧 brews=Formula は非推奨）。
 # darwin のアーカイブのみが対象になる（Cask は macOS 専用。Linux は install.sh）。
@@ -113,4 +132,13 @@ release:
     ```
 
     インストーラは下の資産を `checksums.txt`（SHA256）で検証してから配置します。手動の場合は資産と `checksums.txt` を取得し、ハッシュを照合してから展開してください。
+
+    `checksums.txt` は cosign で keyless 署名しています（`checksums.txt.sig` / `checksums.txt.pem` を添付）。`DEVHUB_VERIFY_SIGNATURE=1` を付けてインストーラを実行すると、リリースワークフロー由来であることを署名でも検証します（要 `cosign`）。手動検証:
+    ```bash
+    cosign verify-blob \
+      --certificate checksums.txt.pem --signature checksums.txt.sig \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp '^https://github.com/imohiyoko/devhub/\.github/workflows/release\.yml@refs/' \
+      checksums.txt
+    ```
 

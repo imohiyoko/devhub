@@ -49,6 +49,27 @@ echo "Downloading $asset ($ver) ..."
 curl -fsSL "$base/$asset" -o "$tmp/$asset"
 curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
 
+# --- optional: verify checksums.txt signature (cosign keyless) ---
+# Off by default: the SHA256 check below already pins the binary to this
+# checksums.txt. Set DEVHUB_VERIFY_SIGNATURE=1 to additionally prove the
+# checksums.txt was produced by this repo's release workflow — this is what
+# defends against a *compromised release* that swaps the binary AND its
+# checksums.txt together (SHA256 alone cannot detect that). Requires cosign.
+if [ "${DEVHUB_VERIFY_SIGNATURE:-0}" = "1" ]; then
+  require cosign
+  echo "Verifying checksums.txt signature (cosign) ..."
+  curl -fsSL "$base/checksums.txt.sig" -o "$tmp/checksums.txt.sig"
+  curl -fsSL "$base/checksums.txt.pem" -o "$tmp/checksums.txt.pem"
+  cosign verify-blob \
+    --certificate "$tmp/checksums.txt.pem" \
+    --signature "$tmp/checksums.txt.sig" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --certificate-identity-regexp "^https://github.com/${OWNER_REPO}/\.github/workflows/release\.yml@refs/" \
+    "$tmp/checksums.txt" \
+    || { echo "エラー: checksums.txt の署名検証に失敗しました。" >&2; exit 1; }
+  echo "✓ 署名検証 OK (cosign keyless)"
+fi
+
 # --- verify SHA256 before extracting ---
 echo "Verifying checksum ..."
 (

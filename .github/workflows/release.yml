@@ -23,6 +23,7 @@ on:
 
 permissions:
   contents: write # タグ作成 + GitHub Release 公開に必要
+  id-token: write # cosign keyless 署名の OIDC トークン発行に必要
 
 # 同時に複数のリリースが走らないようにする（タグの競合・二重公開を防ぐ）。
 concurrency:
@@ -93,6 +94,9 @@ jobs:
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
+
+      # checksums.txt を keyless 署名するための cosign CLI を導入する。
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       # 別リポジトリ imohiyoko/homebrew-devhub へ Cask を push するためのトークンを
       # GitHub App から「その実行限り」の短命トークンとして発行する。長期保管する
