@@ -427,15 +427,7 @@ func (c *Controller) recordLaunch(envDef map[string]any, worktreePath string, cw
 		"launched_at":   time.Now().Format(time.RFC3339),
 		"processes":     procRecords,
 	}
-	c.store.RegistryMu.Lock()
-	defer c.store.RegistryMu.Unlock()
-	data, err := c.store.LoadLaunches()
-	if err != nil {
-		return err
-	}
-	list, _ := data["launches"].([]any)
-	data["launches"] = append(list, record)
-	return c.store.SaveLaunches(data)
+	return c.store.AppendLaunch(record)
 }
 
 // launchEnvironment resolves worktrees/ports and launches an environment.

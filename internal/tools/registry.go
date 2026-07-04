@@ -30,8 +30,16 @@ var _ core.Store = (*storage.Store)(nil)
 // whose state is a plain key/value document is handed a core.Namespace view
 // instead of the concrete store — making per-tool data ownership structural.
 // The settings tool is the first mover: its per-tool "tool:<id>" document flows
-// through that seam. Tools still needing rich/transactional storage (global
-// settings merge, launches) keep the typed *storage.Store during migration.
+// through that seam.
+//
+// No controller takes the concrete *storage.Store anymore: each defines a narrow
+// interface capturing exactly the store methods it uses (defined in the consumer
+// package, the Go idiom), and *storage.Store satisfies them all — so these calls
+// are unchanged while controllers can now be built against a fake in tests. The
+// controllers that read shared global documents (git config, the settings
+// allowlist) keep typed helpers behind those interfaces rather than the raw
+// key/value seam, because forcing them onto a per-tool Namespace would change
+// their data semantics. envs is the one rich consumer (launch registry).
 func Registry(store *storage.Store) *core.Registry {
 	deps := core.Deps{Store: store}
 
