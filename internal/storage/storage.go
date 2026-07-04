@@ -4,7 +4,6 @@
 package storage
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imohiyoko/devhub/internal/jsonx"
 	"github.com/imohiyoko/devhub/internal/pathutil"
 
 	_ "modernc.org/sqlite"
@@ -108,17 +108,6 @@ func (s *Store) initSchema() error {
 
 func now() string { return time.Now().Format(time.RFC3339) }
 
-// marshalJSON encodes v without HTML escaping.
-func marshalJSON(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
-}
-
 // kvGet returns the raw JSON stored under key, or nil if absent. It is the
 // JSON-typed view over the same bytes Get returns.
 func (s *Store) kvGet(key string) (json.RawMessage, error) {
@@ -130,7 +119,7 @@ func (s *Store) kvGet(key string) (json.RawMessage, error) {
 }
 
 func kvSet(e execer, key string, value any) error {
-	b, err := marshalJSON(value)
+	b, err := jsonx.Marshal(value)
 	if err != nil {
 		return err
 	}

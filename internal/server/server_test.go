@@ -130,6 +130,40 @@ func TestUnknownRoutes(t *testing.T) {
 	}
 }
 
+func TestToolAssetsServed(t *testing.T) {
+	s := newTestServer(t)
+
+	// The git page's split stylesheet: served with the CSS content type so the
+	// browser applies it under strict MIME checking.
+	rr := s.do("GET", "/tools/git/git.css", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /tools/git/git.css = %d, want 200", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
+		t.Errorf("git.css Content-Type = %q, want text/css; charset=utf-8", ct)
+	}
+	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("git.css Cache-Control = %q, want no-store", got)
+	}
+
+	// A split feature script: served as JS.
+	rr = s.do("GET", "/tools/git/core.js", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /tools/git/core.js = %d, want 200", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/javascript; charset=utf-8" {
+		t.Errorf("core.js Content-Type = %q, want application/javascript; charset=utf-8", ct)
+	}
+
+	// A tool's index.html must NOT be served raw here: those are token-injected
+	// by the gateway at the exact /<tool> route. Serving the raw file would leak
+	// an un-shimmed page whose /api/ calls carry no token.
+	rr = s.do("GET", "/tools/git/index.html", goodHost, "", "", nil)
+	if rr.Code == http.StatusOK {
+		t.Errorf("GET /tools/git/index.html = 200, want non-200 (raw page must not be served)")
+	}
+}
+
 func TestSettingsRoundTripAndSanitize(t *testing.T) {
 	s := newTestServer(t)
 	body := `{"disabled_tools":["ports"],"db_connections":[{"name":"local","password":"s3cret"}]}`
