@@ -63,23 +63,12 @@ func (s *Store) SaveSettings(patch map[string]any) error {
 	return kvSet(s.db, "settings", cur)
 }
 
-// LoadToolSettings returns the per-tool settings document (empty if unset).
-func (s *Store) LoadToolSettings(toolID string) (map[string]any, error) {
-	raw, err := s.kvGet("tool:" + toolID)
-	if err != nil {
-		return nil, err
-	}
-	m := map[string]any{}
-	if raw != nil {
-		_ = json.Unmarshal(raw, &m)
-	}
-	return m, nil
-}
-
-// SaveToolSettings stores the per-tool settings document.
-func (s *Store) SaveToolSettings(toolID string, data map[string]any) error {
-	return kvSet(s.db, "tool:"+toolID, data)
-}
+// The per-tool settings document (kv key "tool:<id>") is now owned by the
+// settings tool through the core.Store seam: it holds a core.Namespace(store,
+// "tool") view and reads/writes "tool:<id>" via Get/Set. The typed accessors
+// that used to live here were removed so per-tool data ownership is structural,
+// not a storage-method convention. Existing keys are unchanged, so no data
+// migration is needed.
 
 // LoadConfig returns the git-tool config, seeding from config.example.json on
 // first run, falling back to an empty shape.

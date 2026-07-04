@@ -11,6 +11,10 @@ import (
 	"github.com/imohiyoko/devhub/internal/storage"
 )
 
+// The concrete store is the default core.Store backing every tool's namespaced
+// view. Assert the seam here, in the one package that wires them together.
+var _ core.Store = (*storage.Store)(nil)
+
 // Registry constructs every devhub tool and returns the registry served by the
 // core gateway. This is the single composition root: adding a tool means adding
 // one constructor to the list below — server, router, and the dashboard nav are
@@ -20,13 +24,23 @@ import (
 // orchestrates git/ports/workspace, so it receives those controllers directly;
 // keeping that wiring in this layer (not in core or server) is what lets a tool
 // later be extracted behind the gateway without disturbing the others.
+//
+// This is also the single place core.Deps is assembled: the concrete
+// *storage.Store satisfies core.Store (see internal/storage/kv.go), so a tool
+// whose state is a plain key/value document is handed a core.Namespace view
+// instead of the concrete store — making per-tool data ownership structural.
+// The settings tool is the first mover: its per-tool "tool:<id>" document flows
+// through that seam. Tools still needing rich/transactional storage (global
+// settings merge, launches) keep the typed *storage.Store during migration.
 func Registry(store *storage.Store) *core.Registry {
+	deps := core.Deps{Store: store}
+
 	git := gitctl.New(store)
 	ports := portsctl.New(store)
 	workspace := workspacectl.New(store, git)
 	database := databasectl.New(store)
 	envs := envsctl.New(store, git, ports, workspace)
-	settings := settingsctl.New(store)
+	settings := settingsctl.New(store, core.Namespace(deps.Store, "tool"))
 
 	return core.NewRegistry(
 		newGit(git),

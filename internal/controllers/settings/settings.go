@@ -3,10 +3,13 @@
 package settings
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/imohiyoko/devhub/internal/core"
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/portutil"
 	"github.com/imohiyoko/devhub/internal/sanitize"
@@ -24,14 +27,38 @@ var settingsAllowlist = map[string]bool{
 
 var configKeys = []string{"scan_roots", "excludes", "pinned_repos", "repo_order", "hidden_repos"}
 
-// Controller serves settings/config endpoints backed by the store.
-type Controller struct{ store *storage.Store }
+// Controller serves settings/config endpoints. The global settings and git
+// config documents still use the typed *storage.Store (they carry seeding and
+// merge logic). The per-tool settings document is reached only through the
+// core.Store seam: toolSettings is a core.Namespace(store, "tool") view, so a
+// GET/POST /api/settings/tool/<id> is a plain Get/Set on key "tool:<id>" — the
+// same key the store already uses, so no data migration is involved.
+type Controller struct {
+	store        *storage.Store
+	toolSettings core.Store
+}
 
-// New returns a settings controller.
-func New(store *storage.Store) *Controller { return &Controller{store: store} }
+// New returns a settings controller. toolSettings is the namespaced view that
+// owns the "tool:<id>" keyspace.
+func New(store *storage.Store, toolSettings core.Store) *Controller {
+	return &Controller{store: store, toolSettings: toolSettings}
+}
 
 func toolIDFromPath(path string) string {
 	return path[strings.LastIndex(path, "/")+1:]
+}
+
+// marshalToolSettings encodes a tool-settings document without HTML-escaping,
+// matching how the store persisted these documents before the seam migration
+// (values like URLs with "&" must round-trip byte-for-byte).
+func marshalToolSettings(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // HandleGet dispatches GET config/settings/tool requests.
@@ -55,9 +82,13 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 		if !toolIDRe.MatchString(toolID) {
 			return httpx.Errorf(http.StatusBadRequest, "invalid tool_id")
 		}
-		ts, err := c.store.LoadToolSettings(toolID)
+		raw, err := c.toolSettings.Get(toolID)
 		if err != nil {
 			return err
+		}
+		ts := map[string]any{}
+		if raw != nil {
+			_ = json.Unmarshal(raw, &ts)
 		}
 		httpx.WriteJSON(w, http.StatusOK, ts)
 	default:
@@ -116,7 +147,11 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		if !toolIDRe.MatchString(toolID) {
 			return httpx.Errorf(http.StatusBadRequest, "invalid tool_id")
 		}
-		if err := c.store.SaveToolSettings(toolID, data); err != nil {
+		b, err := marshalToolSettings(data)
+		if err != nil {
+			return err
+		}
+		if err := c.toolSettings.Set(toolID, b); err != nil {
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
