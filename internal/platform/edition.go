@@ -66,7 +66,9 @@ func isHomebrewPath(p string) bool {
 	if p == "" {
 		return false
 	}
-	s := strings.ToLower(filepath.ToSlash(p))
+	// filepath.ToSlash only folds the running OS's separator, so also fold a
+	// literal backslash to stay separator-agnostic no matter where p came from.
+	s := strings.ReplaceAll(strings.ToLower(filepath.ToSlash(p)), `\`, "/")
 	for _, marker := range []string{"/caskroom/", "/cellar/", "/homebrew/", "/linuxbrew/"} {
 		if strings.Contains(s, marker) {
 			return true
