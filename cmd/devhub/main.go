@@ -28,6 +28,7 @@ func main() {
 
 	if *showVersion {
 		fmt.Println("devhub", version)
+		fmt.Println("  edition:", platform.Edition(version))
 		if commit != "" {
 			fmt.Println("  commit:", commit)
 		}

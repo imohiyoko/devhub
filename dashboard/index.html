@@ -265,7 +265,26 @@ footer {
   color: var(--muted);
   font-size: 11px;
   font-family: "SF Mono", ui-monospace, monospace;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
+.footer-sep { opacity: 0.5; }
+.footer-edition {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.footer-link {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+.footer-link:hover { color: var(--accent); }
+.footer-spacer { flex: 1; }
 
 /* ── Approval Panel ── */
 .approval-panel {
@@ -350,7 +369,7 @@ footer {
 
 <header>
   <h1>devhub</h1>
-  <span class="host-badge">localhost:8765</span>
+  <span class="host-badge" id="hostBadge">localhost:8765</span>
   <div class="header-spacer"></div>
   <button class="header-btn" id="settingsBtn" title="設定">⚙</button>
   <div class="restart-wrap" id="restartWrap">
@@ -386,7 +405,14 @@ footer {
   <div class="tools-grid" id="toolsGrid"></div>
 </main>
 
-<footer>devhub · localhost:8765</footer>
+<footer>
+  <span>devhub</span>
+  <span class="footer-sep">·</span>
+  <span id="footerVersion">…</span>
+  <span class="footer-edition" id="footerEdition" hidden></span>
+  <span class="footer-spacer"></span>
+  <a class="footer-link" href="https://github.com/imohiyoko/devhub" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+</footer>
 
 <script>
 // Tool cards are sourced from GET /api/tools (registry-driven), so adding a
@@ -397,6 +423,12 @@ let TOOLS = [];
 let disabledTools = [];
 let toolOrder = [];
 let restartCmdText = 'devhub';
+
+// Show the address this page was actually reached at (host:port) rather than a
+// hardcoded default — it follows a DEVHUB_PORT override or a reclaimed port for
+// free, and stays correct without querying the API. Set synchronously to avoid
+// flashing the placeholder baked into the markup.
+document.getElementById('hostBadge').textContent = location.host;
 
 function orderedTools() {
   if (!toolOrder.length) return TOOLS;
@@ -631,8 +663,31 @@ async function copyCmd() {
   }
   renderGrid();
   renderToggles();
+  renderFooter();
   checkPendingApprovals();
 })();
+
+/* ── Footer ── */
+// How each backend edition id (see platform.Edition) is labelled in the footer.
+const EDITION_LABELS = { code: 'code', homebrew: 'Homebrew', installer: 'installer' };
+
+async function renderFooter() {
+  const vEl = document.getElementById('footerVersion');
+  const eEl = document.getElementById('footerEdition');
+  try {
+    const info = await fetch('/api/info').then(r => r.ok ? r.json() : null);
+    const v = info && info.version;
+    // A distributed build stamps a real version; a local `go run` reports "dev".
+    vEl.textContent = v ? (v === 'dev' ? 'dev' : 'v' + v.replace(/^v/, '')) : '—';
+    const ed = info && info.edition;
+    if (ed) {
+      eEl.textContent = (EDITION_LABELS[ed] || ed) + ' edition';
+      eEl.hidden = false;
+    }
+  } catch {
+    vEl.textContent = '—';
+  }
+}
 
 /* ── Approval handling ── */
 let currentPendingRequest = null;
