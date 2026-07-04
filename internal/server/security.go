@@ -23,10 +23,21 @@ func (s *Server) hostAllowed(r *http.Request) bool {
 	return s.allowedHosts[toLowerASCII(r.Host)]
 }
 
-// apiAuthorized enforces (C) Sec-Fetch-Site (if present must be same-origin/none)
-// and (B) the constant-time token comparison.
+// sameOriginOrNonBrowser reports whether a request is safe from a cross-site
+// browser's perspective: it carries no Sec-Fetch-Site (a non-browser client such
+// as curl or a local agent) or that header marks the navigation as same-origin/
+// none. A same-site or cross-site browser request is rejected. This is the
+// shared CSRF / DNS-rebinding guard for both the token-gated /api/ surface and
+// the token-less /ai-api/ surface.
+func sameOriginOrNonBrowser(r *http.Request) bool {
+	sfs := r.Header.Get("Sec-Fetch-Site")
+	return sfs == "" || sfs == "same-origin" || sfs == "none"
+}
+
+// apiAuthorized enforces (C) the Sec-Fetch-Site guard and (B) the constant-time
+// token comparison.
 func (s *Server) apiAuthorized(r *http.Request) bool {
-	if sfs := r.Header.Get("Sec-Fetch-Site"); sfs != "" && sfs != "same-origin" && sfs != "none" {
+	if !sameOriginOrNonBrowser(r) {
 		return false
 	}
 	got := r.Header.Get("X-Devhub-Token")
