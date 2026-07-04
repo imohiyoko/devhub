@@ -146,6 +146,9 @@ func parseArgs(args []string) (id, goName string, pageOnly bool, err error) {
 			goName = args[i]
 		case strings.HasPrefix(a, "--go-name="):
 			goName = strings.TrimPrefix(a, "--go-name=")
+			if goName == "" {
+				return "", "", false, errors.New("--go-name needs a value")
+			}
 		case strings.HasPrefix(a, "-"):
 			return "", "", false, fmt.Errorf("unknown flag %q", a)
 		default:
