@@ -62,7 +62,7 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 		defer os.Remove(tmpExe)
 
 		goExe := goBin()
-		checkCmd := exec.Command(goExe, "build", "-o", tmpExe, "./cmd/devhub")
+		checkCmd := exec.Command(goExe, "build", "-o", tmpExe, "./cmd/devhub") //execaudit:rebuild
 		checkCmd.Dir = repoRoot
 		out, buildErr := checkCmd.CombinedOutput()
 		if buildErr != nil {
@@ -73,7 +73,7 @@ func (s *Server) handleRebuild(w http.ResponseWriter, _ *http.Request) error {
 		// Start `go run ./cmd/devhub` as the new process.
 		// Mark done only after Start succeeds so the frontend never sees
 		// done=true,error="" while the restart has already silently failed.
-		runCmd := exec.Command(goExe, "run", "./cmd/devhub")
+		runCmd := exec.Command(goExe, "run", "./cmd/devhub") //execaudit:rebuild
 		runCmd.Dir = repoRoot
 		runCmd.Args = append(runCmd.Args, os.Args[1:]...)
 		runCmd.Env = append(os.Environ(), "DEVHUB_API_TOKEN="+token)
