@@ -82,6 +82,17 @@ switch ($Action) {
     $binDir = if ($env:DEVHUB_BIN_DIR) { $env:DEVHUB_BIN_DIR } else { "$env:USERPROFILE\bin" }
     New-Item -ItemType Directory -Force -Path $binDir | Out-Null
     $shim = Join-Path $binDir 'devhub.cmd'
+    # コマンドスロットは 1 つ（install.ps1 のリリース版 shim と同じパス）。最後に
+    # install した方が勝つ設計だが、置き換えは黙って行わず必ず告知する。
+    if (Test-Path $shim) {
+      $old = Get-Content $shim -Raw -ErrorAction SilentlyContinue
+      if ($old -and $old -notmatch 'devhub dev shim') {
+        Write-Host "[Notice] 既存のリリース版 shim を dev shim（ソース実行: $RepoRoot）に置き換えます。"
+        Write-Host "         リリース版に戻すには: install.ps1 を再実行してください。"
+      } elseif ($old -match '(?m)^pushd (.+?)\r?$' -and $Matches[1] -ne $RepoRoot) {
+        Write-Host "[Notice] dev shim の参照先を切り替えます: $($Matches[1]) -> $RepoRoot"
+      }
+    }
     # cmd.exe は .cmd を OEM コードページで読むため、シム本体は ASCII のみで書く
     # （非 ASCII を混ぜると rem 行などのパースが壊れる）。RepoRoot を焼き込む。
     $content = @"

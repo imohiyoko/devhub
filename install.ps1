@@ -106,10 +106,23 @@ try {
 }
 
 # --- shim on PATH that calls the installed binary ---
+# The command slot is deliberately single: this shim and scripts\dev.ps1
+# install's dev shim share the same path, and the last installer to run owns
+# it. Replacing the other kind must be announced, never silent (devhub doctor
+# shows the current owner).
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 $shim = Join-Path $BinDir "devhub.cmd"
+if (Test-Path $shim) {
+    $old = Get-Content $shim -Raw -ErrorAction SilentlyContinue
+    if ($old -match 'devhub dev shim') {
+        $oldRoot = if ($old -match '(?m)^pushd (.+?)\r?$') { $Matches[1] } else { '?' }
+        Write-Host "[Notice] 既存の dev shim（ソース実行: $oldRoot）をリリース版 shim に置き換えます。"
+        Write-Host "         ソース実行に戻すには: scripts\dev.ps1 install"
+    }
+}
 Set-Content -Path $shim -Encoding ASCII -Value @"
 @echo off
+rem devhub release shim - runs the pinned binary installed by install.ps1
 "$exe" %*
 "@
 

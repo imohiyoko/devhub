@@ -18,10 +18,13 @@ import (
 
 const envUsage = `Usage:
   devhub env list             list environments and their live ports
+  devhub env start <env-id>   launch an environment (dependency order, worktree/port resolution)
   devhub env stop <env-id>    kill the live processes on an environment's ports
 
-Reads the local devhub state directly, so it works whether or not the devhub
-server is running. Protected ports (ports tool) are never killed.
+Works directly against the local devhub state, whether or not the devhub
+server is running. Protected ports (ports tool) are never killed. start keeps
+baton semantics: a process whose declared port is held by something else takes
+the port over (the kill is printed).
 `
 
 // runEnv executes `devhub env <subcommand>` and returns the process exit code.
@@ -45,6 +48,12 @@ func runEnv(args []string) int {
 	switch args[0] {
 	case "list":
 		return envList(envs)
+	case "start":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "devhub: env start needs an environment id (see `devhub env list`)")
+			return 2
+		}
+		return envStart(envs, args[1])
 	case "stop":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "devhub: env stop needs an environment id (see `devhub env list`)")
@@ -55,6 +64,21 @@ func runEnv(args []string) int {
 		fmt.Fprintf(os.Stderr, "devhub: unknown env subcommand %q\n\n%s", args[0], envUsage)
 		return 2
 	}
+}
+
+// envStart launches the environment synchronously and reports every baton
+// take-over — a port changing hands must be visible, not silent.
+func envStart(envs *envsctl.Controller, envID string) int {
+	killed, err := envs.StartEnvironment(envID)
+	for _, k := range killed {
+		fmt.Printf("baton  :%d (pid %d) killed to take the port over\n", k.Port, k.PID)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "devhub:", err)
+		return 1
+	}
+	fmt.Printf("started %s (check with `devhub env list`)\n", envID)
+	return 0
 }
 
 func envList(envs *envsctl.Controller) int {
