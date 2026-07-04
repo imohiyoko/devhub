@@ -102,11 +102,24 @@ func (m *Manager) ShouldAutoApprove(action, detail string) bool {
 	defer m.mu.RUnlock()
 
 	for _, rule := range m.rules {
-		if rule.Action == action && strings.HasPrefix(detail, rule.DetailPattern) {
+		if rule.Action == action && detailMatchesPattern(detail, rule.DetailPattern) {
 			return true
 		}
 	}
 	return false
+}
+
+// detailMatchesPattern reports whether an always-allow rule's pattern covers the
+// given request detail. The pattern matches only on a word boundary: either the
+// whole detail equals the pattern, or the detail extends it at a space. Anchoring
+// at a space keeps a command-prefix rule like "git commit" matching "git commit
+// -m x" while stopping it from matching an unrelated "git commitfoo" — prefix
+// matching can no longer cross a token boundary.
+func detailMatchesPattern(detail, pattern string) bool {
+	if detail == pattern {
+		return true
+	}
+	return strings.HasPrefix(detail, pattern) && strings.HasPrefix(detail[len(pattern):], " ")
 }
 
 func (m *Manager) AddAlwaysAllowRule(action, detailPattern string) string {

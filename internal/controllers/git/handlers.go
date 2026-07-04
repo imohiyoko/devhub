@@ -242,6 +242,9 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		if msg := validateWorktreePath(wt); msg != "" {
 			return httpx.Errorf(http.StatusBadRequest, "%s", msg)
 		}
+		if !isKnownWorktree(repoPath, wt) {
+			return httpx.Errorf(http.StatusBadRequest, "worktree_path is not a registered worktree of this repository")
+		}
 		stdout, stderr, timedOut, err := runCmd(wt, 60*time.Second, gitEnvHardened(), "git", "pull")
 		return writeRun(w, true, stdout, stderr, timedOut, err, "pull timed out")
 	case "/api/git/worktree/push":
@@ -251,6 +254,9 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		}
 		if msg := validateWorktreePath(wt); msg != "" {
 			return httpx.Errorf(http.StatusBadRequest, "%s", msg)
+		}
+		if !isKnownWorktree(repoPath, wt) {
+			return httpx.Errorf(http.StatusBadRequest, "worktree_path is not a registered worktree of this repository")
 		}
 		stdout, stderr, timedOut, err := runCmd(wt, 60*time.Second, gitEnvHardened(), "git", "push")
 		return writeRun(w, true, stdout, stderr, timedOut, err, "push timed out")
