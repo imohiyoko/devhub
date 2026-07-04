@@ -136,7 +136,18 @@ func (s *Server) serveSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shared/"):
 		if body, ok := s.shared[path]; ok {
-			writeAsset(w, body, sharedContentType(path))
+			writeAsset(w, body, assetContentType(path))
+			return
+		}
+		httpx.WriteError(w, httpx.Errorf(http.StatusNotFound, "not found"))
+		return
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/tools/"):
+		// Per-tool static sub-assets (git.css and the split feature JS). Tool
+		// index.html pages are excluded from s.toolAssets, so a request for one
+		// 404s here instead of being served raw and un-shimmed — the shimmed page
+		// lives at the gateway's exact /<tool> route.
+		if body, ok := s.toolAssets[path]; ok {
+			writeAsset(w, body, assetContentType(path))
 			return
 		}
 		httpx.WriteError(w, httpx.Errorf(http.StatusNotFound, "not found"))
@@ -169,11 +180,12 @@ func writePage(w http.ResponseWriter, body []byte) {
 	_, _ = w.Write(body)
 }
 
-// sharedContentType picks the Content-Type for a /shared/ asset by extension.
-// Only JS and CSS are served today; anything else keeps the historical JS
-// default so existing assets are unaffected. A CSS file needs text/css or the
-// browser refuses to apply it as a stylesheet under strict MIME checking.
-func sharedContentType(path string) string {
+// assetContentType picks the Content-Type for a static /shared/ or /tools/
+// asset by extension. Only JS and CSS are served today; anything else keeps the
+// historical JS default so existing assets are unaffected. A CSS file needs
+// text/css or the browser refuses to apply it as a stylesheet under strict MIME
+// checking.
+func assetContentType(path string) string {
 	if strings.HasSuffix(path, ".css") {
 		return "text/css; charset=utf-8"
 	}
