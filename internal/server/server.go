@@ -27,6 +27,7 @@ type Server struct {
 	store    *storage.Store
 	settings map[string]any
 	version  string
+	edition  string
 
 	token        string
 	port         int
@@ -62,7 +63,7 @@ type Server struct {
 // restart), the port and host allowlist, builds the tool registry, and injects
 // the token shim into the dashboard and every tool page.
 func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser bool, version string) (*Server, error) {
-	s := &Server{store: store, settings: settings, version: version}
+	s := &Server{store: store, settings: settings, version: version, edition: platform.Edition(version)}
 	s.repoRoot = findRepoRoot()
 
 	s.token = os.Getenv("DEVHUB_API_TOKEN")
