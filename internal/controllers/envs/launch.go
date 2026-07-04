@@ -137,10 +137,16 @@ func (c *Controller) livePortIndex() map[int]int {
 	return index
 }
 
-// killPortsFor frees the declared ports of the given processes (best-effort).
-func (c *Controller) killPortsFor(procs []map[string]any) {
+// BatonKill records one process killed to free a declared (baton) port.
+type BatonKill struct{ Port, PID int }
+
+// killPortsFor frees the declared ports of the given processes (best-effort)
+// and returns what it killed. Baton means take-over: the kills are the
+// feature, so callers that face a user (the CLI) surface them instead of
+// letting the port change hands silently.
+func (c *Controller) killPortsFor(procs []map[string]any) []BatonKill {
 	live := c.livePortIndex()
-	killed := false
+	var killed []BatonKill
 	for _, proc := range procs {
 		ports, err := parsePortSpec(proc["port"])
 		if err != nil {
@@ -149,14 +155,15 @@ func (c *Controller) killPortsFor(procs []map[string]any) {
 		for _, p := range ports {
 			if pid, ok := live[p]; ok {
 				if err := c.ports.KillPortProcess(p, pid); err == nil {
-					killed = true
+					killed = append(killed, BatonKill{Port: p, PID: pid})
 				}
 			}
 		}
 	}
-	if killed {
+	if len(killed) > 0 {
 		time.Sleep(500 * time.Millisecond)
 	}
+	return killed
 }
 
 // resolveWorktree resolves (repo, branch) to an existing worktree path, or "".
@@ -282,9 +289,12 @@ func topoSort(procs []map[string]any) ([]string, error) {
 	return order, nil
 }
 
-// runProcesses topologically sorts and launches the env's processes on a
-// goroutine, with per-process delays. Mirrors _run_processes.
-func (c *Controller) runProcesses(envDef map[string]any, cwdByPid map[string]string, cwdOverride string, envByPid map[string]map[string]string, portByPid map[string]int) error {
+// runProcesses topologically sorts and launches the env's processes with
+// per-process delays. Mirrors _run_processes. The HTTP path runs the loop on
+// a goroutine (the request returns while terminals spawn); the CLI path runs
+// it inline — a short-lived `devhub env start` process must not exit while
+// launches are still pending on a goroutine, or they are simply lost.
+func (c *Controller) runProcesses(envDef map[string]any, cwdByPid map[string]string, cwdOverride string, envByPid map[string]map[string]string, portByPid map[string]int, async bool) error {
 	procs := processes(envDef)
 	sorted, err := topoSort(procs)
 	if err != nil {
@@ -294,7 +304,7 @@ func (c *Controller) runProcesses(envDef map[string]any, cwdByPid map[string]str
 	for _, p := range procs {
 		pidToDef[pStr(p, "id")] = p
 	}
-	go func() {
+	run := func() {
 		for i, pid := range sorted {
 			pDef := pidToDef[pid]
 			cwd, ok := cwdByPid[pid]
@@ -311,7 +321,12 @@ func (c *Controller) runProcesses(envDef map[string]any, cwdByPid map[string]str
 				time.Sleep(processDelay(pDef))
 			}
 		}
-	}()
+	}
+	if async {
+		go run()
+	} else {
+		run()
+	}
 	return nil
 }
 
@@ -430,19 +445,36 @@ func (c *Controller) recordLaunch(envDef map[string]any, worktreePath string, cw
 	return c.store.AppendLaunch(record)
 }
 
-// launchEnvironment resolves worktrees/ports and launches an environment.
+// launchEnvironment resolves worktrees/ports and launches an environment
+// asynchronously (the HTTP path).
 func (c *Controller) launchEnvironment(envID string) error {
+	_, err := c.startEnvironment(envID, true)
+	return err
+}
+
+// StartEnvironment launches envID synchronously — the CLI path (`devhub env
+// start`). Registry writes are safe from this second process because
+// AppendLaunch is a single-row INSERT (see internal/storage/launches.go).
+// The returned BatonKills are what was killed to free declared ports; baton
+// from the CLI deliberately keeps full take-over semantics (killing even a
+// devhub holding the port is the point — 上書き起動), so the caller must
+// print them.
+func (c *Controller) StartEnvironment(envID string) ([]BatonKill, error) {
+	return c.startEnvironment(envID, false)
+}
+
+func (c *Controller) startEnvironment(envID string, async bool) ([]BatonKill, error) {
 	envDef, err := c.findEnv(envID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	envCwd, err := c.setupWorktree(pMap(envDef, "worktree"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cwds, err := c.resolveCwds(envDef, envCwd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var batonProcs []map[string]any
 	for _, p := range processes(envDef) {
@@ -450,7 +482,7 @@ func (c *Controller) launchEnvironment(envID string) error {
 			batonProcs = append(batonProcs, p)
 		}
 	}
-	c.killPortsFor(batonProcs)
+	killed := c.killPortsFor(batonProcs)
 	assigned := c.assignPorts(envDef, c.livePortIndex())
 	envByPid := map[string]map[string]string{}
 	for _, p := range processes(envDef) {
@@ -460,9 +492,9 @@ func (c *Controller) launchEnvironment(envID string) error {
 		}
 	}
 	if err := c.recordLaunch(envDef, envCwd, cwds, assigned); err != nil {
-		return err
+		return killed, err
 	}
-	return c.runProcesses(envDef, cwds, envCwd, envByPid, assigned)
+	return killed, c.runProcesses(envDef, cwds, envCwd, envByPid, assigned, async)
 }
 
 func tokenHex(n int) string {

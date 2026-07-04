@@ -224,6 +224,36 @@ func (c *Controller) ListOpen() ([]PortEntry, error) { return c.listOpen() }
 // (exported for the env-launcher).
 func (c *Controller) KillPortProcess(port, pid int) error { return c.killPortProcess(port, pid) }
 
+// ListListening returns the LISTEN sockets without the store-backed
+// annotations (labels / protected / self are zero). It exists for the CLI
+// (cmd/devhub), which needs listener discovery even when the settings store
+// cannot be opened — e.g. `devhub status` while the DB is unreadable.
+func ListListening() ([]PortEntry, error) {
+	raw, err := listRaw()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PortEntry, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, PortEntry{Command: r.command, PID: r.pid, User: r.user, Host: r.host, Port: r.port})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Port != out[j].Port {
+			return out[i].Port < out[j].Port
+		}
+		return out[i].PID < out[j].PID
+	})
+	return out, nil
+}
+
+// KillPID terminates pid with none of killPortProcess's safety checks
+// (protected ports, self-PID, port ownership). Those checks protect *other*
+// applications and the serving process itself; `devhub stop` targets a devhub
+// instance it has just verified via /ai-api/info, where they would wrongly
+// refuse. Callers must do such verification — never expose this to a request
+// path.
+func KillPID(pid int) error { return killProcess(pid) }
+
 // HandleGet serves GET /api/ports.
 func (c *Controller) HandleGet(w http.ResponseWriter, _ *http.Request) error {
 	list, err := c.listOpen()

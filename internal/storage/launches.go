@@ -33,45 +33,45 @@ func (s *Store) LoadLaunches() (map[string]any, error) {
 	return map[string]any{"launches": launches}, nil
 }
 
-// AppendLaunch appends record to the launch registry, serializing the
-// load->mutate->save under RegistryMu so two concurrent launches cannot lose
-// each other's records. It is the write half of the registry the env-launcher
-// drives through the store seam: RegistryMu is a Store field an interface
-// cannot express, so this method (not the raw mutex) is what envs depends on.
+// AppendLaunch appends record to the launch registry as a single-row INSERT.
+// Row-level writes are atomic at the SQL layer, so concurrent appenders — in
+// this process or another (`devhub env start` runs in its own process while
+// the server may be writing too) — cannot lose each other's records the way
+// the old load->mutate->save-the-whole-table sequence could. RegistryMu is
+// still held so in-process compositions over the registry stay serialized,
+// but cross-process correctness comes from SQLite (WAL + busy_timeout), not
+// the mutex.
 func (s *Store) AppendLaunch(record map[string]any) error {
 	s.RegistryMu.Lock()
 	defer s.RegistryMu.Unlock()
-	data, err := s.LoadLaunches()
+	id, _ := record["launch_id"].(string)
+	if id == "" {
+		// launch_id is the PRIMARY KEY; an id-less record would collide under
+		// INSERT OR REPLACE. SaveLaunches drops such records on bulk writes —
+		// reject here so a caller bug surfaces instead of silently vanishing.
+		return errors.New("launch record needs a launch_id")
+	}
+	b, err := jsonx.Marshal(record)
 	if err != nil {
 		return err
 	}
-	list, _ := data["launches"].([]any)
-	data["launches"] = append(list, record)
-	return s.SaveLaunches(data)
+	launchedAt, _ := record["launched_at"].(string)
+	_, err = s.db.Exec(
+		"INSERT OR REPLACE INTO launches (launch_id, data, launched_at) VALUES (?, ?, ?)",
+		id, string(b), launchedAt,
+	)
+	return err
 }
 
-// RemoveLaunch drops the launch with launchID from the registry, serializing the
-// load->mutate->save under RegistryMu. A missing launchID is a no-op here; the
-// caller checks existence separately so it can return its own error message.
+// RemoveLaunch drops the launch with launchID as a single-row DELETE (atomic
+// and cross-process safe, like AppendLaunch). A missing launchID is a no-op
+// here; the caller checks existence separately so it can return its own error
+// message.
 func (s *Store) RemoveLaunch(launchID string) error {
 	s.RegistryMu.Lock()
 	defer s.RegistryMu.Unlock()
-	data, err := s.LoadLaunches()
-	if err != nil {
-		return err
-	}
-	list, _ := data["launches"].([]any)
-	filtered := make([]any, 0, len(list))
-	for _, l := range list {
-		if m, ok := l.(map[string]any); ok {
-			if id, _ := m["launch_id"].(string); id == launchID {
-				continue
-			}
-		}
-		filtered = append(filtered, l)
-	}
-	data["launches"] = filtered
-	return s.SaveLaunches(data)
+	_, err := s.db.Exec("DELETE FROM launches WHERE launch_id = ?", launchID)
+	return err
 }
 
 // SaveLaunches replaces the entire launches table in a single transaction.

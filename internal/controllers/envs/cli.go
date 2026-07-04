@@ -4,11 +4,12 @@ import "sort"
 
 // This file is the exported surface the devhub CLI (cmd/devhub) consumes. The
 // CLI opens the shared SQLite store directly (WAL + busy_timeout make a second
-// reader process safe) instead of going through HTTP: the API token lives only
-// in the server's memory by design, and persisting it for a CLI would weaken
-// that posture. Everything here is therefore read-only towards the store —
-// SaveLaunches rewrites the whole table under a per-process mutex, so registry
-// writes must stay inside the server process.
+// process safe) instead of going through HTTP: the API token lives only in
+// the server's memory by design, and persisting it for a CLI would weaken
+// that posture. The only registry write the CLI performs is the launch record
+// appended by StartEnvironment (launch.go) — safe cross-process because
+// AppendLaunch is a single-row INSERT; bulk rewrites (SaveLaunches) stay
+// inside the server process.
 
 // EnvStatus summarizes one environment for the CLI list view.
 type EnvStatus struct {

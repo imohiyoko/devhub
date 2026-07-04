@@ -107,7 +107,14 @@ install -m 0755 "$tmp/devhub" "$DEVHUB_DIR/bin/devhub"
 # Clear any quarantine attribute (set only on browser downloads; harmless if absent).
 if [ "$os" = "darwin" ]; then xattr -c "$DEVHUB_DIR/bin/devhub" 2>/dev/null || true; fi
 
+# コマンドスロットは 1 つ（scripts/dev.sh install の dev shim と同じパス）。
+# 最後に install した方が勝つ設計だが、置き換えは黙って行わず必ず告知する。
 mkdir -p "$BIN_DIR"
+if [ -f "$BIN_DIR/devhub" ] && [ ! -L "$BIN_DIR/devhub" ] && grep -q 'devhub dev shim' "$BIN_DIR/devhub" 2>/dev/null; then
+  old_root=$(sed -n 's/^cd "\([^"]*\)".*/\1/p' "$BIN_DIR/devhub" | head -n1)
+  echo "[Notice] 既存の dev shim（ソース実行: ${old_root:-?}）をリリース版へのリンクに置き換えます。"
+  echo "         ソース実行に戻すには: scripts/dev.sh install"
+fi
 ln -sf "$DEVHUB_DIR/bin/devhub" "$BIN_DIR/devhub"
 
 # --- ensure BIN_DIR is on PATH (carried over from the previous installer) ---
