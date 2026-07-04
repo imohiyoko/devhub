@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -218,5 +219,45 @@ func TestLaunchesRoundTrip(t *testing.T) {
 	rec := list[0].(map[string]any)
 	if rec["launch_id"] != "a" {
 		t.Errorf("launch_id = %v, want a", rec["launch_id"])
+	}
+}
+
+// TestSaveLaunchesSkipsEmptyID: records with an empty launch_id are dropped
+// rather than colliding on the primary key. Two id-less records must not
+// silently overwrite each other, and a valid record alongside them survives.
+func TestSaveLaunchesSkipsEmptyID(t *testing.T) {
+	st, _ := openTest(t)
+	in := map[string]any{"launches": []any{
+		map[string]any{"launch_id": "", "env_id": "first"},
+		map[string]any{"launch_id": "", "env_id": "second"},
+		map[string]any{"launch_id": "keep", "env_id": "ok"},
+	}}
+	if err := st.SaveLaunches(in); err != nil {
+		t.Fatalf("SaveLaunches: %v", err)
+	}
+	out, err := st.LoadLaunches()
+	if err != nil {
+		t.Fatalf("LoadLaunches: %v", err)
+	}
+	list, _ := out["launches"].([]any)
+	if len(list) != 1 {
+		t.Fatalf("launches len = %d, want 1 (both empty ids skipped)", len(list))
+	}
+	if id := list[0].(map[string]any)["launch_id"]; id != "keep" {
+		t.Errorf("surviving launch_id = %v, want keep", id)
+	}
+}
+
+// TestMigrationWarnings: a clean Open reports no warnings, and the accessor
+// reflects recorded warnings (the plumbing /api/info exposes to the dashboard).
+func TestMigrationWarnings(t *testing.T) {
+	st, _ := openTest(t)
+	if w := st.MigrationWarnings(); len(w) != 0 {
+		t.Errorf("clean Open should have no migration warnings, got %v", w)
+	}
+	st.recordMigrationWarning("simulated failure", errors.New("boom"))
+	w := st.MigrationWarnings()
+	if len(w) != 1 || w[0] != "simulated failure: boom" {
+		t.Errorf("MigrationWarnings = %v, want one formatted message", w)
 	}
 }

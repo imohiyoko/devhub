@@ -196,3 +196,24 @@ func TestHandleOpenValidDir(t *testing.T) {
 		t.Errorf("body = %v, want ok:true", out)
 	}
 }
+
+// TestEditorReflectsSettingChange documents that the editor is read live from
+// the store on every open — there is no per-process settings snapshot to go
+// stale — so a POST /api/settings change takes effect on the next launch with
+// no server restart (issue #84, settings hot-reload).
+func TestEditorReflectsSettingChange(t *testing.T) {
+	c, st := newController(t)
+	if err := st.SaveSettings(map[string]any{"editor": "code"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.editor(); got != "code" {
+		t.Fatalf("editor = %q, want code", got)
+	}
+	// Change the setting on the same controller instance: no restart, no rebuild.
+	if err := st.SaveSettings(map[string]any{"editor": "cursor"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.editor(); got != "cursor" {
+		t.Errorf("editor = %q after settings change, want cursor (hot reload)", got)
+	}
+}
