@@ -30,7 +30,7 @@ func runCmd(cwd string, timeout time.Duration, extraEnv []string, name string, a
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name, args...) //execaudit:git
 	if cwd != "" {
 		cmd.Dir = cwd
 	}

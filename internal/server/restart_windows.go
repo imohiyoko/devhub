@@ -17,7 +17,7 @@ func reexec(token string) {
 		log.Printf("reexec: failed to resolve executable: %v", err)
 		return
 	}
-	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd := exec.Command(exe, os.Args[1:]...) //execaudit:restart
 	cmd.Env = append(os.Environ(), "DEVHUB_API_TOKEN="+token)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
