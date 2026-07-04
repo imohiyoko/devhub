@@ -339,6 +339,33 @@ footer {
 .update-btn.primary:disabled { opacity: 0.6; cursor: default; }
 
 /* ── Approval Panel ── */
+.migration-warning {
+  background: rgba(22, 27, 34, 0.85);
+  border: 1px solid rgba(248, 81, 73, 0.5);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.migration-warning-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--red);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.migration-warning-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+}
+.migration-warning-list li { margin: 4px 0; word-break: break-all; }
+.migration-warning-hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
 .approval-panel {
   background: rgba(22, 27, 34, 0.85);
   backdrop-filter: blur(12px);
@@ -443,6 +470,11 @@ footer {
 </div>
 
 <main>
+  <div class="migration-warning" id="migrationWarning" hidden>
+    <div class="migration-warning-title">⚠️ ストレージの移行に失敗しました</div>
+    <ul class="migration-warning-list" id="migrationWarningList"></ul>
+    <div class="migration-warning-hint">devhub は起動していますが、一部の旧データが取り込めていない可能性があります。詳細は起動時のログ（stderr）を確認してください。</div>
+  </div>
   <div class="approval-panel" id="approvalPanel">
     <div class="approval-title">⚠️ AI操作の保留中リクエスト</div>
     <div class="approval-detail" id="approvalDetail">-</div>
@@ -739,7 +771,28 @@ async function copyCmd() {
   renderFooter();
   checkUpdate();
   checkPendingApprovals();
+  renderMigrationWarnings();
 })();
+
+// Surface best-effort storage migration failures (see storage.MigrationWarnings):
+// /api/info returns them so the GUI can flag data that stderr-only logging hid.
+async function renderMigrationWarnings() {
+  try {
+    const info = await fetch('/api/info').then(r => r.ok ? r.json() : null);
+    const warnings = info && info.migration_warnings;
+    if (!Array.isArray(warnings) || warnings.length === 0) return;
+    const list = document.getElementById('migrationWarningList');
+    list.innerHTML = '';
+    for (const w of warnings) {
+      const li = document.createElement('li');
+      li.textContent = w; // textContent: never interpolate a message as HTML
+      list.appendChild(li);
+    }
+    document.getElementById('migrationWarning').hidden = false;
+  } catch (e) {
+    console.error('migration warnings check failed:', e);
+  }
+}
 
 /* ── Footer ── */
 // How each backend edition id (see platform.Edition) is labelled in the footer.

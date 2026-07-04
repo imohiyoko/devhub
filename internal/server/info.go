@@ -20,13 +20,20 @@ var instanceID = generateToken()
 // `base` is the devhub home dir (the legacy install-dir hint is meaningless for
 // a single binary). `instance` is a per-process id used for restart detection.
 func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
+	// Normalize to a non-nil slice so the field is always a JSON array, never
+	// null — the dashboard treats a non-empty array as "show the warning".
+	warnings := s.store.MigrationWarnings()
+	if warnings == nil {
+		warnings = []string{}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"base":       platform.DevhubHome(),
-		"port":       s.port,
-		"home":       platform.Home(),
-		"is_windows": platform.IsWindows(),
-		"instance":   instanceID,
-		"version":    s.version,
-		"edition":    s.edition,
+		"base":               platform.DevhubHome(),
+		"port":               s.port,
+		"home":               platform.Home(),
+		"is_windows":         platform.IsWindows(),
+		"instance":           instanceID,
+		"version":            s.version,
+		"edition":            s.edition,
+		"migration_warnings": warnings,
 	})
 }
