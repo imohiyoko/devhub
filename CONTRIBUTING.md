@@ -83,6 +83,14 @@ it at the instance you mean to stop. Note the in-app **ports tool deliberately
 refuses to kill devhub's own PID** (`internal/controllers/ports/ports.go`) as a
 safety measure — that's why this dedicated `stop` exists.
 
+The `devhub` binary itself also has `devhub status` / `devhub stop` (works for
+release-binary users with no checkout; `stop` verifies the listener is devhub
+via `/ai-api/info` before killing). When you're unsure **which devhub the
+command slot runs** (release shim vs source shim vs a stray `devhub.exe` in
+the cwd shadowing it under cmd.exe), run `devhub doctor` — it prints the slot
+kind, the full PATH resolution order and the instance on the configured port.
+See docs/root/0002.
+
 ### Data isolation (optional)
 
 State lives under `DEVHUB_HOME` (default `~/.devhub`; `%LOCALAPPDATA%\devhub` on

@@ -75,6 +75,17 @@ cmd_install() {
   bindir="${DEVHUB_BIN_DIR:-$HOME/.local/bin}"
   dest="$bindir/devhub"
   mkdir -p "$bindir"
+  # コマンドスロットは 1 つ（install.sh のリリース版リンクと同じパス）。最後に
+  # install した方が勝つ設計だが、置き換えは黙って行わず必ず告知する。
+  if [ -L "$dest" ]; then
+    echo "[Notice] 既存のリリース版リンク（$(readlink "$dest")）を dev shim（ソース実行: $REPO_ROOT）に置き換えます。" >&2
+    echo "         リリース版に戻すには: install.sh を再実行してください。" >&2
+  elif [ -f "$dest" ]; then
+    old_root=$(sed -n 's/^cd "\([^"]*\)".*/\1/p' "$dest" | head -n1)
+    if [ -n "$old_root" ] && [ "$old_root" != "$REPO_ROOT" ]; then
+      echo "[Notice] dev shim の参照先を切り替えます: $old_root → $REPO_ROOT" >&2
+    fi
+  fi
   # tmp は EXIT trap（グローバルスコープで実行される）から参照するため、あえて
   # local にしない。local だと set -u 下で trap 実行時に unbound variable になり
   # 掃除されない。書き込み失敗・中断時に中途半端なシムを残さないよう一旦 temp に

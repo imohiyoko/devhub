@@ -20,16 +20,22 @@
 
 ## CLI
 
-env-launcher で起動した環境は、ブラウザを開かずコマンドでも確認・停止できます
-（devhub サーバーが停止中でも動作します）。
+ブラウザを開かなくても、主要な操作はサブコマンドでできます。
 
 ```bash
-devhub env list             # 環境一覧と稼働中ポート
+devhub                      # サーバー起動（従来どおり）
+devhub status               # 設定ポートの稼働確認（非稼働なら exit 1）
+devhub stop                 # そのインスタンスを停止（devhub であることを確認してから kill）
+devhub doctor               # 「何が起動するか / 何が動いているか」を診断（スロット・PATH・稼働状況）
+devhub env list             # env-launcher の環境一覧と稼働中ポート
 devhub env stop <env-id>    # その環境のポートで LISTEN 中のプロセスを kill
+devhub version / help
 ```
 
-保護ポート（ports ツールで設定）と devhub 本体のポートは kill されません。
-詳細は [docs/env-launcher/0002](docs/env-launcher/0002-cli-env-stop.md)。
+`env stop` はサーバー停止中でも動作します。保護ポート（ports ツールで設定）と
+devhub 本体のポートは kill されません。
+詳細は [docs/env-launcher/0002](docs/env-launcher/0002-cli-env-stop.md) と
+[docs/root/0002](docs/root/0002-single-command-slot-and-cli.md)。
 
 ## セットアップ
 

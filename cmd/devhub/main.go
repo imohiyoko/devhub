@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	devhub "github.com/imohiyoko/devhub"
 	"github.com/imohiyoko/devhub/internal/platform"
@@ -23,26 +24,22 @@ var (
 )
 
 func main() {
-	// Subcommands are dispatched before flag parsing: `devhub env …` is a
-	// short-lived CLI action against the local state (see env.go), not a server
-	// start, so the server flags don't apply to it.
-	if len(os.Args) > 1 && os.Args[1] == "env" {
-		os.Exit(runEnv(os.Args[2:]))
+	// Subcommands are dispatched before flag parsing: they are short-lived CLI
+	// actions against local state (see cli.go), not a server start, so the
+	// server flags don't apply to them. Any non-flag first argument goes
+	// through the dispatcher, so an unknown word errors with the usage instead
+	// of being silently swallowed by flag.Parse and starting the server.
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
+		os.Exit(runSubcommand(os.Args[1], os.Args[2:]))
 	}
 
 	noBrowser := flag.Bool("no-browser", false, "do not open a browser on start")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	flag.Usage = func() { fmt.Fprint(os.Stderr, rootUsage) }
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("devhub", version)
-		fmt.Println("  edition:", platform.Edition(version))
-		if commit != "" {
-			fmt.Println("  commit:", commit)
-		}
-		if date != "" {
-			fmt.Println("  built: ", date)
-		}
+		printVersion()
 		return
 	}
 
@@ -72,5 +69,18 @@ func main() {
 	if err := srv.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "devhub:", err)
 		os.Exit(1)
+	}
+}
+
+// printVersion prints the stamped version/edition, shared by the -version
+// flag and the `version` subcommand.
+func printVersion() {
+	fmt.Println("devhub", version)
+	fmt.Println("  edition:", platform.Edition(version))
+	if commit != "" {
+		fmt.Println("  commit:", commit)
+	}
+	if date != "" {
+		fmt.Println("  built: ", date)
 	}
 }
