@@ -285,6 +285,68 @@ footer {
 }
 .footer-link:hover { color: var(--accent); }
 .footer-spacer { flex: 1; }
+.footer-version { cursor: pointer; }
+.footer-version:hover { color: var(--text); }
+.footer-update {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  border-radius: 9px;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.footer-update:hover { background: var(--accent); color: #fff; }
+
+/* ── Update modal ── */
+.update-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.update-overlay[hidden] { display: none; }
+.update-modal {
+  background: #161b22;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: min(440px, 100%);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.update-modal h2 { font-size: 15px; margin: 0 0 14px; }
+.update-ver {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: "SF Mono", ui-monospace, monospace;
+  color: var(--muted); margin-bottom: 16px;
+}
+.update-ver strong { color: var(--text); }
+.update-ver .arrow { color: var(--accent); }
+.update-note { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0 0 12px; }
+.update-cmd {
+  display: flex; gap: 8px; align-items: center;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; margin-bottom: 4px;
+  font-family: "SF Mono", ui-monospace, monospace; font-size: 12px;
+}
+.update-cmd code { flex: 1; color: var(--text); overflow-x: auto; white-space: nowrap; }
+.update-opt {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: 11px; margin-top: 16px;
+}
+.update-actions { display: flex; gap: 8px; align-items: center; margin-top: 18px; }
+.update-spacer { flex: 1; }
+.update-btn {
+  border: 1px solid var(--border); background: transparent; color: var(--text);
+  border-radius: 8px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.update-btn:hover { border-color: var(--accent); }
+.update-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.update-btn.primary:disabled { opacity: 0.6; cursor: default; }
 
 /* ── Approval Panel ── */
 .approval-panel {
@@ -408,11 +470,32 @@ footer {
 <footer>
   <span>devhub</span>
   <span class="footer-sep">·</span>
-  <span id="footerVersion">…</span>
+  <span class="footer-version" id="footerVersion" title="アップデートを確認">…</span>
   <span class="footer-edition" id="footerEdition" hidden></span>
+  <button class="footer-update" id="footerUpdate" hidden></button>
   <span class="footer-spacer"></span>
   <a class="footer-link" href="https://github.com/imohiyoko/devhub" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
 </footer>
+
+<div class="update-overlay" id="updateOverlay" hidden>
+  <div class="update-modal" role="dialog" aria-modal="true" aria-labelledby="updateTitle">
+    <h2 id="updateTitle">アップデート</h2>
+    <div class="update-ver">
+      <span id="updateCurrent">—</span>
+      <span class="arrow" id="updateArrow" hidden>→</span>
+      <strong id="updateLatest" hidden></strong>
+    </div>
+    <div id="updateBody"></div>
+    <label class="update-opt" id="updateOpt" hidden>
+      <input type="checkbox" id="updateCheckOpt"> 起動時に更新を確認する
+    </label>
+    <div class="update-actions">
+      <span class="update-spacer"></span>
+      <button class="update-btn" id="updateClose">閉じる</button>
+      <button class="update-btn primary" id="updateApply" hidden>今すぐ更新</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // Tool cards are sourced from GET /api/tools (registry-driven), so adding a
@@ -664,6 +747,7 @@ async function copyCmd() {
   renderGrid();
   renderToggles();
   renderFooter();
+  checkUpdate();
   checkPendingApprovals();
 })();
 
@@ -688,6 +772,152 @@ async function renderFooter() {
     vEl.textContent = '—';
   }
 }
+
+/* ── Update ── */
+let updateStatus = null;
+
+// Format a backend version ("1.2.3" / "v1.2.3" / "dev") for display.
+function fmtVer(v) {
+  if (!v) return '—';
+  v = String(v);
+  return v === 'dev' ? 'dev' : 'v' + v.replace(/^v/, '');
+}
+
+// Query the backend for update availability and reflect it in the footer badge.
+// Silent on failure (offline): the badge simply stays hidden.
+async function checkUpdate() {
+  const badge = document.getElementById('footerUpdate');
+  try {
+    updateStatus = await fetch('/api/update/status').then(r => r.ok ? r.json() : null);
+  } catch { updateStatus = null; }
+  if (updateStatus && updateStatus.update_available) {
+    badge.textContent = '⬆ 更新 ' + fmtVer(updateStatus.latest);
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+}
+
+async function openUpdateModal() {
+  // Refresh so the modal reflects current state even when opened long after load.
+  if (!updateStatus) { try { await checkUpdate(); } catch { /* offline */ } }
+  renderUpdateModal(updateStatus || {});
+  document.getElementById('updateOverlay').hidden = false;
+}
+function closeUpdateModal() { document.getElementById('updateOverlay').hidden = true; }
+
+// Render the modal for every state: dev/source build, checks disabled, offline,
+// update-available (installer → one-click; homebrew → command), or up-to-date.
+function renderUpdateModal(st) {
+  const arrowEl = document.getElementById('updateArrow');
+  const latestEl = document.getElementById('updateLatest');
+  const body = document.getElementById('updateBody');
+  const opt = document.getElementById('updateOpt');
+  const applyBtn = document.getElementById('updateApply');
+
+  document.getElementById('updateCurrent').textContent = fmtVer(st.current);
+  arrowEl.hidden = true;
+  latestEl.hidden = true; latestEl.textContent = '';
+  applyBtn.hidden = true; applyBtn.disabled = false; applyBtn.textContent = '今すぐ更新';
+  opt.hidden = false;
+  document.getElementById('updateCheckOpt').checked = !st.disabled;
+
+  if (st.edition === 'code' || st.current === 'dev' || !st.current) {
+    body.innerHTML = '<p class="update-note">ソースから起動しているため更新は不要です（開発ビルド）。</p>';
+    opt.hidden = true;
+  } else if (st.disabled) {
+    body.innerHTML = '<p class="update-note">更新の確認はオフになっています。</p>';
+  } else if (st.error) {
+    body.innerHTML = '<p class="update-note">更新の確認に失敗しました（オフラインの可能性があります）。</p>';
+  } else if (st.update_available) {
+    arrowEl.hidden = false;
+    latestEl.hidden = false; latestEl.textContent = fmtVer(st.latest);
+    if (st.can_self_update) {
+      body.innerHTML = '<p class="update-note">新しいバージョンをダウンロードし、checksums.txt（SHA256）で検証してから入れ替え、自動で再起動します。</p>';
+      applyBtn.hidden = false;
+    } else if (st.upgrade_hint) {
+      body.innerHTML = '<p class="update-note">次のコマンドで更新できます。</p>'
+        + '<div class="update-cmd"><code id="updateCmdText"></code>'
+        + '<button class="update-btn" id="updateCopyCmd">コピー</button></div>';
+      document.getElementById('updateCmdText').textContent = st.upgrade_hint;
+      document.getElementById('updateCopyCmd').onclick = async () => {
+        try { await navigator.clipboard.writeText(st.upgrade_hint); } catch { /* ignore */ }
+        const b = document.getElementById('updateCopyCmd');
+        b.textContent = 'コピー済'; setTimeout(() => { b.textContent = 'コピー'; }, 1200);
+      };
+    }
+  } else {
+    body.innerHTML = '<p class="update-note">最新バージョンです。</p>';
+  }
+}
+
+async function toggleUpdateCheck(e) {
+  const enabled = e.target.checked;
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ update_check: enabled }),
+    });
+  } catch { /* best effort */ }
+  // Re-check so enabling shows the badge immediately when an update exists.
+  await checkUpdate();
+  renderUpdateModal(updateStatus || {});
+}
+
+// Trigger the server-side download+verify+swap, then restart. Reuses the
+// rebuild flow's instance-id polling to detect the replacement process.
+async function doSelfUpdate() {
+  const btn = document.getElementById('updateApply');
+  btn.disabled = true; btn.textContent = 'ダウンロード中…';
+  const reset = () => { btn.disabled = false; btn.textContent = '今すぐ更新'; };
+
+  let origInstance = null;
+  try { origInstance = (await fetch('/api/info').then(r => r.json())).instance ?? null; } catch { /* ignore */ }
+
+  let res;
+  try {
+    res = await fetch('/api/update/apply', { method: 'POST' });
+  } catch { alert('更新の開始に失敗しました。'); reset(); return; }
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    alert(e.error || `更新に失敗しました (${res.status})`);
+    reset(); return;
+  }
+
+  // The server verified + swapped the binary and is re-execing; wait for the
+  // replacement to advertise a new instance id, then reload.
+  btn.textContent = '再起動待ち…';
+  const startedAt = Date.now();
+  const DEADLINE_MS = 120000;
+  const poll = setInterval(async () => {
+    if (Date.now() - startedAt > DEADLINE_MS) {
+      clearInterval(poll);
+      alert('再起動の確認がタイムアウトしました。手動でリロードしてください。');
+      reset(); return;
+    }
+    try {
+      const info = await fetch('/api/info').then(r => r.ok ? r.json() : null);
+      if (info && info.instance) {
+        if (origInstance === null) origInstance = info.instance;
+        else if (info.instance !== origInstance) {
+          clearInterval(poll);
+          localStorage.setItem('devhub:reloaded', String(Date.now()));
+          location.reload();
+        }
+      }
+    } catch { /* restarting — ignore */ }
+  }, 500);
+}
+
+document.getElementById('footerUpdate').addEventListener('click', openUpdateModal);
+document.getElementById('footerVersion').addEventListener('click', openUpdateModal);
+document.getElementById('updateClose').addEventListener('click', closeUpdateModal);
+document.getElementById('updateApply').addEventListener('click', doSelfUpdate);
+document.getElementById('updateCheckOpt').addEventListener('change', toggleUpdateCheck);
+document.getElementById('updateOverlay').addEventListener('click', (e) => {
+  if (e.target.id === 'updateOverlay') closeUpdateModal();
+});
 
 /* ── Approval handling ── */
 let currentPendingRequest = null;

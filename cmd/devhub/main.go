@@ -12,6 +12,7 @@ import (
 	"github.com/imohiyoko/devhub/internal/platform"
 	"github.com/imohiyoko/devhub/internal/server"
 	"github.com/imohiyoko/devhub/internal/storage"
+	"github.com/imohiyoko/devhub/internal/updater"
 )
 
 // version/commit/date are stamped at build time via -ldflags "-X main.version=...".
@@ -37,6 +38,10 @@ func main() {
 		}
 		return
 	}
+
+	// A Windows self-update leaves the previous binary as "<exe>.old" (a running
+	// .exe can't be deleted); remove it now that the old process has exited.
+	updater.CleanupOld()
 
 	home := platform.DevhubHome()
 	store, err := storage.Open(home, devhub.Assets)

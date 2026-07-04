@@ -22,7 +22,7 @@ var toolIDRe = regexp.MustCompile(`^[a-z0-9_-]+$`)
 var settingsAllowlist = map[string]bool{
 	"disabled_tools": true, "tool_order": true, "editor": true,
 	"open_browser_on_start": true, "db_connections": true, "port_labels": true,
-	"protected_ports": true, "terminal": true,
+	"protected_ports": true, "terminal": true, "update_check": true,
 }
 
 var configKeys = []string{"scan_roots", "excludes", "pinned_repos", "repo_order", "hidden_repos"}
