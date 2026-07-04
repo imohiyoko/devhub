@@ -75,6 +75,13 @@ func TestParseArgs(t *testing.T) {
 			t.Fatal("expected error for --go-name without value")
 		}
 	})
+	t.Run("empty --go-name=", func(t *testing.T) {
+		// Symmetric with the bare --go-name: an explicit empty value must not be
+		// silently ignored and fall back to the derived name.
+		if _, _, _, err := parseArgs([]string{"notes", "--go-name="}); err == nil {
+			t.Fatal("expected error for empty --go-name=")
+		}
+	})
 }
 
 const sampleRegistry = "package tools\n\nfunc Registry() *core.Registry {\n\treturn core.NewRegistry(\n" +
