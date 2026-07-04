@@ -13,6 +13,32 @@ func openSQLite(path string) (*sql.DB, error) {
 	return sql.Open("sqlite", path)
 }
 
+// sqliteEngine adapts the package-level SQLite operations to the dbEngine
+// interface. Rows are keyed by rowid.
+type sqliteEngine struct{}
+
+func (sqliteEngine) Tables(p *connProfile) ([]map[string]any, error) { return sqliteTables(p.path) }
+
+func (sqliteEngine) Rows(p *connProfile, table string, limit, offset int, search string) (map[string]any, error) {
+	return sqliteRows(p.path, table, limit, offset, search)
+}
+
+func (sqliteEngine) Search(p *connProfile, columnSearch, elementSearch string) (map[string]any, error) {
+	return sqliteSearch(p.path, columnSearch, elementSearch)
+}
+
+func (sqliteEngine) Update(p *connProfile, table, column string, key, value any) error {
+	return sqliteUpdate(p.path, table, column, key, value)
+}
+
+func (sqliteEngine) Insert(p *connProfile, table string) (any, error) {
+	return sqliteInsert(p.path, table)
+}
+
+func (sqliteEngine) Delete(p *connProfile, table string, key any) error {
+	return sqliteDelete(p.path, table, key)
+}
+
 // queryMaps runs a query and returns each row as name->value, plus column names.
 // Values are the driver's natural Go types (int64/float64/string/[]byte/nil).
 func queryMaps(db *sql.DB, query string, args ...any) ([]map[string]any, []string, error) {

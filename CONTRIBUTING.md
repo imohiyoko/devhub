@@ -124,27 +124,36 @@ on Windows) then `devhub` (or the dashboard's ↻ rebuild).
 ## Add a tool
 
 ```bash
-make new-tool NAME=notes
+go run ./scripts/newtool notes              # or: make new-tool NAME=notes
+go run ./scripts/newtool my-tool --page-only
 ```
 
-This scaffolds:
+`newtool` is a pure-Go generator (runs the same on PowerShell-only Windows). It
+scaffolds:
 
-- `internal/tools/notes.go` — a `core.Tool` adapter (Meta + Routes)
-- `tools/notes/index.html` — a page stub (auto-embedded via `assets.go`)
+- `internal/tools/<id>.go` — a `core.Tool` adapter (Meta + Routes)
+- `tools/<id>/index.html` — a page stub (auto-embedded via `assets.go`)
 
-Then do the one wiring step it prints: add `newNotes()` to the `NewRegistry(...)`
-list in `internal/tools/registry.go`. Build and run — the dashboard card appears
-automatically from `GET /api/tools`.
+and **wires it into `internal/tools/registry.go` for you** — no manual step. Build
+and run; the dashboard card appears automatically from `GET /api/tools`.
+
+Flags: `--page-only` scaffolds a frontend-only tool that reuses `pageTool` (no API
+route), like diff-kun / diagram. `--go-name <Name>` overrides the derived Go type
+name when the auto-derivation isn't what you want.
 
 Notes:
 
-- `Meta.ID` is the route namespace: the page is served at `/<id>`. Use a
-  Go-identifier-safe id (lowercase, no dashes) so the generated type compiles;
-  put a nicer label in `Title`. API routes are declared explicitly in `Routes()`,
-  so they may differ from the id (e.g. db-table serves `/api/db/*`).
+- `Meta.ID` is the route namespace: the page is served at `/<id>`. Dash-in-id is
+  fine (e.g. `db-table`, `env-launcher`); the generator derives a valid Go type
+  name by dropping dashes and CamelCasing (`my-tool` → `newMyTool`), so the id can
+  match the shipped tools' conventions. API routes are declared explicitly in
+  `Routes()`, so they may differ from the id (e.g. db-table serves `/api/db/*`).
 - An API-only tool (no `Page`) is valid — it simply has no dashboard card.
 - Give each tool its own storage namespace with `core.Namespace(store, id)` so
   tools never collide on keys.
+
+Both `make new-tool NAME=<id> [ARGS=--page-only]` and `mise run new-tool -- <id>
+[--page-only]` are thin wrappers around `go run ./scripts/newtool`.
 
 ## How rich should a tool be?
 

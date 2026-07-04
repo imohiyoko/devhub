@@ -24,7 +24,9 @@ fmt-check:
 		echo "these files need gofmt:"; echo "$$unformatted"; exit 1; \
 	fi
 
-# Scaffold a new tool: make new-tool NAME=notes
+# Scaffold a new tool (Go generator; dash-in-id OK, registry auto-wired):
+#   make new-tool NAME=notes
+#   make new-tool NAME=my-tool ARGS=--page-only
 new-tool:
-	@test -n "$(NAME)" || { echo "usage: make new-tool NAME=<id>"; exit 2; }
-	@scripts/new-tool.sh "$(NAME)"
+	@test -n "$(NAME)" || { echo "usage: make new-tool NAME=<id> [ARGS=--page-only]"; exit 2; }
+	@go run ./scripts/newtool "$(NAME)" $(ARGS)
