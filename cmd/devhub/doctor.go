@@ -142,7 +142,9 @@ func runDoctor() int {
 	fmt.Println("[command slot]")
 	slot := slotFile()
 	slotDesc := "missing"
+	slotExists := false
 	if fi, err := os.Lstat(slot); err == nil {
+		slotExists = true
 		if fi.Mode()&os.ModeSymlink != 0 {
 			target, _ := os.Readlink(slot)
 			slotDesc = fmt.Sprintf("release link → %s", target)
@@ -169,15 +171,12 @@ func runDoctor() int {
 				warns = append(warns, fmt.Sprintf("slot %s has unrecognized content — not written by a devhub installer?", slot))
 			}
 		}
-	} else {
-		warns = append(warns, fmt.Sprintf("no command in the expected slot %s (run install.ps1/install.sh or scripts/dev install)", slot))
 	}
 	fmt.Printf("  slot       : %s — %s\n", slot, slotDesc)
 
 	hits := scanPathForDevhub(filepath.SplitList(os.Getenv("PATH")), platform.IsWindows(), executableFile)
 	if len(hits) == 0 {
 		fmt.Println("  PATH       : no devhub found on PATH")
-		warns = append(warns, "PATH has no devhub — new terminals cannot start it")
 	}
 	for i, h := range hits {
 		mark := "   (shadowed)"
@@ -186,8 +185,17 @@ func runDoctor() int {
 		}
 		fmt.Printf("  PATH %d     : %s%s\n", i+1, h, mark)
 	}
-	if len(hits) > 0 && !sameFilePath(hits[0], slot) {
+	switch {
+	case slotExists && len(hits) > 0 && !sameFilePath(hits[0], slot):
 		warns = append(warns, fmt.Sprintf("PATH resolves %s before the slot %s", hits[0], slot))
+	case !slotExists && len(hits) > 0:
+		// An empty installer slot is fine when `devhub` comes from somewhere
+		// legitimate the installers don't manage — Homebrew on macOS, a distro
+		// package, a hand-rolled setup. The PATH listing above already names
+		// it, so this is information, not a warning.
+		fmt.Printf("  note       : the installer slot is unused; `devhub` comes from %s\n", hits[0])
+	case !slotExists && len(hits) == 0:
+		warns = append(warns, fmt.Sprintf("no devhub on PATH and none in the expected slot %s — run install.ps1/install.sh or scripts/dev install", slot))
 	}
 
 	relBin := filepath.Join(platform.DevhubHome(), "bin", exeName())
