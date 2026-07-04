@@ -25,6 +25,7 @@ func newMemStore() *memStore { return &memStore{m: map[string][]byte{}} }
 
 func (s *memStore) Get(k string) ([]byte, error) { return s.m[k], nil }
 func (s *memStore) Set(k string, v []byte) error { s.m[k] = v; return nil }
+func (s *memStore) Delete(k string) error        { delete(s.m, k); return nil }
 
 func do(g *Gateway, method, path string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
@@ -246,6 +247,16 @@ func TestNamespace_Isolation(t *testing.T) {
 	}
 	if _, ok := base.m["ports:config"]; !ok {
 		t.Fatalf("expected key ports:config, have %v", keys(base.m))
+	}
+	// Delete is namespaced too: dropping a's key must not touch b's.
+	if err := a.Delete("config"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := base.m["git:config"]; ok {
+		t.Fatalf("Delete should have removed git:config, have %v", keys(base.m))
+	}
+	if _, ok := base.m["ports:config"]; !ok {
+		t.Fatalf("Delete on a must not remove ports:config, have %v", keys(base.m))
 	}
 }
 

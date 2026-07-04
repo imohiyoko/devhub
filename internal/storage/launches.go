@@ -3,6 +3,8 @@ package storage
 import (
 	"encoding/json"
 	"errors"
+
+	"github.com/imohiyoko/devhub/internal/jsonx"
 )
 
 // LoadLaunches reconstructs the {"launches": [...]} document from the launches
@@ -31,8 +33,50 @@ func (s *Store) LoadLaunches() (map[string]any, error) {
 	return map[string]any{"launches": launches}, nil
 }
 
+// AppendLaunch appends record to the launch registry, serializing the
+// load->mutate->save under RegistryMu so two concurrent launches cannot lose
+// each other's records. It is the write half of the registry the env-launcher
+// drives through the store seam: RegistryMu is a Store field an interface
+// cannot express, so this method (not the raw mutex) is what envs depends on.
+func (s *Store) AppendLaunch(record map[string]any) error {
+	s.RegistryMu.Lock()
+	defer s.RegistryMu.Unlock()
+	data, err := s.LoadLaunches()
+	if err != nil {
+		return err
+	}
+	list, _ := data["launches"].([]any)
+	data["launches"] = append(list, record)
+	return s.SaveLaunches(data)
+}
+
+// RemoveLaunch drops the launch with launchID from the registry, serializing the
+// load->mutate->save under RegistryMu. A missing launchID is a no-op here; the
+// caller checks existence separately so it can return its own error message.
+func (s *Store) RemoveLaunch(launchID string) error {
+	s.RegistryMu.Lock()
+	defer s.RegistryMu.Unlock()
+	data, err := s.LoadLaunches()
+	if err != nil {
+		return err
+	}
+	list, _ := data["launches"].([]any)
+	filtered := make([]any, 0, len(list))
+	for _, l := range list {
+		if m, ok := l.(map[string]any); ok {
+			if id, _ := m["launch_id"].(string); id == launchID {
+				continue
+			}
+		}
+		filtered = append(filtered, l)
+	}
+	data["launches"] = filtered
+	return s.SaveLaunches(data)
+}
+
 // SaveLaunches replaces the entire launches table in a single transaction.
-// Callers serialize load->mutate->save under Store.RegistryMu.
+// Callers serialize load->mutate->save under Store.RegistryMu (see
+// AppendLaunch / RemoveLaunch, which own that sequence for the env-launcher).
 func (s *Store) SaveLaunches(data map[string]any) error {
 	// Normalize the launches value up front. A silent type mismatch here would
 	// run the DELETE below with nothing to re-insert, wiping the whole table.
@@ -70,7 +114,7 @@ func (s *Store) SaveLaunches(data map[string]any) error {
 			// id-less records here just as importLaunches does on migration.
 			continue
 		}
-		b, err := marshalJSON(rec)
+		b, err := jsonx.Marshal(rec)
 		if err != nil {
 			_ = tx.Rollback()
 			return err
