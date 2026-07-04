@@ -42,6 +42,11 @@ type connProfile struct {
 
 func (p *connProfile) sanitized() map[string]any { return sanitize.DBConnection(p.raw) }
 
+// sqliteDBPath resolves and validates a SQLite file path (must exist and be a
+// file). SQLite file access is intentionally left unconstrained to any
+// server-readable path: db_local_only governs only MySQL hosts, not SQLite
+// paths. Tightening this (e.g. UNC/path allowlists for db_local_only symmetry)
+// is deliberately deferred.
 func sqliteDBPath(raw string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("database path is required")

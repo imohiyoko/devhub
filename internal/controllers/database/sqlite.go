@@ -9,8 +9,28 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func openSQLite(path string) (*sql.DB, error) {
-	return sql.Open("sqlite", path)
+// sqliteDSN builds a modernc.org/sqlite DSN opening the existing file at path in
+// the given access mode ("ro" or "rw"; never "rwc" — we never create the target,
+// existence is validated upstream in sqliteDBPath). PRAGMAs live in the DSN so
+// every pooled connection inherits them: busy_timeout(5000) makes a lock held by
+// another writer wait up to 5s and retry, instead of surfacing an immediate
+// "database is locked" to the UI.
+func sqliteDSN(path, mode string) string {
+	return "file:" + path + "?mode=" + mode + "&_pragma=busy_timeout(5000)"
+}
+
+// openSQLiteRO opens the SQLite file read-only, so viewing operations
+// (tables/rows/search) can never modify the target file. busy_timeout(5000)
+// lets a read tolerate a concurrent writer's lock rather than error out.
+func openSQLiteRO(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", sqliteDSN(path, "ro"))
+}
+
+// openSQLiteRW opens the SQLite file read-write (no create) for the mutating
+// operations (update/insert/delete). busy_timeout(5000) waits out a lock held
+// by another writer instead of failing immediately.
+func openSQLiteRW(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", sqliteDSN(path, "rw"))
 }
 
 // sqliteEngine adapts the package-level SQLite operations to the dbEngine
@@ -77,7 +97,7 @@ func scalarInt(db *sql.DB, query string, args ...any) (int64, error) {
 }
 
 func sqliteTables(path string) ([]map[string]any, error) {
-	db, err := openSQLite(path)
+	db, err := openSQLiteRO(path)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +194,7 @@ func sqliteSearchCondition(cols []map[string]any, search string) (string, []any)
 }
 
 func sqliteRows(path, table string, limit, offset int, search string) (map[string]any, error) {
-	db, err := openSQLite(path)
+	db, err := openSQLiteRO(path)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +263,7 @@ func sqliteSearch(path, columnSearch, elementSearch string) (map[string]any, err
 	if cs == "" && es == "" {
 		return result, nil
 	}
-	db, err := openSQLite(path)
+	db, err := openSQLiteRO(path)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +316,7 @@ func sqliteSearch(path, columnSearch, elementSearch string) (map[string]any, err
 }
 
 func sqliteUpdate(path, table, column string, key, value any) error {
-	db, err := openSQLite(path)
+	db, err := openSQLiteRW(path)
 	if err != nil {
 		return err
 	}
@@ -346,7 +366,7 @@ func sqliteUpdate(path, table, column string, key, value any) error {
 }
 
 func sqliteInsert(path, table string) (any, error) {
-	db, err := openSQLite(path)
+	db, err := openSQLiteRW(path)
 	if err != nil {
 		return nil, err
 	}
@@ -371,7 +391,7 @@ func sqliteInsert(path, table string) (any, error) {
 }
 
 func sqliteDelete(path, table string, key any) error {
-	db, err := openSQLite(path)
+	db, err := openSQLiteRW(path)
 	if err != nil {
 		return err
 	}
