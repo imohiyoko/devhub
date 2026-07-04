@@ -43,6 +43,32 @@ func openMySQL(p *connProfile) (*sql.DB, error) {
 	return sql.Open("mysql", mysqlDSN(p))
 }
 
+// mysqlEngine adapts the package-level MySQL/MariaDB operations to the dbEngine
+// interface. Rows are keyed by primary key.
+type mysqlEngine struct{}
+
+func (mysqlEngine) Tables(p *connProfile) ([]map[string]any, error) { return mysqlTables(p) }
+
+func (mysqlEngine) Rows(p *connProfile, table string, limit, offset int, search string) (map[string]any, error) {
+	return mysqlRows(p, table, limit, offset, search)
+}
+
+func (mysqlEngine) Search(p *connProfile, columnSearch, elementSearch string) (map[string]any, error) {
+	return mysqlSearch(p, columnSearch, elementSearch)
+}
+
+func (mysqlEngine) Update(p *connProfile, table, column string, key, value any) error {
+	return mysqlUpdate(p, table, column, key, value)
+}
+
+func (mysqlEngine) Insert(p *connProfile, table string) (any, error) {
+	return mysqlInsert(p, table)
+}
+
+func (mysqlEngine) Delete(p *connProfile, table string, key any) error {
+	return mysqlDelete(p, table, key)
+}
+
 // mysqlQuery runs a read on the shared connection with a per-statement timeout
 // and returns each row as name->value. Every non-NULL value is returned as a
 // string — mirroring the old `mysql --xml` output, and ensuring encoding/json
