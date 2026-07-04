@@ -100,7 +100,7 @@ func mysqlRun(p *connProfile, query string) ([]map[string]any, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "mysql", args...)
+	cmd := exec.CommandContext(ctx, "mysql", args...) //execaudit:mysql
 	cmd.Env = os.Environ()
 	if p.password != "" {
 		cmd.Env = append(cmd.Env, "MYSQL_PWD="+p.password)

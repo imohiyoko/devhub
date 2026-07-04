@@ -50,15 +50,15 @@ func openInEditor(editor, path string) {
 		if p, err := exec.LookPath(editor); err == nil {
 			resolved = p
 		}
-		cmd = exec.Command(resolved, path)
+		cmd = exec.Command(resolved, path) //execaudit:workspace-editor
 	case "darwin":
 		if app, ok := darwinApps[editor]; ok {
-			cmd = exec.Command("open", "-a", app, path)
+			cmd = exec.Command("open", "-a", app, path) //execaudit:workspace-editor
 		} else {
-			cmd = exec.Command(editor, path)
+			cmd = exec.Command(editor, path) //execaudit:workspace-editor
 		}
 	default:
-		cmd = exec.Command(editor, path)
+		cmd = exec.Command(editor, path) //execaudit:workspace-editor
 	}
 	_ = cmd.Start() // fire-and-forget, matching subprocess.Popen
 }

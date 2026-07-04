@@ -110,7 +110,7 @@ func listRaw() ([]rawPort, error) {
 }
 
 func listUnix() ([]rawPort, error) {
-	out, err := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN").Output()
+	out, err := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN").Output() //execaudit:ports-list
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return nil, fmt.Errorf("lsof command was not found. Please install lsof (e.g. `sudo apt install lsof`).")
@@ -163,7 +163,7 @@ func parseLsof(out string) []rawPort {
 }
 
 func listWindows() ([]rawPort, error) {
-	out, err := exec.Command("netstat", "-ano", "-p", "tcp").Output()
+	out, err := exec.Command("netstat", "-ano", "-p", "tcp").Output() //execaudit:ports-list
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
