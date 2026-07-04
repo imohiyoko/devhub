@@ -370,6 +370,18 @@ async function saveConfig() {
   });
 }
 
+// ── HTML escaping ────────────────────────────────────
+// Repo/dir names and paths come from the filesystem (/api/ls, /api/repos) and
+// on macOS/Linux may legally contain < > " ' — they must never reach innerHTML
+// raw. escapeHtml covers text and quoted-attribute contexts; for values spliced
+// into inline on*="…'${p}'…" handlers, HTML-escape the JS-escaped string so a
+// quote/angle-bracket can neither break out of the attribute nor the JS literal.
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 // ── Scan roots ───────────────────────────────────────
 function renderRootList() {
   const el = document.getElementById('root-list');
@@ -379,7 +391,7 @@ function renderRootList() {
   }
   el.innerHTML = scanRoots.map((r, i) => `
     <div class="root-item">
-      <span title="${r}">${r}</span>
+      <span title="${escapeHtml(r)}">${escapeHtml(r)}</span>
       <button onclick="removeRoot(${i})" title="削除">✕</button>
     </div>
   `).join('');
@@ -425,7 +437,7 @@ async function browseTo(path) {
   }
 
   const rows = data.entries.map(e => {
-    const p = e.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const p = escapeHtml(e.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
     const icon = e.is_git ? '<span style="color:var(--muted)">◈</span>' : '<span>📁</span>';
     const navAttr = !e.is_git ? `onclick="browseTo('${p}')"` : '';
     const addBtn = e.in_workspace ? '' :
@@ -435,7 +447,7 @@ async function browseTo(path) {
     return `
       <div class="dir-entry ${e.is_git ? 'repo' : 'nav'}" ${navAttr}>
         ${icon}
-        <span class="entry-name" title="${e.path}">${e.name}</span>
+        <span class="entry-name" title="${escapeHtml(e.path)}">${escapeHtml(e.name)}</span>
         <div class="entry-actions">
           ${addBtn}${codeBtn}${arrow}
         </div>
@@ -523,7 +535,7 @@ function render(query) {
     return;
   }
   list.innerHTML = visible.map(r => {
-    const p = r.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const p = escapeHtml(r.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
     return `
     <div class="repo-item" draggable="true"
          ondragstart="onDragStart(event,'${p}')"
@@ -533,8 +545,8 @@ function render(query) {
          onclick="openVSCode(this,'${p}')">
       <span class="drag-handle" onclick="event.stopPropagation()">⠿</span>
       <span class="repo-icon">📁</span>
-      <span class="repo-name">${r.name}</span>
-      <span class="repo-path">${r.path}</span>
+      <span class="repo-name">${escapeHtml(r.name)}</span>
+      <span class="repo-path">${escapeHtml(r.path)}</span>
       <span class="open-hint">code で開く →</span>
       <button class="hide-btn" onclick="hideRepo(event,'${p}')" title="非表示にする">✕</button>
     </div>
