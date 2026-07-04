@@ -24,6 +24,11 @@ type Store struct {
 	assets      fs.FS
 	settingsDir string
 
+	// migrationWarnings holds messages for best-effort migrations that failed
+	// during Open. Read via MigrationWarnings so the GUI can surface a failure
+	// that would otherwise be visible only on stderr.
+	migrationWarnings []string
+
 	// RegistryMu serializes load->mutate->save of the launch registry.
 	RegistryMu sync.Mutex
 }
@@ -56,15 +61,28 @@ func Open(home string, assets fs.FS) (*Store, error) {
 	}
 	if err := s.migrate(); err != nil {
 		// Best-effort: a migration failure must not block startup.
-		fmt.Fprintf(os.Stderr, "storage: JSON->SQLite migration failed: %v\n", err)
+		s.recordMigrationWarning("JSON->SQLite migration failed", err)
 	}
 	if err := s.migrateSettingsRows(); err != nil {
 		// Best-effort too: LoadSettings still reads the legacy blob until the
 		// explosion into rows succeeds on a later startup.
-		fmt.Fprintf(os.Stderr, "storage: settings blob->rows migration failed: %v\n", err)
+		s.recordMigrationWarning("settings blob->rows migration failed", err)
 	}
 	return s, nil
 }
+
+// recordMigrationWarning logs a best-effort migration failure to stderr and
+// retains it for MigrationWarnings so the dashboard can flag it.
+func (s *Store) recordMigrationWarning(what string, err error) {
+	msg := fmt.Sprintf("%s: %v", what, err)
+	fmt.Fprintln(os.Stderr, "storage: "+msg)
+	s.migrationWarnings = append(s.migrationWarnings, msg)
+}
+
+// MigrationWarnings returns messages for any best-effort migration that failed
+// during Open; it is empty when startup migrations were clean. Such migrations
+// don't block startup, so this is how the UI learns a failure happened.
+func (s *Store) MigrationWarnings() []string { return s.migrationWarnings }
 
 // Close releases the underlying database handle.
 func (s *Store) Close() error { return s.db.Close() }

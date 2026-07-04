@@ -64,6 +64,12 @@ func (s *Store) SaveLaunches(data map[string]any) error {
 			continue
 		}
 		id, _ := rec["launch_id"].(string)
+		if id == "" {
+			// launch_id is the PRIMARY KEY. Two empty ids would collide under
+			// INSERT OR REPLACE and one launch would silently vanish, so skip
+			// id-less records here just as importLaunches does on migration.
+			continue
+		}
 		b, err := marshalJSON(rec)
 		if err != nil {
 			_ = tx.Rollback()
