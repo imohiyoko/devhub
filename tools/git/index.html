@@ -1913,7 +1913,7 @@ async function browseTo(path) {
       const arrow = '<span class="dir-arrow">›</span>';
       return `<div class="dir-entry" data-path="${e.path.replace(/"/g, '&quot;')}" data-is-git="${e.is_git}">
         <span class="dir-icon">${icon}</span>
-        <span class="dir-name" title="${e.path}">${e.name}</span>
+        <span class="dir-name" title="${escapeHtml(e.path)}">${escapeHtml(e.name)}</span>
         <div class="dir-actions">${addBtn}${arrow}</div>
       </div>`;
     }).join('');
