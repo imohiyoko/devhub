@@ -3,6 +3,7 @@
 package pathutil
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -49,6 +50,21 @@ func AbsClean(p string) string {
 // AbsExpand expands ~ then returns the cleaned absolute path.
 func AbsExpand(p string) string {
 	return AbsClean(ExpandUser(p))
+}
+
+// FileURI renders an (absolute) filesystem path as a file: URI with reserved
+// characters percent-encoded (spaces, '#', '%', ...). The SQLite driver hands a
+// "file:" DSN to SQLite's URI parser, which otherwise treats '#' as a fragment
+// (silently opening a different, empty database) and '%XX' as an escape — so a
+// raw path containing those characters would open the wrong file. Callers append
+// their own "?..." query (e.g. mode, _pragma) to the returned string.
+func FileURI(path string) string {
+	p := filepath.ToSlash(path)
+	if p == "" || p[0] != '/' {
+		p = "/" + p // file:///C:/... on Windows, file:///abs/... already starts with /
+	}
+	u := url.URL{Scheme: "file", Path: p}
+	return u.String()
 }
 
 // IsDir reports whether p is a directory, following symlinks.
