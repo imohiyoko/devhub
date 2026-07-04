@@ -1,6 +1,7 @@
-// Package database implements the db-table endpoints (/api/db/*). SQLite is
-// served via the pure-Go modernc driver; MySQL/MariaDB by shelling out to the
-// `mysql --xml` client.
+// Package database implements the db-table endpoints (/api/db/*). Both engines
+// use database/sql with pure-Go drivers: SQLite via modernc, MySQL/MariaDB via
+// go-sql-driver — so the binary stays dependency-free and cross-compiles with
+// CGO disabled.
 package database
 
 import (
@@ -229,21 +230,6 @@ func mysqlIdentifier(name string) (string, error) {
 		return "", fmt.Errorf("invalid identifier")
 	}
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`", nil
-}
-
-// sqlLiteral renders a value as a quoted SQL string literal. The MySQL path
-// escapes by hand (rather than binding parameters) because queries run via the
-// `mysql` CLI. This assumes default escaping; under NO_BACKSLASH_ESCAPES the
-// backslash-doubling would be wrong — not an injection risk (single quotes are
-// still doubled) but values could be corrupted.
-func sqlLiteral(value any) string {
-	if value == nil {
-		return "NULL"
-	}
-	s := fmt.Sprintf("%v", value)
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `'`, `''`)
-	return "'" + s + "'"
 }
 
 // normalizeValue mirrors normalize_sqlite_value: bytes -> "0x"+hex, else as-is.

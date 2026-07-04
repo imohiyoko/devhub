@@ -3,44 +3,78 @@ package database
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestParseMysqlXML(t *testing.T) {
-	doc := `some banner noise
-<?xml version="1.0"?>
-<resultset statement="select" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <row>
-    <field name="id">1</field>
-    <field name="name">alice</field>
-    <field name="email" xsi:nil="true" />
-    <field name="bio"></field>
-  </row>
-  <row>
-    <field name="id">2</field>
-    <field name="name">bob</field>
-    <field name="email">b@e.com</field>
-    <field name="bio">hi</field>
-  </row>
-</resultset>`
-	rows, err := parseMysqlXML(doc)
-	if err != nil {
-		t.Fatalf("parseMysqlXML: %v", err)
+// TestMysqlDSN checks the connection string carries the address, database, and
+// utf8mb4 collation, and keeps the connect timeout — without needing a server.
+func TestMysqlDSN(t *testing.T) {
+	dsn := mysqlDSN(&connProfile{
+		host: "127.0.0.1", port: 3306, user: "root", password: "s3cret", database: "shop",
+	})
+	for _, want := range []string{"@tcp(127.0.0.1:3306)/shop", "collation=utf8mb4_general_ci", "timeout=5s"} {
+		if !strings.Contains(dsn, want) {
+			t.Errorf("DSN %q missing %q", dsn, want)
+		}
 	}
-	if len(rows) != 2 {
-		t.Fatalf("got %d rows, want 2", len(rows))
+
+	// IPv6 hosts must be bracketed so host and port stay separable.
+	dsn6 := mysqlDSN(&connProfile{host: "::1", port: 3307, database: "d"})
+	if !strings.Contains(dsn6, "tcp([::1]:3307)") {
+		t.Errorf("IPv6 DSN %q missing bracketed addr", dsn6)
 	}
-	if rows[0]["id"] != "1" || rows[0]["name"] != "alice" {
-		t.Errorf("row0 = %+v", rows[0])
+}
+
+// TestMysqlValue checks the coercion to the API's string/nil shape: NULL stays
+// nil, []byte and typed numbers both become strings (so a column reads the same
+// whether it arrived via the text or binary protocol), and JSON never sees []byte.
+func TestMysqlValue(t *testing.T) {
+	cases := []struct {
+		in   any
+		want any
+	}{
+		{nil, nil},
+		{[]byte("hello"), "hello"},
+		{"world", "world"},
+		{int64(42), "42"},
+		{float64(3.5), "3.5"},
+		{true, "1"},
+		{false, "0"},
 	}
-	if rows[0]["email"] != nil {
-		t.Errorf("xsi:nil email should be nil, got %v", rows[0]["email"])
+	for _, c := range cases {
+		if got := mysqlValue(c.in); got != c.want {
+			t.Errorf("mysqlValue(%v (%T)) = %v (%T), want %v", c.in, c.in, got, got, c.want)
+		}
 	}
-	if rows[0]["bio"] != "" {
-		t.Errorf("empty bio should be \"\", got %v", rows[0]["bio"])
+}
+
+// TestEscapeMysqlLike checks LIKE metacharacters are escaped with '!' so a
+// literal search term cannot act as a wildcard.
+func TestEscapeMysqlLike(t *testing.T) {
+	if got := escapeMySQLLike("a%b_c!d"); got != "a!%b!_c!!d" {
+		t.Errorf("escapeMySQLLike = %q", got)
 	}
-	if rows[1]["email"] != "b@e.com" {
-		t.Errorf("row1 email = %v", rows[1]["email"])
+}
+
+// TestMysqlSearchCondition checks the WHERE clause is parameterized (one bound
+// pattern per searchable column, no literal interpolation) and that binary/blob
+// columns are excluded.
+func TestMysqlSearchCondition(t *testing.T) {
+	cols := []map[string]any{
+		{"name": "title", "type": "varchar"},
+		{"name": "body", "type": "text"},
+		{"name": "photo", "type": "blob"},
+	}
+	where, params := mysqlSearchCondition(cols, "foo")
+	if strings.Contains(where, "foo") {
+		t.Errorf("search term should be bound, not interpolated: %q", where)
+	}
+	if n := strings.Count(where, "?"); n != 2 {
+		t.Errorf("want 2 placeholders (blob excluded), got %d: %q", n, where)
+	}
+	if len(params) != 2 || params[0] != "%foo%" {
+		t.Errorf("params = %v", params)
 	}
 }
 
