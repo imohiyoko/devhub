@@ -278,7 +278,9 @@ const SAMPLE_MERMAID = `erDiagram
     POST ||--o{ COMMENT : "has"`;
 
 if (window.mermaid) {
-  mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose', suppressErrorRendering: true });
+  // securityLevel は既定の strict のまま使う: プレビューは innerHTML に挿入する
+  // ため、loose にするとペーストされた図のラベル内 HTML がそのまま実行される。
+  mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict', suppressErrorRendering: true });
 }
 
 let renderTimer = null;
@@ -424,13 +426,14 @@ function mxGraphToFlowchart(doc) {
 }
 
 function unescapeXml(str) {
+  // &amp; は最後に戻す: 先に戻すと &amp;lt; が &lt; → < と二重復元される
   return str
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#xa;/g, '\n')
-    .replace(/&#x9;/g, '\t');
+    .replace(/&#x9;/g, '\t')
+    .replace(/&amp;/g, '&');
 }
 
 function escHtml(str) {

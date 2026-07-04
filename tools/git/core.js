@@ -81,6 +81,8 @@ function showUndoToast(msg, actionLabel, onAction) {
 
 function deepMerge(target, source) {
   for (const key of Object.keys(source)) {
+    // settings API 由来のキーをマージするため、プロトタイプ汚染キーは無視する
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
     if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key]) && key in target) {
       target[key] = deepMerge(target[key], source[key]);
     } else {
