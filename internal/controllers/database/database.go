@@ -26,8 +26,11 @@ type Controller struct{ store *storage.Store }
 func New(store *storage.Store) *Controller { return &Controller{store: store} }
 
 // connProfile is a normalized connection (sqlite path or mysql coordinates).
+// engine is the backend resolved from driver at parse time, so handlers dispatch
+// without re-checking the driver name.
 type connProfile struct {
 	driver   string
+	engine   dbEngine
 	path     string
 	host     string
 	port     int
@@ -91,7 +94,9 @@ func (c *Controller) connectionFromPayload(data map[string]any) (*connProfile, e
 	if driver == "mariadb" {
 		driver = "mysql"
 	}
-	if driver != "sqlite" && driver != "mysql" {
+	// The engines registry (engine.go) is the sole whitelist of supported drivers.
+	engine, ok := engines[driver]
+	if !ok {
 		return nil, fmt.Errorf("unsupported database driver")
 	}
 
@@ -99,7 +104,7 @@ func (c *Controller) connectionFromPayload(data map[string]any) (*connProfile, e
 	maps.Copy(raw, profileMap)
 	raw["driver"] = driver
 
-	prof := &connProfile{driver: driver, raw: raw}
+	prof := &connProfile{driver: driver, engine: engine, raw: raw}
 	if driver == "sqlite" {
 		rawPath, _ := profileMap["path"].(string)
 		path, err := sqliteDBPath(rawPath)
@@ -146,7 +151,7 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		tables, err := c.dbTables(prof)
+		tables, err := prof.engine.Tables(prof)
 		if err != nil {
 			return err
 		}
@@ -157,7 +162,7 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		res, err := c.dbRows(prof, q.Get("table"), clampLimit(q.Get("limit")), clampOffset(q.Get("offset")), q.Get("search"))
+		res, err := prof.engine.Rows(prof, q.Get("table"), clampLimit(q.Get("limit")), clampOffset(q.Get("offset")), q.Get("search"))
 		if err != nil {
 			return err
 		}
@@ -176,37 +181,37 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 	}
 	switch r.URL.Path {
 	case "/api/db/tables":
-		tables, err := c.dbTables(prof)
+		tables, err := prof.engine.Tables(prof)
 		if err != nil {
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connection": prof.sanitized(), "tables": tables})
 	case "/api/db/rows":
-		res, err := c.dbRows(prof, strData(data, "table"), clampLimitN(data["limit"]), clampOffsetN(data["offset"]), strData(data, "search"))
+		res, err := prof.engine.Rows(prof, strData(data, "table"), clampLimitN(data["limit"]), clampOffsetN(data["offset"]), strData(data, "search"))
 		if err != nil {
 			return err
 		}
 		res["connection"] = prof.sanitized()
 		httpx.WriteJSON(w, http.StatusOK, res)
 	case "/api/db/search":
-		res, err := c.dbSearch(prof, strData(data, "columnSearch"), strData(data, "elementSearch"))
+		res, err := prof.engine.Search(prof, strData(data, "columnSearch"), strData(data, "elementSearch"))
 		if err != nil {
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, res)
 	case "/api/db/update":
-		if err := c.dbUpdate(prof, strData(data, "table"), strData(data, "column"), data["key"], data["value"]); err != nil {
+		if err := prof.engine.Update(prof, strData(data, "table"), strData(data, "column"), data["key"], data["value"]); err != nil {
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 	case "/api/db/insert":
-		lastID, err := c.dbInsert(prof, strData(data, "table"))
+		lastID, err := prof.engine.Insert(prof, strData(data, "table"))
 		if err != nil {
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "lastrowid": lastID})
 	case "/api/db/delete":
-		if err := c.dbDelete(prof, strData(data, "table"), data["key"]); err != nil {
+		if err := prof.engine.Delete(prof, strData(data, "table"), data["key"]); err != nil {
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
