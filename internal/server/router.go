@@ -124,6 +124,16 @@ func (s *Server) serveSystem(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, err)
 		}
 		return
+	case r.Method == http.MethodGet && path == "/api/update/status":
+		if err := s.handleUpdateStatus(w, r); err != nil {
+			httpx.WriteError(w, err)
+		}
+		return
+	case r.Method == http.MethodPost && path == "/api/update/apply":
+		if err := s.handleUpdateApply(w, r); err != nil {
+			httpx.WriteError(w, err)
+		}
+		return
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/shared/"):
 		if body, ok := s.shared[path]; ok {
 			writeAsset(w, body, "application/javascript; charset=utf-8")
