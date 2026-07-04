@@ -126,8 +126,8 @@ func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser 
 	}
 	s.dashboard = injectToken(db, script)
 
-	// Pre-read shared/ static assets (plain JS shared across tool pages) keyed
-	// by URL path, mirroring how tool pages are cached. No token injection.
+	// Pre-read shared/ static assets (JS + theme.css shared across tool pages)
+	// keyed by URL path, mirroring how tool pages are cached. No token injection.
 	s.shared = map[string][]byte{}
 	if err := fs.WalkDir(assets, "shared", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
