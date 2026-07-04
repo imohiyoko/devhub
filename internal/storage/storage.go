@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imohiyoko/devhub/internal/pathutil"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -48,8 +50,11 @@ func Open(home string, assets fs.FS) (*Store, error) {
 	}
 	dbPath := filepath.Join(settingsDir, "devhub.db")
 	// PRAGMAs go in the DSN so every pooled connection inherits them (a bare
-	// PRAGMA after Open would only affect one connection).
-	dsn := "file:" + dbPath + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
+	// PRAGMA after Open would only affect one connection). The path is a
+	// percent-encoded file: URI (pathutil.FileURI): the driver hands a "file:"
+	// DSN to SQLite's URI parser, so a home directory containing '#' or '%'
+	// would otherwise resolve to the wrong path.
+	dsn := pathutil.FileURI(dbPath) + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
