@@ -29,3 +29,5 @@ docs/
 |-----|------|
 | [root/0001](root/0001-reversible-hide-hidden-repos-vs-excludes.md) | git の「非表示」は `excludes` ではなく `hidden_repos`（取り消し可能・フロントフィルタ）を用いる |
 | [git/0001](git/0001-worktree-cleanup-suggestions.md) | worktree／マージ済みローカルブランチのクリーンアップを理由別トーストで提案する（マージ済み worktree・ディレクトリ欠落・マージ済みブランチ） |
+| [env-launcher/0001](env-launcher/0001-worktree-verification-launch.md) | 検証環境は専用機能を作らず、既存 env-launcher（worktree バインド + offset ポート + `{{port}}`）で立てる |
+| [env-launcher/0002](env-launcher/0002-cli-env-stop.md) | `devhub env list` / `devhub env stop` は HTTP を経由せず、共有 SQLite の直読み + OS ポート kill で実装する |

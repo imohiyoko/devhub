@@ -23,6 +23,13 @@ var (
 )
 
 func main() {
+	// Subcommands are dispatched before flag parsing: `devhub env …` is a
+	// short-lived CLI action against the local state (see env.go), not a server
+	// start, so the server flags don't apply to it.
+	if len(os.Args) > 1 && os.Args[1] == "env" {
+		os.Exit(runEnv(os.Args[2:]))
+	}
+
 	noBrowser := flag.Bool("no-browser", false, "do not open a browser on start")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
