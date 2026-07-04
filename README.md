@@ -18,6 +18,19 @@
 `db-table` の MySQL / MariaDB パスワードは保存されません。接続時に必要に応じて入力してください。  
 デフォルトでは外部DBホストへの接続は禁止され、`localhost` / `127.0.0.1` / `::1` のみ接続できます。
 
+## CLI
+
+env-launcher で起動した環境は、ブラウザを開かずコマンドでも確認・停止できます
+（devhub サーバーが停止中でも動作します）。
+
+```bash
+devhub env list             # 環境一覧と稼働中ポート
+devhub env stop <env-id>    # その環境のポートで LISTEN 中のプロセスを kill
+```
+
+保護ポート（ports ツールで設定）と devhub 本体のポートは kill されません。
+詳細は [docs/env-launcher/0002](docs/env-launcher/0002-cli-env-stop.md)。
+
 ## セットアップ
 
 devhub は単一バイナリで配布されます。インストーラは GitHub Releases から**バージョン固定**の成果物を取得し、**SHA256 を検証**してから配置します（ランタイム不要）。
