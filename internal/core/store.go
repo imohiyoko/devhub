@@ -7,6 +7,9 @@ package core
 type Store interface {
 	Get(key string) ([]byte, error)
 	Set(key string, value []byte) error
+	// Delete removes the value stored under key. Deleting an absent key is not
+	// an error, so a tool can drop its own document idempotently.
+	Delete(key string) error
 }
 
 // Namespace returns a Store view whose keys are transparently prefixed with the
@@ -25,3 +28,4 @@ type nsStore struct {
 
 func (s nsStore) Get(key string) ([]byte, error)     { return s.base.Get(s.prefix + key) }
 func (s nsStore) Set(key string, value []byte) error { return s.base.Set(s.prefix+key, value) }
+func (s nsStore) Delete(key string) error            { return s.base.Delete(s.prefix + key) }

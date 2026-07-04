@@ -35,3 +35,10 @@ func (s *Store) Set(key string, value []byte) error {
 	)
 	return err
 }
+
+// Delete removes the row stored under key. Deleting an absent key is not an
+// error (the DELETE simply affects zero rows), matching the core.Store contract.
+func (s *Store) Delete(key string) error {
+	_, err := s.db.Exec("DELETE FROM kv WHERE key = ?", key)
+	return err
+}
