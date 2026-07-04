@@ -74,6 +74,31 @@ func listWorktrees(repoPath string) ([]map[string]any, error) {
 	return worktrees, nil
 }
 
+// worktreePathKnown reports whether wt matches one of the given worktree records'
+// paths, compared in canonical (absolute, cleaned, case-normalized) form.
+func worktreePathKnown(worktrees []map[string]any, wt string) bool {
+	target := pathutil.NormCase(pathutil.AbsClean(wt))
+	for _, w := range worktrees {
+		p, _ := w["path"].(string)
+		if p != "" && pathutil.NormCase(pathutil.AbsClean(p)) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// isKnownWorktree reports whether wt is a registered worktree of repoPath. It
+// confines worktree pull/push to directories git already tracks for the validated
+// repository, so an authenticated caller cannot run git in an arbitrary directory
+// (whose hooks or remote could execute code) just because the path is well-formed.
+func isKnownWorktree(repoPath, wt string) bool {
+	worktrees, err := listWorktrees(repoPath)
+	if err != nil {
+		return false
+	}
+	return worktreePathKnown(worktrees, wt)
+}
+
 // defaultWorktreePath derives a sibling path '<repo>-wt-<sanitized-branch>'.
 func defaultWorktreePath(repoPath, branch string) string {
 	return strings.TrimRight(repoPath, "/") + "-wt-" + nonBranchChar.ReplaceAllString(branch, "-")
