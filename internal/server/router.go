@@ -29,13 +29,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: loopback connection required"})
 			return
 		}
+		// Loopback alone does not prove the caller isn't a browser: a cross-origin
+		// web page the user is merely visiting can fetch 127.0.0.1, and its request
+		// still originates from loopback. The token-less /ai-api surface is meant
+		// for local, non-browser agents; a browser tags cross/same-site requests
+		// with Sec-Fetch-Site, so reject those. Legit CLI/agent clients send no
+		// Sec-Fetch-Site and are unaffected.
+		if !sameOriginOrNonBrowser(r) {
+			httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: cross-site request"})
+			return
+		}
 
 		origPath := r.URL.Path
 		// Rewrite path: /ai-api/foo -> /api/foo to let the gateway handle it.
 		r.URL.Path = "/api/" + strings.TrimPrefix(r.URL.Path, "/ai-api/")
 
-		// For write operations (POST, PUT, DELETE, PATCH), wait for manual approval.
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+		// Writes — and the few GET endpoints that have side effects (e.g.
+		// /api/open launches the editor) rather than just reading state — wait for
+		// manual approval. Plain reads pass straight through.
+		if aiAPINeedsApproval(r.Method, r.URL.Path) {
 			action := "api_write"
 			detail := r.Method + " " + origPath
 
