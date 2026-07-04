@@ -2,6 +2,8 @@ module github.com/imohiyoko/devhub
 
 go 1.26
 
+toolchain go1.26.4
+
 require (
 	github.com/go-sql-driver/mysql v1.10.0
 	modernc.org/sqlite v1.52.0

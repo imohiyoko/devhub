@@ -39,6 +39,9 @@ func newTestServer(t *testing.T) *Server {
 func (s *Server) do(method, target, host, token, sfs string, body io.Reader) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, body)
 	req.Host = host
+	// httptest defaults RemoteAddr to 192.0.2.1 (non-loopback), which the
+	// security gate now rejects; simulate the normal local client.
+	req.RemoteAddr = "127.0.0.1:54321"
 	if token != "" {
 		req.Header.Set("X-Devhub-Token", token)
 	}
@@ -78,6 +81,39 @@ func TestHostAllowlist(t *testing.T) {
 	}
 	if rr := s.do("GET", "/", "evil.example.com", "", "", nil); rr.Code != http.StatusForbidden {
 		t.Errorf("bad Host (static) = %d, want 403", rr.Code)
+	}
+}
+
+func TestNonLoopbackRejected(t *testing.T) {
+	s := newTestServer(t)
+	// A non-loopback client (httptest's default 192.0.2.1) must never receive
+	// a page: the dashboard and tool pages carry the API token baked in.
+	for _, target := range []string{"/", "/git", "/api/info", "/ai-api/git/status"} {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Host = goodHost
+		req.Header.Set("X-Devhub-Token", testToken)
+		rr := httptest.NewRecorder()
+		s.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Errorf("non-loopback GET %s = %d, want 403", target, rr.Code)
+		}
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	s := newTestServer(t)
+	rr := s.do("GET", "/", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rr.Code)
+	}
+	for k, want := range map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
+		"Content-Security-Policy": "frame-ancestors 'none'",
+	} {
+		if got := rr.Header().Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
 	}
 }
 
