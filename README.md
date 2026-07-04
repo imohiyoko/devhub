@@ -29,8 +29,9 @@ devhub は単一バイナリで配布されます。インストーラは GitHub
 - インストール時: `curl`（macOS / Linux）/ PowerShell（Windows）のみ
 - 実行時（各ツールを使うときだけ必要なもの）:
   - **git** … git / env-launcher ツール
-  - **mysql** コマンド … db-table で MySQL / MariaDB を編集する場合
   - VSCode / Cursor / Windsurf など … workspace からエディタで開く場合
+
+  （db-table の SQLite / MySQL / MariaDB は Go ドライバを内蔵しており、外部コマンドは不要です）
 
 ### Homebrew（macOS）
 

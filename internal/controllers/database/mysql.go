@@ -1,128 +1,150 @@
 package database
 
 import (
-	"bytes"
 	"context"
-	"encoding/xml"
+	"database/sql"
 	"fmt"
 	"maps"
-	"os"
-	"os/exec"
+	"net"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
-type xmlField struct {
-	Text  string     `xml:",chardata"`
-	Attrs []xml.Attr `xml:",any,attr"`
+const (
+	// Mirrors the old `mysql` CLI limits: connect (dial) 5s, each statement 30s.
+	mysqlConnectTimeout = 5 * time.Second
+	mysqlStmtTimeout    = 30 * time.Second
+)
+
+// mysqlDSN renders the connection string for p. The password lives only in this
+// in-memory DSN — never on a command line (the old CLI path exposed it via argv,
+// visible in the host's process list) nor persisted. utf8mb4 is forced via the
+// connection collation, matching the CLI's --default-character-set=utf8mb4.
+func mysqlDSN(p *connProfile) string {
+	cfg := mysql.NewConfig()
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(p.host, strconv.Itoa(p.port))
+	cfg.User = p.user
+	cfg.Passwd = p.password
+	cfg.DBName = p.database
+	cfg.Timeout = mysqlConnectTimeout
+	cfg.Collation = "utf8mb4_general_ci"
+	return cfg.FormatDSN()
 }
 
-type xmlRow struct {
-	Fields []xmlField `xml:"field"`
+// openMySQL opens a pooled connection to the MySQL/MariaDB server in p. Callers
+// run several statements over the one pool and Close it when done, so a single
+// API call no longer spawns a subprocess per statement (the old CLI's N+1).
+func openMySQL(p *connProfile) (*sql.DB, error) {
+	return sql.Open("mysql", mysqlDSN(p))
 }
 
-type xmlResultset struct {
-	Rows []xmlRow `xml:"row"`
-}
-
-type xmlRoot struct {
-	XMLName    xml.Name
-	Rows       []xmlRow       `xml:"row"`       // when root itself is <resultset>
-	Resultsets []xmlResultset `xml:"resultset"` // when root wraps several
-}
-
-// parseMysqlXML parses `mysql --xml` output. Field values are strings; a field
-// carrying an xsi:nil="true" attribute becomes nil. Mirrors parse_mysql_xml.
-func parseMysqlXML(output string) ([]map[string]any, error) {
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return []map[string]any{}, nil
-	}
-	if idx := strings.Index(output, "<?xml"); idx > 0 {
-		output = output[idx:]
-	}
-	var root xmlRoot
-	if err := xml.Unmarshal([]byte(output), &root); err != nil {
+// mysqlQuery runs a read on the shared connection with a per-statement timeout
+// and returns each row as name->value. Every non-NULL value is returned as a
+// string — mirroring the old `mysql --xml` output, and ensuring encoding/json
+// never sees a []byte (which it would base64-encode). NULL stays nil.
+func mysqlQuery(db *sql.DB, query string, args ...any) ([]map[string]any, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), mysqlStmtTimeout)
+	defer cancel()
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
 		return nil, err
 	}
-	var resultsets []xmlResultset
-	if root.XMLName.Local == "resultset" {
-		resultsets = []xmlResultset{{Rows: root.Rows}}
-	} else {
-		resultsets = root.Resultsets
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
 	}
-	rows := []map[string]any{}
-	for _, rs := range resultsets {
-		for _, row := range rs.Rows {
-			item := map[string]any{}
-			for _, f := range row.Fields {
-				name := ""
-				isNull := false
-				for _, a := range f.Attrs {
-					switch {
-					case a.Name.Local == "name":
-						name = a.Value
-					case strings.HasSuffix(a.Name.Local, "nil") && a.Value == "true":
-						isNull = true
-					}
-				}
-				if isNull {
-					item[name] = nil
-				} else {
-					item[name] = f.Text
-				}
-			}
-			rows = append(rows, item)
+	out := []map[string]any{}
+	for rows.Next() {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
 		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		m := make(map[string]any, len(cols))
+		for i, c := range cols {
+			m[c] = mysqlValue(vals[i])
+		}
+		out = append(out, m)
 	}
-	return rows, nil
+	return out, rows.Err()
 }
 
-// mysqlRun executes a SQL statement via the `mysql --xml` client and parses the
-// result. The password is passed via MYSQL_PWD, never on the command line.
-func mysqlRun(p *connProfile, query string) ([]map[string]any, error) {
-	if _, err := exec.LookPath("mysql"); err != nil {
-		return nil, fmt.Errorf("mysql command was not found")
-	}
-	args := []string{
-		"--xml", "--default-character-set=utf8mb4", "--protocol=TCP", "--connect-timeout=5",
-		"-h", p.host, "-P", strconv.Itoa(p.port), "-u", p.user, "-e", query,
-	}
-	if p.database != "" {
-		// "--" stops option parsing so a database name beginning with "-" cannot be
-		// smuggled to the mysql client as a flag. Without it, a value like
-		// "--host=evil" would be parsed as a client option and override the
-		// connection host, defeating the db_local_only guard (which validates only
-		// p.host).
-		args = append(args, "--", p.database)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// mysqlScalarInt runs a COUNT-style query returning a single integer, with the
+// per-statement timeout.
+func mysqlScalarInt(db *sql.DB, query string, args ...any) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), mysqlStmtTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "mysql", args...)
-	cmd.Env = os.Environ()
-	if p.password != "" {
-		cmd.Env = append(cmd.Env, "MYSQL_PWD="+p.password)
-	}
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(errb.String())
-		if msg == "" {
-			msg = strings.TrimSpace(out.String())
-		}
-		if msg == "" {
-			msg = "mysql command failed"
-		}
-		return nil, fmt.Errorf("%s", msg)
-	}
-	return parseMysqlXML(out.String())
+	var n int64
+	err := db.QueryRowContext(ctx, query, args...).Scan(&n)
+	return n, err
 }
 
-func (c *Controller) mysqlTables(p *connProfile) ([]map[string]any, error) {
-	rows, err := mysqlRun(p, "SELECT TABLE_NAME AS name, TABLE_TYPE AS type, COALESCE(TABLE_ROWS, 0) AS count "+
+// mysqlExec runs a write (UPDATE / INSERT / DELETE) with the per-statement
+// timeout. Values reach the server as bound parameters, never string-concatenated.
+func mysqlExec(db *sql.DB, query string, args ...any) (sql.Result, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), mysqlStmtTimeout)
+	defer cancel()
+	return db.ExecContext(ctx, query, args...)
+}
+
+// mysqlValue coerces a scanned driver value into the shape the API returns:
+// NULL -> nil, everything else -> string. The text protocol yields []byte while
+// the binary protocol (used when a query carries bind parameters) yields typed
+// numbers; both are normalized to strings so a column reads the same either way.
+func mysqlValue(v any) any {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case []byte:
+		return string(x)
+	case string:
+		return x
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case uint64:
+		return strconv.FormatUint(x, 10)
+	case float64:
+		return strconv.FormatFloat(x, 'g', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(x), 'g', -1, 32)
+	case bool:
+		if x {
+			return "1"
+		}
+		return "0"
+	case time.Time:
+		return x.Format("2006-01-02 15:04:05")
+	default:
+		return fmt.Sprintf("%v", x)
+	}
+}
+
+// escapeMySQLLike escapes LIKE wildcards using '!' as the escape character. A
+// non-backslash escape keeps the paired ESCAPE '!' clause correct even under
+// NO_BACKSLASH_ESCAPES, where a backslash escape literal would misparse.
+func escapeMySQLLike(v string) string {
+	v = strings.ReplaceAll(v, "!", "!!")
+	v = strings.ReplaceAll(v, "%", "!%")
+	v = strings.ReplaceAll(v, "_", "!_")
+	return v
+}
+
+func mysqlTables(p *connProfile) ([]map[string]any, error) {
+	db, err := openMySQL(p)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	rows, err := mysqlQuery(db, "SELECT TABLE_NAME AS name, TABLE_TYPE AS type, COALESCE(TABLE_ROWS, 0) AS count "+
 		"FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME")
 	if err != nil {
 		return nil, err
@@ -138,8 +160,8 @@ func (c *Controller) mysqlTables(p *connProfile) ([]map[string]any, error) {
 	return out, nil
 }
 
-func (c *Controller) mysqlTableNamesTypes(p *connProfile) ([]map[string]any, error) {
-	rows, err := mysqlRun(p, "SELECT TABLE_NAME AS name, TABLE_TYPE AS type "+
+func mysqlTableNamesTypes(db *sql.DB) ([]map[string]any, error) {
+	rows, err := mysqlQuery(db, "SELECT TABLE_NAME AS name, TABLE_TYPE AS type "+
 		"FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME")
 	if err != nil {
 		return nil, err
@@ -151,11 +173,11 @@ func (c *Controller) mysqlTableNamesTypes(p *connProfile) ([]map[string]any, err
 	return out, nil
 }
 
-func (c *Controller) mysqlColumns(p *connProfile, table string) ([]map[string]any, error) {
-	rows, err := mysqlRun(p, "SELECT COLUMN_NAME AS name, DATA_TYPE AS type, IS_NULLABLE AS nullable, "+
+func mysqlColumns(db *sql.DB, table string) ([]map[string]any, error) {
+	rows, err := mysqlQuery(db, "SELECT COLUMN_NAME AS name, DATA_TYPE AS type, IS_NULLABLE AS nullable, "+
 		"COLUMN_DEFAULT AS dflt, COLUMN_KEY AS column_key, EXTRA AS extra "+
-		"FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = "+sqlLiteral(table)+
-		" ORDER BY ORDINAL_POSITION")
+		"FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? "+
+		"ORDER BY ORDINAL_POSITION", table)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +194,7 @@ func (c *Controller) mysqlColumns(p *connProfile, table string) ([]map[string]an
 			"name":    strVal(r, "name"),
 			"type":    strVal(r, "type"),
 			"notnull": strVal(r, "nullable") == "NO",
-			"default": r["dflt"], // string or nil (XML)
+			"default": r["dflt"], // string or nil
 			"pk":      pk,
 			"extra":   strVal(r, "extra"),
 		})
@@ -180,30 +202,38 @@ func (c *Controller) mysqlColumns(p *connProfile, table string) ([]map[string]an
 	return cols, nil
 }
 
-func (c *Controller) mysqlSearchCondition(cols []map[string]any, search string) string {
+// mysqlSearchCondition builds a parameterized WHERE clause matching any
+// searchable column against the pattern, plus the bound pattern values.
+func mysqlSearchCondition(cols []map[string]any, search string) (string, []any) {
 	s := normalizeSearch(search)
 	if s == "" {
-		return ""
+		return "", nil
 	}
 	cols = searchableColumns(cols)
 	if len(cols) == 0 {
-		return " WHERE 0"
+		return " WHERE 0", nil
 	}
-	pattern := sqlLiteral("%" + escapeLikePattern(s) + "%")
-	escapeSQL := sqlLiteral("\\")
+	pattern := "%" + escapeMySQLLike(s) + "%"
 	clauses := make([]string, 0, len(cols))
+	params := make([]any, 0, len(cols))
 	for _, col := range cols {
 		q, err := mysqlIdentifier(colName(col))
 		if err != nil {
 			continue
 		}
-		clauses = append(clauses, "CAST("+q+" AS CHAR) LIKE "+pattern+" ESCAPE "+escapeSQL)
+		clauses = append(clauses, "CAST("+q+" AS CHAR) LIKE ? ESCAPE '!'")
+		params = append(params, pattern)
 	}
-	return " WHERE (" + strings.Join(clauses, " OR ") + ")"
+	return " WHERE (" + strings.Join(clauses, " OR ") + ")", params
 }
 
-func (c *Controller) mysqlRows(p *connProfile, table string, limit, offset int, search string) (map[string]any, error) {
-	cols, err := c.mysqlColumns(p, table)
+func mysqlRows(p *connProfile, table string, limit, offset int, search string) (map[string]any, error) {
+	db, err := openMySQL(p)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	cols, err := mysqlColumns(db, table)
 	if err != nil {
 		return nil, err
 	}
@@ -217,14 +247,10 @@ func (c *Controller) mysqlRows(p *connProfile, table string, limit, offset int, 
 	if err != nil {
 		return nil, err
 	}
-	whereSQL := c.mysqlSearchCondition(cols, search)
-	totalRows, err := mysqlRun(p, "SELECT COUNT(*) AS c FROM "+tableSQL+whereSQL)
+	whereSQL, params := mysqlSearchCondition(cols, search)
+	total, err := mysqlScalarInt(db, "SELECT COUNT(*) FROM "+tableSQL+whereSQL, params...)
 	if err != nil {
 		return nil, err
-	}
-	var total int64
-	if len(totalRows) > 0 {
-		total = parseInt64(strVal(totalRows[0], "c"))
 	}
 	orderSQL := ""
 	if len(pkColumns) > 0 {
@@ -238,7 +264,8 @@ func (c *Controller) mysqlRows(p *connProfile, table string, limit, offset int, 
 		}
 		orderSQL = " ORDER BY " + strings.Join(quoted, ", ")
 	}
-	fetched, err := mysqlRun(p, fmt.Sprintf("SELECT * FROM %s%s%s LIMIT %d OFFSET %d", tableSQL, whereSQL, orderSQL, limit, offset))
+	args := append(append([]any{}, params...), limit, offset)
+	fetched, err := mysqlQuery(db, "SELECT * FROM "+tableSQL+whereSQL+orderSQL+" LIMIT ? OFFSET ?", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -269,14 +296,19 @@ func (c *Controller) mysqlRows(p *connProfile, table string, limit, offset int, 
 	}, nil
 }
 
-func (c *Controller) mysqlSearch(p *connProfile, columnSearch, elementSearch string) (map[string]any, error) {
+func mysqlSearch(p *connProfile, columnSearch, elementSearch string) (map[string]any, error) {
 	cs := normalizeSearch(columnSearch)
 	es := normalizeSearch(elementSearch)
 	result := map[string]any{"columnMatches": []any{}, "elementMatches": []any{}}
 	if cs == "" && es == "" {
 		return result, nil
 	}
-	tables, err := c.mysqlTableNamesTypes(p)
+	db, err := openMySQL(p)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	tables, err := mysqlTableNamesTypes(db)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +317,7 @@ func (c *Controller) mysqlSearch(p *connProfile, columnSearch, elementSearch str
 	for _, t := range tables {
 		name := strVal(t, "name")
 		typ := strVal(t, "type")
-		cols, err := c.mysqlColumns(p, name)
+		cols, err := mysqlColumns(db, name)
 		if err != nil {
 			continue
 		}
@@ -299,19 +331,12 @@ func (c *Controller) mysqlSearch(p *connProfile, columnSearch, elementSearch str
 			if err != nil {
 				continue
 			}
-			whereSQL := c.mysqlSearchCondition(cols, es)
-			countRows, err := mysqlRun(p, "SELECT COUNT(*) AS c FROM "+tableSQL+whereSQL)
-			if err != nil {
+			whereSQL, params := mysqlSearchCondition(cols, es)
+			count, err := mysqlScalarInt(db, "SELECT COUNT(*) FROM "+tableSQL+whereSQL, params...)
+			if err != nil || count == 0 {
 				continue
 			}
-			var count int64
-			if len(countRows) > 0 {
-				count = parseInt64(strVal(countRows[0], "c"))
-			}
-			if count == 0 {
-				continue
-			}
-			rowsM, err := mysqlRun(p, "SELECT * FROM "+tableSQL+whereSQL+" LIMIT 1")
+			rowsM, err := mysqlQuery(db, "SELECT * FROM "+tableSQL+whereSQL+" LIMIT 1", params...)
 			if err != nil {
 				continue
 			}
@@ -330,8 +355,13 @@ func (c *Controller) mysqlSearch(p *connProfile, columnSearch, elementSearch str
 	return result, nil
 }
 
-func (c *Controller) mysqlUpdate(p *connProfile, table, column string, key, value any) error {
-	cols, err := c.mysqlColumns(p, table)
+func mysqlUpdate(p *connProfile, table, column string, key, value any) error {
+	db, err := openMySQL(p)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	cols, err := mysqlColumns(db, table)
 	if err != nil {
 		return err
 	}
@@ -361,30 +391,41 @@ func (c *Controller) mysqlUpdate(p *connProfile, table, column string, key, valu
 	if err != nil {
 		return err
 	}
-	where, err := pkWhere(pkColumns, key)
+	where, whereArgs, err := pkWhere(pkColumns, key)
 	if err != nil {
 		return err
 	}
-	_, err = mysqlRun(p, "UPDATE "+tableSQL+" SET "+colSQL+" = "+sqlLiteral(value)+" WHERE "+where)
+	args := append([]any{value}, whereArgs...)
+	_, err = mysqlExec(db, "UPDATE "+tableSQL+" SET "+colSQL+" = ? WHERE "+where, args...)
 	return err
 }
 
-func (c *Controller) mysqlInsert(p *connProfile, table string) (any, error) {
-	if _, err := c.mysqlColumns(p, table); err != nil {
+func mysqlInsert(p *connProfile, table string) (any, error) {
+	db, err := openMySQL(p)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	if _, err := mysqlColumns(db, table); err != nil {
 		return nil, err
 	}
 	tableSQL, err := mysqlIdentifier(table)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := mysqlRun(p, "INSERT INTO "+tableSQL+" () VALUES ()"); err != nil {
+	if _, err := mysqlExec(db, "INSERT INTO "+tableSQL+" () VALUES ()"); err != nil {
 		return nil, err
 	}
 	return nil, nil
 }
 
-func (c *Controller) mysqlDelete(p *connProfile, table string, key any) error {
-	cols, err := c.mysqlColumns(p, table)
+func mysqlDelete(p *connProfile, table string, key any) error {
+	db, err := openMySQL(p)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	cols, err := mysqlColumns(db, table)
 	if err != nil {
 		return err
 	}
@@ -401,25 +442,28 @@ func (c *Controller) mysqlDelete(p *connProfile, table string, key any) error {
 	if err != nil {
 		return err
 	}
-	where, err := pkWhere(pkColumns, key)
+	where, whereArgs, err := pkWhere(pkColumns, key)
 	if err != nil {
 		return err
 	}
-	_, err = mysqlRun(p, "DELETE FROM "+tableSQL+" WHERE "+where)
+	_, err = mysqlExec(db, "DELETE FROM "+tableSQL+" WHERE "+where, whereArgs...)
 	return err
 }
 
-// pkWhere builds "`c1` = '..' AND `c2` = '..'" from the primary key columns.
-func pkWhere(pkColumns []string, key any) (string, error) {
+// pkWhere builds "`c1` = ? AND `c2` = ?" plus the bound key values, in column
+// order.
+func pkWhere(pkColumns []string, key any) (string, []any, error) {
 	parts := make([]string, 0, len(pkColumns))
+	args := make([]any, 0, len(pkColumns))
 	for _, c := range pkColumns {
 		q, err := mysqlIdentifier(c)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		parts = append(parts, q+" = "+sqlLiteral(keyGet(key, c)))
+		parts = append(parts, q+" = ?")
+		args = append(args, keyGet(key, c))
 	}
-	return strings.Join(parts, " AND "), nil
+	return strings.Join(parts, " AND "), args, nil
 }
 
 func tableKeyForRow(row map[string]any, pkColumns []string) map[string]any {

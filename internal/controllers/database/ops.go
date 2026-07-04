@@ -11,42 +11,42 @@ func (c *Controller) dbTables(p *connProfile) ([]map[string]any, error) {
 	if p.driver == "sqlite" {
 		return sqliteTables(p.path)
 	}
-	return c.mysqlTables(p)
+	return mysqlTables(p)
 }
 
 func (c *Controller) dbRows(p *connProfile, table string, limit, offset int, search string) (map[string]any, error) {
 	if p.driver == "sqlite" {
 		return sqliteRows(p.path, table, limit, offset, search)
 	}
-	return c.mysqlRows(p, table, limit, offset, search)
+	return mysqlRows(p, table, limit, offset, search)
 }
 
 func (c *Controller) dbSearch(p *connProfile, columnSearch, elementSearch string) (map[string]any, error) {
 	if p.driver == "sqlite" {
 		return sqliteSearch(p.path, columnSearch, elementSearch)
 	}
-	return c.mysqlSearch(p, columnSearch, elementSearch)
+	return mysqlSearch(p, columnSearch, elementSearch)
 }
 
 func (c *Controller) dbUpdate(p *connProfile, table, column string, key, value any) error {
 	if p.driver == "sqlite" {
 		return sqliteUpdate(p.path, table, column, key, value)
 	}
-	return c.mysqlUpdate(p, table, column, key, value)
+	return mysqlUpdate(p, table, column, key, value)
 }
 
 func (c *Controller) dbInsert(p *connProfile, table string) (any, error) {
 	if p.driver == "sqlite" {
 		return sqliteInsert(p.path, table)
 	}
-	return c.mysqlInsert(p, table)
+	return mysqlInsert(p, table)
 }
 
 func (c *Controller) dbDelete(p *connProfile, table string, key any) error {
 	if p.driver == "sqlite" {
 		return sqliteDelete(p.path, table, key)
 	}
-	return c.mysqlDelete(p, table, key)
+	return mysqlDelete(p, table, key)
 }
 
 // --- shared, driver-agnostic helpers over columns ([]map[string]any) ---
