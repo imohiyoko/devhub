@@ -65,21 +65,7 @@ func (c *Controller) removeLaunch(launchID string, _ bool) error {
 	if findLaunch(toAnySlice(data["launches"]), launchID) == nil {
 		return errors.New("launch record not found")
 	}
-	c.store.RegistryMu.Lock()
-	defer c.store.RegistryMu.Unlock()
-	data, err = c.store.LoadLaunches()
-	if err != nil {
-		return err
-	}
-	filtered := []any{}
-	for _, l := range toAnySlice(data["launches"]) {
-		if m, ok := l.(map[string]any); ok && pStr(m, "launch_id") == launchID {
-			continue
-		}
-		filtered = append(filtered, l)
-	}
-	data["launches"] = filtered
-	return c.store.SaveLaunches(data)
+	return c.store.RemoveLaunch(launchID)
 }
 
 // openLaunch opens a launch's worktree in the editor or a terminal.

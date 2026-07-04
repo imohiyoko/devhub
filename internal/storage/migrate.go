@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/imohiyoko/devhub/internal/jsonx"
 )
 
 // migrate performs the one-time import of legacy settings/*.json into SQLite,
@@ -140,7 +142,7 @@ func (s *Store) importLaunches(list []any) {
 		if id == "" {
 			continue
 		}
-		data, err := marshalJSON(rec)
+		data, err := jsonx.Marshal(rec)
 		if err != nil {
 			continue
 		}

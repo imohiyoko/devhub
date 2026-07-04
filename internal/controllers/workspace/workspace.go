@@ -14,20 +14,27 @@ import (
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/pathutil"
 	"github.com/imohiyoko/devhub/internal/platform"
-	"github.com/imohiyoko/devhub/internal/storage"
 )
 
 // darwinApps maps an editor id to its macOS application name for `open -a`.
 var darwinApps = map[string]string{"code": "Visual Studio Code", "cursor": "Cursor", "windsurf": "Windsurf"}
 
+// settingsReader is the narrow persistence the workspace controller needs: it
+// only reads the shared settings document (for the configured editor). It reads
+// the global document rather than owning a keyspace, so it depends on the typed
+// LoadSettings helper, not the raw key/value seam. *storage.Store satisfies it.
+type settingsReader interface {
+	LoadSettings() (map[string]any, error)
+}
+
 // Controller serves workspace endpoints; it consults git for the repo list.
 type Controller struct {
-	store *storage.Store
+	store settingsReader
 	git   *gitctl.Controller
 }
 
 // New returns a workspace controller.
-func New(store *storage.Store, git *gitctl.Controller) *Controller {
+func New(store settingsReader, git *gitctl.Controller) *Controller {
 	return &Controller{store: store, git: git}
 }
 

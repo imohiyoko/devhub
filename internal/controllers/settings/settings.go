@@ -3,7 +3,6 @@
 package settings
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -11,9 +10,9 @@ import (
 
 	"github.com/imohiyoko/devhub/internal/core"
 	"github.com/imohiyoko/devhub/internal/httpx"
+	"github.com/imohiyoko/devhub/internal/jsonx"
 	"github.com/imohiyoko/devhub/internal/portutil"
 	"github.com/imohiyoko/devhub/internal/sanitize"
-	"github.com/imohiyoko/devhub/internal/storage"
 )
 
 var toolIDRe = regexp.MustCompile(`^[a-z0-9_-]+$`)
@@ -27,38 +26,36 @@ var settingsAllowlist = map[string]bool{
 
 var configKeys = []string{"scan_roots", "excludes", "pinned_repos", "repo_order", "hidden_repos"}
 
+// globalStore is the narrow view of the shared documents the settings
+// controller reads and writes: the global settings allowlist and the git config
+// document, both of which carry seeding/merge logic that keeps them on the typed
+// helpers rather than the raw key/value seam. *storage.Store satisfies it.
+type globalStore interface {
+	LoadConfig() (map[string]any, error)
+	SaveConfig(cfg map[string]any) error
+	LoadSettings() (map[string]any, error)
+	SaveSettings(patch map[string]any) error
+}
+
 // Controller serves settings/config endpoints. The global settings and git
-// config documents still use the typed *storage.Store (they carry seeding and
-// merge logic). The per-tool settings document is reached only through the
-// core.Store seam: toolSettings is a core.Namespace(store, "tool") view, so a
-// GET/POST /api/settings/tool/<id> is a plain Get/Set on key "tool:<id>" — the
-// same key the store already uses, so no data migration is involved.
+// config documents go through globalStore (they carry seeding and merge logic).
+// The per-tool settings document is reached only through the core.Store seam:
+// toolSettings is a core.Namespace(store, "tool") view, so a GET/POST
+// /api/settings/tool/<id> is a plain Get/Set on key "tool:<id>" — the same key
+// the store already uses, so no data migration is involved.
 type Controller struct {
-	store        *storage.Store
+	store        globalStore
 	toolSettings core.Store
 }
 
 // New returns a settings controller. toolSettings is the namespaced view that
 // owns the "tool:<id>" keyspace.
-func New(store *storage.Store, toolSettings core.Store) *Controller {
+func New(store globalStore, toolSettings core.Store) *Controller {
 	return &Controller{store: store, toolSettings: toolSettings}
 }
 
 func toolIDFromPath(path string) string {
 	return path[strings.LastIndex(path, "/")+1:]
-}
-
-// marshalToolSettings encodes a tool-settings document without HTML-escaping,
-// matching how the store persisted these documents before the seam migration
-// (values like URLs with "&" must round-trip byte-for-byte).
-func marshalToolSettings(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // HandleGet dispatches GET config/settings/tool requests.
@@ -147,7 +144,7 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		if !toolIDRe.MatchString(toolID) {
 			return httpx.Errorf(http.StatusBadRequest, "invalid tool_id")
 		}
-		b, err := marshalToolSettings(data)
+		b, err := jsonx.Marshal(data)
 		if err != nil {
 			return err
 		}
