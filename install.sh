@@ -55,18 +55,35 @@ curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
 # checksums.txt was produced by this repo's release workflow — this is what
 # defends against a *compromised release* that swaps the binary AND its
 # checksums.txt together (SHA256 alone cannot detect that). Requires cosign.
+#
+# cosign v3+ verifies the sigstore bundle (checksums.txt.sigstore.json); v2
+# lacks bundle-by-default and keeps verifying the legacy pair
+# (checksums.txt.sig / .pem). Releases attach both formats during the
+# migration window (issue #109).
 if [ "${DEVHUB_VERIFY_SIGNATURE:-0}" = "1" ]; then
   require cosign
   echo "Verifying checksums.txt signature (cosign) ..."
-  curl -fsSL "$base/checksums.txt.sig" -o "$tmp/checksums.txt.sig"
-  curl -fsSL "$base/checksums.txt.pem" -o "$tmp/checksums.txt.pem"
-  cosign verify-blob \
-    --certificate "$tmp/checksums.txt.pem" \
-    --signature "$tmp/checksums.txt.sig" \
-    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-    --certificate-identity-regexp "^https://github.com/${OWNER_REPO}/\.github/workflows/release\.yml@refs/" \
-    "$tmp/checksums.txt" \
-    || { echo "エラー: checksums.txt の署名検証に失敗しました。" >&2; exit 1; }
+  cosign_major="$(cosign version 2>&1 | sed -n 's/^GitVersion:[[:space:]]*v\{0,1\}\([0-9][0-9]*\).*/\1/p' | head -1 || true)"
+  if [ "${cosign_major:-0}" -ge 3 ]; then
+    curl -fsSL "$base/checksums.txt.sigstore.json" -o "$tmp/checksums.txt.sigstore.json" \
+      || { echo "エラー: sigstore bundle (checksums.txt.sigstore.json) を取得できませんでした。bundle 添付前の古いリリースの可能性があります（cosign v2 なら .sig/.pem で検証できます）。" >&2; exit 1; }
+    cosign verify-blob \
+      --bundle "$tmp/checksums.txt.sigstore.json" \
+      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      --certificate-identity-regexp "^https://github.com/${OWNER_REPO}/\.github/workflows/release\.yml@refs/" \
+      "$tmp/checksums.txt" \
+      || { echo "エラー: checksums.txt の署名検証に失敗しました。" >&2; exit 1; }
+  else
+    curl -fsSL "$base/checksums.txt.sig" -o "$tmp/checksums.txt.sig"
+    curl -fsSL "$base/checksums.txt.pem" -o "$tmp/checksums.txt.pem"
+    cosign verify-blob \
+      --certificate "$tmp/checksums.txt.pem" \
+      --signature "$tmp/checksums.txt.sig" \
+      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      --certificate-identity-regexp "^https://github.com/${OWNER_REPO}/\.github/workflows/release\.yml@refs/" \
+      "$tmp/checksums.txt" \
+      || { echo "エラー: checksums.txt の署名検証に失敗しました。" >&2; exit 1; }
+  fi
   echo "✓ 署名検証 OK (cosign keyless)"
 fi
 

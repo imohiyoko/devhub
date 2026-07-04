@@ -50,10 +50,23 @@ checksum:
 # 短命証明書、Rekor 透明性ログに記録）で署名する。同一リリース内の checksums.txt は
 # SHA256 でバイナリを縛るが、リリース書き込み権限を奪われるとバイナリと
 # checksums.txt を同時に差し替え得る。cosign 署名は「imohiyoko/devhub の release
-# ワークフローが発行した」ことを証明し、長期鍵を保持せずにこの経路を塞ぐ。生成した
-# 署名(.sig)と証明書(.pem)はリリースに添付され、インストーラ側で検証できる。
+# ワークフローが発行した」ことを証明し、長期鍵を保持せずにこの経路を塞ぐ。
+#
+# cosign v3 で sign-blob は bundle 出力（--bundle）が必須になり、.sig/.pem を書く
+# --output-signature/--output-certificate は廃止された（issue #109）。移行期間中は
+# 2 回署名して両形式をリリースに添付する:
+#   1. 従来形式 checksums.txt.sig / .pem — 配布済みバイナリの自己更新と
+#      cosign v2 クライアントの検証互換のため（撤去すると既存クライアントの
+#      DEVHUB_VERIFY_SIGNATURE=1 が全滅する）
+#   2. sigstore bundle checksums.txt.sigstore.json — cosign v3+ クライアントの
+#      `verify-blob --bundle` 用。署名側はまだ cosign v2（installer v3 ピン）の
+#      ため --new-bundle-format で v3 互換の標準 bundle 形式を出力する
+# 数リリース分の移行期間の後に 1 を撤去し、cosign-installer を v4（cosign v3）へ
+# 上げる。その際この args も v3 流（--bundle のみ、--new-bundle-format 不要）に
+# 書き換えること。
 signs:
-  - cmd: cosign
+  - id: legacy-sig-pem
+    cmd: cosign
     artifacts: checksum
     signature: "${artifact}.sig"
     certificate: "${artifact}.pem"
@@ -61,6 +74,19 @@ signs:
       - "sign-blob"
       - "--output-signature=${signature}"
       - "--output-certificate=${certificate}"
+      - "--yes"
+      - "${artifact}"
+    output: true
+  - id: sigstore-bundle
+    cmd: cosign
+    artifacts: checksum
+    # goreleaser の signs にはアップロード対象を登録する枠が signature/certificate
+    # の 2 つしかないため、bundle は signature 枠で登録する（実体は bundle JSON）。
+    signature: "${artifact}.sigstore.json"
+    args:
+      - "sign-blob"
+      - "--new-bundle-format=true"
+      - "--bundle=${signature}"
       - "--yes"
       - "${artifact}"
     output: true
@@ -133,7 +159,18 @@ release:
 
     インストーラは下の資産を `checksums.txt`（SHA256）で検証してから配置します。手動の場合は資産と `checksums.txt` を取得し、ハッシュを照合してから展開してください。
 
-    `checksums.txt` は cosign で keyless 署名しています（`checksums.txt.sig` / `checksums.txt.pem` を添付）。`DEVHUB_VERIFY_SIGNATURE=1` を付けてインストーラを実行すると、リリースワークフロー由来であることを署名でも検証します（要 `cosign`）。手動検証:
+    `checksums.txt` は cosign で keyless 署名しています。sigstore bundle（`checksums.txt.sigstore.json`）に加え、移行期間中は従来形式（`checksums.txt.sig` / `checksums.txt.pem`）も添付します。`DEVHUB_VERIFY_SIGNATURE=1` を付けてインストーラを実行すると、リリースワークフロー由来であることを署名でも検証します（要 `cosign`。v3 以降は bundle、v2 は `.sig`/`.pem` で自動的に検証されます）。手動検証:
+
+    cosign v3 以降:
+    ```bash
+    cosign verify-blob \
+      --bundle checksums.txt.sigstore.json \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      --certificate-identity-regexp '^https://github.com/imohiyoko/devhub/\.github/workflows/release\.yml@refs/' \
+      checksums.txt
+    ```
+
+    cosign v2:
     ```bash
     cosign verify-blob \
       --certificate checksums.txt.pem --signature checksums.txt.sig \
