@@ -152,7 +152,7 @@ var Registry = []Surface{
 		Binaries: []string{"cosign"},
 		Kind:     Fixed,
 		Trigger:  "POST /api/update/apply -> updater.SelfUpdate -> verifyCosign, and only when DEVHUB_VERIFY_SIGNATURE=1",
-		Input:    "Fixed argv (`cosign verify-blob`) over temp files downloaded during the update (checksums.txt + .sig/.pem); certificate-identity-regexp pins the release workflow identity. No request data reaches argv.",
+		Input:    "Fixed argv: `cosign version` (to pick the verification format), then `cosign verify-blob` over temp files downloaded during the update (checksums.txt + .sigstore.json bundle on cosign v3+, or .sig/.pem on v2); certificate-identity-regexp pins the release workflow identity. No request data reaches argv.",
 		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Installer edition only (409 otherwise).",
 		Notes:    "Opt-in signature check; requires cosign on PATH. The self-update then re-execs via the `restart` surface.",
 	},
