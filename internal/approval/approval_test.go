@@ -107,3 +107,36 @@ func TestAlwaysAllowRules(t *testing.T) {
 		t.Fatalf("expected false after rule deletion")
 	}
 }
+
+func TestAlwaysAllowBoundary(t *testing.T) {
+	mgr := NewManager(nil)
+	mgr.AddAlwaysAllowRule("execute", "git commit")
+
+	if !mgr.ShouldAutoApprove("execute", "git commit") {
+		t.Error("exact match should auto-approve")
+	}
+	if !mgr.ShouldAutoApprove("execute", "git commit -m 'x'") {
+		t.Error("space-delimited extension should auto-approve")
+	}
+	// A prefix that does not end on a word boundary must NOT match.
+	if mgr.ShouldAutoApprove("execute", "git commitfoo") {
+		t.Error("non-boundary extension must not auto-approve")
+	}
+	if mgr.ShouldAutoApprove("execute", "git push") {
+		t.Error("unrelated detail must not match")
+	}
+}
+
+// A bodyless /ai-api write yields a "(no request body)" pattern; it must never
+// auto-approve a later write that carries a body to the same path.
+func TestAlwaysAllowBodylessDoesNotCoverBodies(t *testing.T) {
+	mgr := NewManager(nil)
+	mgr.AddAlwaysAllowRule("api_write", "POST /ai-api/settings (no request body)")
+
+	if mgr.ShouldAutoApprove("api_write", `POST /ai-api/settings {"editor":"evil"}`) {
+		t.Error("bodyless rule must not auto-approve a write carrying a body")
+	}
+	if !mgr.ShouldAutoApprove("api_write", "POST /ai-api/settings (no request body)") {
+		t.Error("the identical bodyless write should still auto-approve")
+	}
+}

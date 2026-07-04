@@ -91,7 +91,12 @@ func mysqlRun(p *connProfile, query string) ([]map[string]any, error) {
 		"-h", p.host, "-P", strconv.Itoa(p.port), "-u", p.user, "-e", query,
 	}
 	if p.database != "" {
-		args = append(args, p.database)
+		// "--" stops option parsing so a database name beginning with "-" cannot be
+		// smuggled to the mysql client as a flag. Without it, a value like
+		// "--host=evil" would be parsed as a client option and override the
+		// connection host, defeating the db_local_only guard (which validates only
+		// p.host).
+		args = append(args, "--", p.database)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
