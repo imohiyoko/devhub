@@ -43,26 +43,45 @@ jobs:
       # No checkout needed: actions/labeler fetches .github/labeler.yml via the API.
       - name: apply labels
         id: labeler
+        # A labeler outage or a labeler.yml gap must NOT skip Go CI on a Go change,
+        # so continue past a labeler failure and let the file scan below be the gate.
+        continue-on-error: true
         if: github.event_name == 'pull_request'
         uses: actions/labeler@f27b608878404679385c85cfa523b85ccb86e213 # v6.1.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # The Go jobs run when any code label (ci/core-* or ci/tool-*) is present.
-      # actions/labeler's `all-labels` output already reflects the labels it just
-      # applied, so unlike the clusterops sleep+refetch idiom there is no race and
-      # no extra action needed. ci/docs and ci/site intentionally do NOT match, so
-      # docs-only / site-only PRs skip the Go build matrix.
-      # push / workflow_dispatch have no PR context — those events gate the downstream
-      # jobs directly on event_name, leaving run_go empty here.
+      # Label-independent safety net: inspect the PR's changed files directly and
+      # flag Go-relevant ones (**/*.go, go.mod/sum, toolchain/build config). This is
+      # the structural source of truth for the gate, so a labeler outage or a
+      # labeler.yml gap can no longer let a Go change merge with the build/test
+      # matrix silently skipped. Uses the preinstalled gh CLI — no extra action.
+      - name: detect Go-relevant file changes
+        id: paths
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          files="$(gh api --paginate \
+            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename')"
+          if printf '%s\n' "$files" | grep -qE '\.go$|^go\.(mod|sum)$|^\.mise\.toml$|^Makefile$|^\.github/workflows/ci\.yml$'; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+      # Run the Go matrix when EITHER the file scan found Go-relevant changes OR the
+      # labeler applied a code label (ci/core-* / ci/tool-*, which also covers a
+      # frontend-only tool change). ci/docs and ci/site do NOT match, so docs-only /
+      # site-only PRs still skip the matrix. push / workflow_dispatch have no PR
+      # context and gate the downstream jobs on event_name directly (run_go empty).
       - name: decide whether to run Go CI
         id: decide
-        if: |
-          github.event_name == 'pull_request' &&
-          (
-            contains(steps.labeler.outputs.all-labels, 'ci/core-') ||
-            contains(steps.labeler.outputs.all-labels, 'ci/tool-')
-          )
-        run: echo "run_go=true" >> "$GITHUB_OUTPUT"
+        if: github.event_name == 'pull_request'
+        run: |
+          labels_match=${{ contains(steps.labeler.outputs.all-labels, 'ci/core-') || contains(steps.labeler.outputs.all-labels, 'ci/tool-') }}
+          if [ "${{ steps.paths.outputs.go }}" = "true" ] || [ "$labels_match" = "true" ]; then
+            echo "run_go=true" >> "$GITHUB_OUTPUT"
+          fi
 
   # Formatting is OS-independent, so it runs once on Linux rather than across the
   # build matrix. Fails if any file is not gofmt-clean.
