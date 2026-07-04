@@ -2,10 +2,20 @@ name: release
 
 # Two ways to cut a release:
 #   1. workflow_dispatch (Actions タブから手動): bump=patch|minor|major を選ぶと
-#      最新の v* タグから次バージョンを計算してタグを作成・push し、続けて公開する。
-#   2. push: tags v* (ローカルから `git push origin vX.Y.Z`): そのタグで公開する。
+#      最新の v* タグから次バージョンを計算し、そのコミットを凍結する
+#      release/vX.Y.Z ブランチを作成・push してから、同コミットに vX.Y.Z タグを
+#      付けて push し、続けて公開する。
+#   2. push: tags v* (ローカルから `git push origin vX.Y.Z`): そのタグで公開する
+#      （リリースブランチは作らない。上級者向けの直接経路）。
 # 手動実行時のタグ push は GITHUB_TOKEN 由来のため push トリガーを再帰起動しない
 # （= 二重リリースは起きない）。同一ジョブ内で続けて goreleaser を回す。
+#
+# リリースは environment: release に紐づくため、その required reviewers が承認する
+# まで下のジョブ（ブランチ/タグ作成・公開・tap 鍵の受け渡し）は動かない。これが
+# 「リリースできる人」を絞る一次コントロールで、workflow_dispatch でもタグ直 push
+# でも承認前には公開されない。release/* と v* は ruleset で保護し（作成/更新/削除/
+# force-push を制限）、その ruleset の bypass にこのワークフローの push 主体
+# （github-actions[bot]）を含めておくこと。含めないと下の自動 push が弾かれる。
 on:
   push:
     tags: ["v*"]
@@ -53,8 +63,9 @@ jobs:
         with:
           fetch-depth: 0 # full history for the changelog and tag computation
 
-      # 手動実行時のみ: 次バージョンを採番してタグを作成・push する。
-      - name: Compute and push tag
+      # 手動実行時のみ: 次バージョンを採番し、そのコミットを凍結する
+      # release/vX.Y.Z ブランチを作成・push してから、同コミットにタグを付けて push する。
+      - name: Compute version, create release branch and tag
         if: github.event_name == 'workflow_dispatch'
         env:
           BUMP: ${{ inputs.bump }}
@@ -80,14 +91,24 @@ jobs:
           esac
           next="v${major}.${minor}.${patch}"
           [ -n "$PRE" ] && next="${next}-${PRE}"
+          branch="release/${next}"
           if git rev-parse -q --verify "refs/tags/${next}" >/dev/null; then
             echo "::error::tag ${next} は既に存在します"
             exit 1
           fi
-          echo "前回: ${latest}  →  今回: ${next}"
-          echo "## release ${next} (from ${latest})" >> "$GITHUB_STEP_SUMMARY"
+          # リリースブランチは 1 バージョン 1 本。既存なら採番か過去実行の取り違え。
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "::error::branch ${branch} は既に存在します"
+            exit 1
+          fi
+          echo "前回: ${latest}  →  今回: ${next}（branch: ${branch}）"
+          echo "## release ${next} (from ${latest}, branch ${branch})" >> "$GITHUB_STEP_SUMMARY"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # 今の main HEAD を凍結するリリースブランチを作成して push（保護対象）。
+          git branch "${branch}"
+          git push origin "refs/heads/${branch}:refs/heads/${branch}"
+          # 同じコミットにタグを付けて push（goreleaser がこのタグで公開する）。
           git tag -a "${next}" -m "release ${next}"
           git push origin "${next}"
 
