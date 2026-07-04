@@ -4,7 +4,33 @@ import (
 	"encoding/json"
 	"io/fs"
 	"maps"
+	"strings"
 )
+
+// The settings document is stored as one kv row per key, named
+// "<owner>.<key>" (e.g. "settings.editor", "ports.protected_ports"). Ownership
+// lives in the row key itself: the owner is the tool that writes the value,
+// and writers of different keys upsert disjoint rows, so a patch can never
+// lose another writer's update the way the old whole-document
+// read-modify-write could. LoadSettings/SaveSettings keep the flat-map
+// contract, so callers are unaffected by the row layout.
+
+// settingsOwners maps a settings key to the tool that owns (writes) it. Keys
+// absent here default to the "settings" owner. Growing per-tool data
+// ownership means adding entries here — no core rewiring.
+var settingsOwners = map[string]string{
+	"protected_ports": "ports",
+	"port_labels":     "ports",
+}
+
+// settingsRowKey returns the kv row key holding the given settings key.
+func settingsRowKey(key string) string {
+	owner := settingsOwners[key]
+	if owner == "" {
+		owner = "settings"
+	}
+	return owner + "." + key
+}
 
 // readExample decodes an embedded example JSON file (e.g.
 // "settings/server.example.json") into a map.
@@ -25,7 +51,8 @@ func mergeMap(dst, src map[string]any) {
 }
 
 // LoadSettings returns the merged settings: hardcoded defaults <- embedded
-// server.example.json <- stored kv 'settings'.
+// server.example.json <- legacy 'settings' blob (if the row migration has not
+// run yet) <- per-key rows. Rows merge last so they always win over the blob.
 func (s *Store) LoadSettings() (map[string]any, error) {
 	m := map[string]any{
 		"port":                  8765,
@@ -48,19 +75,67 @@ func (s *Store) LoadSettings() (map[string]any, error) {
 			mergeMap(m, stored)
 		}
 	}
+	rows, err := s.loadSettingsRows()
+	if err != nil {
+		return nil, err
+	}
+	mergeMap(m, rows)
 	return m, nil
 }
 
-// SaveSettings shallow-merges patch into the stored settings document.
-func (s *Store) SaveSettings(patch map[string]any) error {
-	cur := map[string]any{}
-	if raw, err := s.kvGet("settings"); err != nil {
-		return err
-	} else if raw != nil {
-		_ = json.Unmarshal(raw, &cur)
+// loadSettingsRows reads every per-key settings row back into a flat map:
+// all "settings.*" rows plus the keys re-homed to other owners.
+func (s *Store) loadSettingsRows() (map[string]any, error) {
+	out := map[string]any{}
+	rows, err := s.db.Query("SELECT key, value FROM kv WHERE key LIKE 'settings.%'")
+	if err != nil {
+		return nil, err
 	}
-	mergeMap(cur, patch)
-	return kvSet(s.db, "settings", cur)
+	defer rows.Close()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		var val any
+		if json.Unmarshal([]byte(v), &val) == nil {
+			out[strings.TrimPrefix(k, "settings.")] = val
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for key := range settingsOwners {
+		raw, err := s.kvGet(settingsRowKey(key))
+		if err != nil {
+			return nil, err
+		}
+		if raw == nil {
+			continue
+		}
+		var val any
+		if json.Unmarshal(raw, &val) == nil {
+			out[key] = val
+		}
+	}
+	return out, nil
+}
+
+// SaveSettings upserts one row per patch key. There is no shared document to
+// read-modify-write, so concurrent patches to different keys cannot lose each
+// other; the transaction only makes a multi-key patch atomic.
+func (s *Store) SaveSettings(patch map[string]any) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for k, v := range patch {
+		if err := kvSet(tx, settingsRowKey(k), v); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // LoadToolSettings returns the per-tool settings document (empty if unset).
