@@ -75,6 +75,41 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+// migrateSettingsRows explodes the legacy 'settings' kv blob into one row per
+// key ("<owner>.<key>") and deletes the blob, all in one transaction. The
+// blob's presence is the migration flag: a successful run leaves nothing to
+// migrate, and a failed run is retried on the next startup because the blob
+// is still there. If both blob and rows exist, the blob wins — it can only be
+// newer (written by an older binary after the rows appeared).
+func (s *Store) migrateSettingsRows() error {
+	raw, err := s.kvGet("settings")
+	if err != nil {
+		return err
+	}
+	if raw == nil {
+		return nil
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("settings blob is not an object: %w", err)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for k, v := range doc {
+		if err := kvSet(tx, settingsRowKey(k), v); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if _, err := tx.Exec("DELETE FROM kv WHERE key = 'settings'"); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) readDiskJSON(file string) (any, bool) {
 	return s.readDiskJSONPath(filepath.Join(s.settingsDir, file))
 }

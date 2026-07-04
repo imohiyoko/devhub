@@ -58,6 +58,11 @@ func Open(home string, assets fs.FS) (*Store, error) {
 		// Best-effort: a migration failure must not block startup.
 		fmt.Fprintf(os.Stderr, "storage: JSON->SQLite migration failed: %v\n", err)
 	}
+	if err := s.migrateSettingsRows(); err != nil {
+		// Best-effort too: LoadSettings still reads the legacy blob until the
+		// explosion into rows succeeds on a later startup.
+		fmt.Fprintf(os.Stderr, "storage: settings blob->rows migration failed: %v\n", err)
+	}
 	return s, nil
 }
 
