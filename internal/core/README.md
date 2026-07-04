@@ -68,6 +68,10 @@ single static binary.
 
 ## Status
 
-PoC: `internal/core` + tests only; the live `server` is untouched. Migration of
-the existing 7 tools onto this contract (wrapping their current
-`HandleGet/HandlePost`) is the follow-up step.
+Live: the `server` wires this contract in production. `tools.Registry` builds
+the tool set and `core.NewGateway(reg, nil, pageFn)` fronts every request
+(`internal/server/server.go`). Every tool runs in-process — `Upstreams` is
+`nil`, so the whole thing is the single static binary; pointing an entry at a
+URL extracts that tool to its own service with no code change. Requests no tool
+claims fall through to the gateway's `Next` handler (the server's system
+routes).
