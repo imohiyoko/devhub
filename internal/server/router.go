@@ -23,6 +23,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The listener binds to 127.0.0.1 only, so in normal operation every
+	// request already arrives from loopback. Enforcing it per-request is
+	// defense-in-depth for the token-bearing pages (the dashboard and tool
+	// pages embed window.__DEVHUB_TOKEN__): if the process is ever exposed
+	// through a forwarder or a future bind-address change, a remote client
+	// must not receive a page with the API token baked in.
+	if !s.isLoopback(r) {
+		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		return
+	}
+
+	// Baseline security headers on every response. nosniff stops MIME
+	// confusion on served assets; the two frame headers keep devhub pages out
+	// of <iframe>s (clickjacking toward the approval panel). The frontend
+	// never frames its own pages, so DENY / 'none' is safe.
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+
 	// Handle AI API endpoints: bypass regular API token validation, but enforce loopback connection.
 	if strings.HasPrefix(r.URL.Path, "/ai-api/") {
 		if !s.isLoopback(r) {
