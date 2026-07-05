@@ -6,6 +6,7 @@
 <title>env launcher — devhub</title>
 <script src="/shared/reorder.js"></script>
 <script src="/shared/rebuild-reload.js"></script>
+<script src="/shared/dom.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <style>
 
@@ -744,16 +745,6 @@ function showToast(message) {
 function isMaskedKey(key) {
   const lower = key.toLowerCase();
   return lower.includes('password') || lower.includes('secret') || lower.includes('token') || lower.includes('apikey') || lower.includes('api_key') || lower.includes('api-key');
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 function render() {
