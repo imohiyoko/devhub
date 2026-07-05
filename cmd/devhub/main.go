@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	devhub "github.com/imohiyoko/devhub"
 	"github.com/imohiyoko/devhub/internal/platform"
@@ -24,23 +23,40 @@ var (
 )
 
 func main() {
-	// Subcommands are dispatched before flag parsing: they are short-lived CLI
-	// actions against local state (see cli.go), not a server start, so the
-	// server flags don't apply to them. Any non-flag first argument goes
-	// through the dispatcher, so an unknown word errors with the usage instead
-	// of being silently swallowed by flag.Parse and starting the server.
-	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "-") {
-		os.Exit(runSubcommand(os.Args[1], os.Args[2:]))
+	// Every action is an explicit subcommand, including starting the server
+	// (`devhub start`). A bare `devhub` no longer launches a server — it prints
+	// help. This extends ADR 0002's decision 5 (an unknown word must not fall
+	// through to a server start): the reflexive `devhub` should never bind a
+	// port by surprise, so the stateful action is named. Only the pure-info
+	// -version / -h flags are still honored at the top level.
+	args := os.Args[1:]
+	if len(args) == 0 {
+		fmt.Print(rootUsage)
+		return
 	}
-
-	noBrowser := flag.Bool("no-browser", false, "do not open a browser on start")
-	showVersion := flag.Bool("version", false, "print version and exit")
-	flag.Usage = func() { fmt.Fprint(os.Stderr, rootUsage) }
-	flag.Parse()
-
-	if *showVersion {
+	switch args[0] {
+	case "-version", "--version":
 		printVersion()
 		return
+	case "-h", "--help":
+		fmt.Print(rootUsage)
+		return
+	}
+	os.Exit(runSubcommand(args[0], args[1:]))
+}
+
+// runServer starts the dashboard server (`devhub start`) and returns the
+// process exit code. It parses the start-only flags, then blocks in srv.Run
+// until the process is stopped or re-execs itself. A self-restart (update /
+// rebuild / restart) carries os.Args forward, so the "start" subcommand is
+// preserved across the restart — the new process starts a server, not help.
+func runServer(args []string) int {
+	fs := flag.NewFlagSet("devhub start", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	noBrowser := fs.Bool("no-browser", false, "do not open a browser on start")
+	fs.Usage = func() { fmt.Fprint(os.Stderr, startUsage) }
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
 
 	// A Windows self-update leaves the previous binary as "<exe>.old" (a running
@@ -51,25 +67,26 @@ func main() {
 	store, err := storage.Open(home, devhub.Assets)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "devhub: storage:", err)
-		os.Exit(1)
+		return 1
 	}
 	defer store.Close()
 
 	settings, err := store.LoadSettings()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "devhub: settings:", err)
-		os.Exit(1)
+		return 1
 	}
 
 	srv, err := server.New(store, devhub.Assets, settings, *noBrowser, version)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "devhub:", err)
-		os.Exit(1)
+		return 1
 	}
 	if err := srv.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "devhub:", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // printVersion prints the stamped version/edition, shared by the -version

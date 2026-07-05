@@ -233,7 +233,7 @@ func runDoctor() int {
 		if info, err := probeInfo(port); err == nil {
 			fmt.Printf("  server     : devhub %s (edition %s), home %s\n", info.Version, info.Edition, info.Base)
 			if info.Version != version {
-				warns = append(warns, fmt.Sprintf("running instance is devhub %s but this command is %s — `devhub stop` && `devhub` to align", info.Version, version))
+				warns = append(warns, fmt.Sprintf("running instance is devhub %s but this command is %s — `devhub stop` && `devhub start` to align", info.Version, version))
 			}
 		} else {
 			warns = append(warns, fmt.Sprintf("port %d is taken by pid %s which did not identify as devhub (%v)", port, joinInts(pids), err))
