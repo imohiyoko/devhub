@@ -225,3 +225,41 @@ func TestInvalidToolID(t *testing.T) {
 		t.Errorf("invalid tool_id = %d, want 400", rr.Code)
 	}
 }
+
+// The shared "contract" JS modules (dom.js/net.js) are served straight from the
+// embed via the recursive shared/ walk, with a JS content-type. This guards the
+// serving path that lets tool pages drop their copy-pasted escapeHtml/apiJson.
+func TestSharedContractModulesServed(t *testing.T) {
+	s := newTestServer(t)
+	for _, tc := range []struct{ path, wantSubstr string }{
+		{"/shared/dom.js", "function escapeHtml"},
+		{"/shared/net.js", "async function apiJson"},
+	} {
+		rr := s.do("GET", tc.path, goodHost, "", "", nil)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", tc.path, rr.Code)
+		}
+		if ct := rr.Header().Get("Content-Type"); ct != "application/javascript; charset=utf-8" {
+			t.Errorf("GET %s Content-Type = %q, want application/javascript", tc.path, ct)
+		}
+		if !strings.Contains(rr.Body.String(), tc.wantSubstr) {
+			t.Errorf("GET %s body missing %q", tc.path, tc.wantSubstr)
+		}
+	}
+}
+
+// A tool page that dropped its local copies must reference the shared modules,
+// so the page still has escapeHtml/apiJson at runtime. db-table uses both.
+func TestToolPageReferencesSharedModules(t *testing.T) {
+	s := newTestServer(t)
+	rr := s.do("GET", "/db-table", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /db-table = %d, want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`src="/shared/dom.js"`, `src="/shared/net.js"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/db-table page missing %s", want)
+		}
+	}
+}
