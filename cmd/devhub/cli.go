@@ -18,7 +18,7 @@ import (
 const rootUsage = `devhub — local dev dashboard (single binary)
 
 Usage:
-  devhub [flags]            start the server (default action)
+  devhub start              start the server (serves the dashboard on 127.0.0.1)
   devhub status             show the instance on the configured port (exit 1 if none)
   devhub stop               stop that instance after verifying it is devhub
   devhub doctor             diagnose command slot / PATH / running instance (exit 1 on warnings)
@@ -28,8 +28,13 @@ Usage:
   devhub version            print version info (same as -version)
   devhub help               show this help
 
-Flags (server):
+A bare 'devhub' (no arguments) prints this help. Starting the server is the
+explicit 'devhub start', so a reflexive 'devhub' never binds a port by surprise.
+
+Flags (devhub start):
   -no-browser               do not open a browser on start
+
+Global:
   -version                  print version and exit
 
 Environment:
@@ -38,12 +43,24 @@ Environment:
   DEVHUB_BIN_DIR            command-slot directory checked by doctor
 `
 
+// startUsage is printed for `devhub start -h` or a flag parse error.
+const startUsage = `Usage: devhub start [flags]
+
+Start the devhub server (serves the dashboard on 127.0.0.1 and, unless
+-no-browser, opens a browser).
+
+Flags:
+  -no-browser   do not open a browser on start
+`
+
 // runSubcommand dispatches `devhub <name> …` and returns the process exit
-// code. Called for any non-flag first argument, so an unknown word is an error
-// here instead of being silently swallowed by flag.Parse and starting the
-// server (the pre-subcommand behavior, and a surprise when you typo `stpo`).
+// code. Every action is a named subcommand, including `start` (the server);
+// an unknown word is an error here rather than falling through to a server
+// start, so a typo like `stpo` can't launch a server by surprise.
 func runSubcommand(name string, args []string) int {
 	switch name {
+	case "start":
+		return runServer(args)
 	case "env":
 		return runEnv(args)
 	case "doctor":
