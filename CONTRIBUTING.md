@@ -124,6 +124,11 @@ should track *your* code instead. Two ways:
   `%USERPROFILE%\bin\devhub.cmd` (Windows); override the directory with
   `DEVHUB_BIN_DIR` (same var as the release installer). `devhub --version`
   reports `dev` in this mode.
+- **Run source once, from anywhere:** `devhub start code` launches the current
+  checkout via `go run` no matter which `devhub` is on your PATH — a one-off that
+  touches no command slot (see [docs/root/0004](docs/root/0004-devhub-start-provenance.md)).
+  It finds the checkout from your cwd, the dev shim's recorded checkout, or
+  `$DEVHUB_SRC`. (`devhub start binary` / `homebrew` pick the other provenances.)
 
 A `go run` launch compiles to a temp binary, so a running instance keeps serving
 its old code until you restart it: `scripts/dev.sh stop` (`scripts\dev.ps1 stop`

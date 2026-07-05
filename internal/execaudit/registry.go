@@ -157,6 +157,15 @@ var Registry = []Surface{
 		Notes:    "Opt-in signature check; requires cosign on PATH. The self-update then re-execs via the `restart` surface.",
 	},
 	{
+		ID:       "start-launch",
+		Binaries: []string{"devhub (release/homebrew binary)", "go run ./cmd/devhub (code)"},
+		Kind:     Fixed,
+		Trigger:  "process startup — `devhub start <provenance>` hands the server off to a chosen devhub implementation (binary / homebrew / code)",
+		Input:    "provenance is a fixed enum (binary|homebrew|code, plus aliases); the target is derived from it: the release binary under <DevhubHome>/bin, a Homebrew devhub discovered on PATH, or `go run` in a discovered source checkout (cwd/dev-shim/DEVHUB_SRC). The pass-through flags after the provenance are handed to the target's own `start` verbatim (the target re-parses them).",
+		Gate:     "Not reachable over HTTP; runs in-process only when a user explicitly types `devhub start <provenance>`.",
+		Notes:    "Fixed, not Dynamic: the target is a bounded set — devhub's own release binary or the `go` toolchain — selected by a fixed CLI enum, not by user-writable settings, so there is no settings-write trust boundary (unlike workspace-editor). Unix hands off with syscall.Exec (no exec.Command — not scanned by the guard); Windows uses exec.Command + Run and propagates the child's exit code. The provenance token is stripped before hand-off, so the target's argv is `start <flags>` and a subsequent self-restart stays on that provenance.",
+	},
+	{
 		ID:       "workspace-editor",
 		Binaries: []string{"settings.editor (default: code)", "open -a (darwin, for mapped editors)"},
 		Kind:     Dynamic,

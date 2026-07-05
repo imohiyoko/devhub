@@ -39,8 +39,8 @@ func TestIsHomebrewPath(t *testing.T) {
 		"":                                           false,
 	}
 	for path, want := range cases {
-		if got := isHomebrewPath(path); got != want {
-			t.Errorf("isHomebrewPath(%q) = %v, want %v", path, got, want)
+		if got := IsHomebrewPath(path); got != want {
+			t.Errorf("IsHomebrewPath(%q) = %v, want %v", path, got, want)
 		}
 	}
 }
