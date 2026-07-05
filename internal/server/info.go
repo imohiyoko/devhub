@@ -31,6 +31,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
 		"port":               s.port,
 		"home":               platform.Home(),
 		"is_windows":         platform.IsWindows(),
+		"system":             platform.SystemName(),
 		"instance":           instanceID,
 		"version":            s.version,
 		"edition":            s.edition,
