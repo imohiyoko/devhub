@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>workspace — devhub</title>
 <script src="/shared/rebuild-reload.js"></script>
+<script src="/shared/dom.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <style>
 
@@ -364,14 +365,10 @@ async function saveConfig() {
 // ── HTML escaping ────────────────────────────────────
 // Repo/dir names and paths come from the filesystem (/api/ls, /api/repos) and
 // on macOS/Linux may legally contain < > " ' — they must never reach innerHTML
-// raw. escapeHtml covers text and quoted-attribute contexts; for values spliced
-// into inline on*="…'${p}'…" handlers, HTML-escape the JS-escaped string so a
-// quote/angle-bracket can neither break out of the attribute nor the JS literal.
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[c]));
-}
+// raw. escapeHtml (shared/dom.js) covers text and quoted-attribute contexts; for
+// values spliced into inline on*="…'${p}'…" handlers, HTML-escape the JS-escaped
+// string so a quote/angle-bracket can neither break out of the attribute nor the
+// JS literal.
 
 // ── Scan roots ───────────────────────────────────────
 function renderRootList() {

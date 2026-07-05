@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>diff-kun — devhub</title>
 <script src="/shared/rebuild-reload.js"></script>
+<script src="/shared/dom.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <style>
 html, body { overscroll-behavior: none; }
@@ -283,7 +284,7 @@ mark.wins { background: #3fb95050; color: #56d364; border-radius: 2px; font-styl
 </div>
 
 <script>
-const esc = s => (s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = escapeHtml; // shared/dom.js — full (& < > " ') escape
 
 // ── LCS ──────────────────────────────────────────────────────────────────
 function lcsOps(a, b) {

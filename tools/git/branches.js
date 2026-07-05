@@ -42,12 +42,6 @@ function getAllBranchesList() {
     return parseBranchLines().map(b => b.shortName);
 }
 
-function escapeHtml(s) {
-    return String(s ?? '').replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-}
-
 // Normalize a filesystem path for comparison: unify separators, strip a
 // trailing slash, and lowercase on Windows (where paths are case-insensitive).
 // git returns resolved real paths for worktrees, so this mainly guards the
