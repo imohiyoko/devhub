@@ -146,6 +146,36 @@ header h1 { font-size: 15px; font-weight: 600; }
   color: var(--muted);
   margin-bottom: 16px;
 }
+.terminal-settings { max-width: 400px; margin-top: 22px; }
+.terminal-settings .settings-panel-title { margin-bottom: 12px; }
+.ts-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.ts-row > label { width: 92px; flex-shrink: 0; font-size: 12px; color: var(--muted); }
+.ts-row > input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+.ts-row > input:focus { border-color: var(--accent); }
+.ts-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.ts-save {
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ts-save:hover { border-color: var(--accent); color: var(--accent); }
+.ts-hint { font-size: 11px; color: var(--muted); }
+.ts-saved { font-size: 11px; color: var(--green); opacity: 0; transition: opacity 0.15s; }
+.ts-saved.show { opacity: 1; }
 .tool-toggles {
   display: flex;
   flex-direction: column;
@@ -467,6 +497,17 @@ footer {
 <div class="settings-panel" id="settingsPanel">
   <p class="settings-panel-title">ツールの表示設定</p>
   <div class="tool-toggles" id="toolToggles"></div>
+  <div class="terminal-settings" id="terminalSettings" hidden>
+    <p class="settings-panel-title">ターミナル設定 (<span id="tsOsLabel"></span>)</p>
+    <div class="ts-row"><label for="tsEmulator">Emulator</label><input id="tsEmulator" spellcheck="false" autocomplete="off"></div>
+    <div class="ts-row"><label for="tsShell">Shell</label><input id="tsShell" spellcheck="false" autocomplete="off"></div>
+    <div class="ts-row"><label for="tsShellArgs">Shell args</label><input id="tsShellArgs" spellcheck="false" autocomplete="off" placeholder="スペース区切り (例: --login)"></div>
+    <div class="ts-actions">
+      <button class="ts-save" id="tsSave">保存</button>
+      <span class="ts-hint" id="tsHint"></span>
+      <span class="ts-saved" id="tsSaved">保存しました</span>
+    </div>
+  </div>
 </div>
 
 <main>
@@ -527,6 +568,8 @@ let TOOLS = [];
 
 let disabledTools = [];
 let toolOrder = [];
+let terminalConfig = {};   // settings.terminal: { <OS>: { emulator, shell, shell_args } }
+let currentOS = '';        // /api/info.system: "Windows" | "Darwin" | "Linux"
 let restartCmdText = 'devhub';
 
 // Show the address this page was actually reached at (host:port) rather than a
@@ -612,6 +655,53 @@ async function saveSettings() {
     body: JSON.stringify({ disabled_tools: disabledTools, tool_order: toolOrder }),
   });
 }
+
+/* ── Terminal settings ──
+   env-launcher launches processes in a terminal chosen by settings.terminal for
+   the running OS. This edits that per-OS block (emulator / shell / shell_args) so
+   it no longer needs a hand-edited settings document — the fix for the Windows
+   "wt + powershell" launch also lives here as a workaround (switch shell to cmd,
+   or clear the emulator). */
+const TERMINAL_HINTS = {
+  Windows: 'emulator: wt か空欄 / shell: powershell・pwsh・cmd',
+  Darwin: 'emulator: ghostty・Terminal.app・iTerm / shell: zsh・bash',
+  Linux: 'emulator: gnome-terminal・xterm / shell: bash・zsh',
+};
+function renderTerminalSettings() {
+  const wrap = document.getElementById('terminalSettings');
+  if (!currentOS) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  const cfg = terminalConfig[currentOS] || {};
+  document.getElementById('tsOsLabel').textContent = currentOS;
+  document.getElementById('tsEmulator').value = cfg.emulator || '';
+  document.getElementById('tsShell').value = cfg.shell || '';
+  document.getElementById('tsShellArgs').value = (cfg.shell_args || []).join(' ');
+  document.getElementById('tsHint').textContent = TERMINAL_HINTS[currentOS] || '';
+}
+async function saveTerminalSettings() {
+  const args = document.getElementById('tsShellArgs').value.trim().split(/\s+/).filter(Boolean);
+  // POST /api/settings replaces the `terminal` key wholesale, so send the whole
+  // object with just the current OS patched — the other OSes must ride along.
+  const terminal = {
+    ...terminalConfig,
+    [currentOS]: {
+      emulator: document.getElementById('tsEmulator').value.trim(),
+      shell: document.getElementById('tsShell').value.trim(),
+      shell_args: args,
+    },
+  };
+  const res = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ terminal }),
+  });
+  if (!res.ok) return;
+  terminalConfig = terminal;
+  const saved = document.getElementById('tsSaved');
+  saved.classList.add('show');
+  setTimeout(() => saved.classList.remove('show'), 1500);
+}
+document.getElementById('tsSave').addEventListener('click', saveTerminalSettings);
 
 /* ── Settings panel toggle ── */
 document.getElementById('settingsBtn').addEventListener('click', () => {
@@ -746,9 +836,10 @@ async function copyCmd() {
 /* ── Init ── */
 (async () => {
   try {
-    const [toolsRes, settingsRes] = await Promise.all([
+    const [toolsRes, settingsRes, infoRes] = await Promise.all([
       fetch('/api/tools'),
       fetch('/api/settings'),
+      fetch('/api/info'),
     ]);
     if (!toolsRes.ok) throw new Error('GET /api/tools → ' + toolsRes.status);
     if (!settingsRes.ok) throw new Error('GET /api/settings → ' + settingsRes.status);
@@ -763,11 +854,14 @@ async function copyCmd() {
     const settings = await settingsRes.json();
     disabledTools = settings.disabled_tools || [];
     toolOrder = settings.tool_order || [];
+    terminalConfig = settings.terminal || {};
+    if (infoRes.ok) currentOS = ((await infoRes.json()).system) || '';
   } catch (e) {
     console.error('dashboard init failed:', e);
   }
   renderGrid();
   renderToggles();
+  renderTerminalSettings();
   renderFooter();
   checkUpdate();
   checkPendingApprovals();

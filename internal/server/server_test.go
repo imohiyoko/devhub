@@ -72,6 +72,10 @@ func TestStaticServesDashboardWithShim(t *testing.T) {
 	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
 	}
+	// The terminal-settings UI (emulator/shell editor) ships in the dashboard.
+	if !strings.Contains(body, `id="terminalSettings"`) {
+		t.Error("dashboard missing terminal-settings UI")
+	}
 }
 
 func TestHostAllowlist(t *testing.T) {
@@ -137,6 +141,11 @@ func TestAPIRequiresToken(t *testing.T) {
 	// "restart never finishes" hang.
 	if !strings.Contains(rr.Body.String(), `"instance":"`) {
 		t.Errorf("/api/info body = %s, want non-empty instance", rr.Body.String())
+	}
+	// The dashboard's terminal-settings UI reads `system` to pick which OS's
+	// terminal config (emulator/shell) it edits.
+	if !strings.Contains(rr.Body.String(), `"system":"`) {
+		t.Errorf("/api/info body = %s, want system field", rr.Body.String())
 	}
 }
 
