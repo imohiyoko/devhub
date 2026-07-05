@@ -1,6 +1,7 @@
 package envs
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -30,5 +31,26 @@ func TestBuildCmdWithEnvOtherShells(t *testing.T) {
 	cmd := buildCmdWithEnv("run", map[string]string{"K": "v"}, true, false)
 	if !strings.Contains(cmd, `set "K=v"`) || !strings.Contains(cmd, " & run") {
 		t.Errorf("cmd path should set-and-'&', got %q", cmd)
+	}
+}
+
+// The wt/PowerShell path hands wt a script file (never an inline -Command with a
+// ';' or newline it would mangle), so writeLaunchScript must produce a .ps1 that
+// contains the composed env-prefixed command verbatim.
+func TestWriteLaunchScript(t *testing.T) {
+	p, err := writeLaunchScript("$env:DEVHUB_PORT='8766'\ngo run ./cmd/devhub start")
+	if err != nil {
+		t.Fatalf("writeLaunchScript: %v", err)
+	}
+	defer os.Remove(p)
+	if !strings.HasSuffix(p, ".ps1") {
+		t.Errorf("script path %q should end in .ps1", p)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read script: %v", err)
+	}
+	if got := string(b); !strings.Contains(got, "$env:DEVHUB_PORT='8766'") || !strings.Contains(got, "go run ./cmd/devhub start") {
+		t.Errorf("script content missing the command: %q", got)
 	}
 }
