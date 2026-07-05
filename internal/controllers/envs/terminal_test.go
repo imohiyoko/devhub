@@ -111,7 +111,8 @@ func TestLookPathIn(t *testing.T) {
 	name := "devhubfakeshell"
 	file := name
 	if platform.IsWindows() {
-		file = name + ".exe"
+		t.Setenv("PATHEXT", ".EXE") // pin so the test never depends on the CI PATHEXT
+		file = name + ".EXE"
 	}
 	full := filepath.Join(dir, file)
 	if err := os.WriteFile(full, []byte("x"), 0o755); err != nil {
@@ -135,7 +136,8 @@ func TestResolveShell(t *testing.T) {
 	name := "devhubfakeshell"
 	file := name
 	if platform.IsWindows() {
-		file = name + ".exe"
+		t.Setenv("PATHEXT", ".EXE") // pin so the test never depends on the CI PATHEXT
+		file = name + ".EXE"
 	}
 	full := filepath.Join(dir, file)
 	if err := os.WriteFile(full, []byte("x"), 0o755); err != nil {

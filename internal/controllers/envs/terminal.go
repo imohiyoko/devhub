@@ -100,9 +100,9 @@ func resolveShell(shell string) string {
 // lookPathIn resolves an executable name against an explicit PATH string, rather
 // than the process's live PATH that exec.LookPath is hardwired to read (which
 // may be the corrupted value we are trying to route around). On Windows it
-// honors PATHEXT so a bare "powershell" matches "powershell.exe". It checks only
-// that a matching regular file exists, not that it is executable — good enough
-// for resolving a known shell name, and the spawn itself is the real gate.
+// honors PATHEXT so a bare "powershell" matches "powershell.exe"; on Unix it
+// requires the executable bit. Non-regular or non-executable candidates are
+// skipped so a later PATH entry can still win (matching exec.LookPath).
 func lookPathIn(name, pathEnv string) (string, bool) {
 	exts := []string{""}
 	if platform.IsWindows() && filepath.Ext(name) == "" {
@@ -122,8 +122,10 @@ func lookPathIn(name, pathEnv string) (string, bool) {
 		}
 		for _, e := range exts {
 			cand := filepath.Join(dir, name) + e
-			if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
-				return cand, true
+			if fi, err := os.Stat(cand); err == nil && fi.Mode().IsRegular() {
+				if platform.IsWindows() || fi.Mode().Perm()&0o111 != 0 {
+					return cand, true
+				}
 			}
 		}
 	}
