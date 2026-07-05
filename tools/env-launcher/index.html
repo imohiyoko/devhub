@@ -276,7 +276,7 @@ main {
         <label style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text);">
           <input type="checkbox" id="envWtEnabled"> 有効にする
         </label>
-        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+        <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">
           ※有効にすると、binding 未指定のプロセスは選択した worktree を CWD として起動します。<br>
           <span>※worktree は <strong>git tool で作成済みの既存 worktree</strong> から選びます（env-launcher は worktree を作成・削除しません）。</span>
         </div>
@@ -293,7 +293,7 @@ main {
       </div>
       <div class="form-group" style="margin-top: 24px;">
         <label style="font-weight: 600; color: var(--text);">スコープ (任意)</label>
-        <div style="font-size: 12px; color: var(--text-muted); margin: 4px 0 8px;">
+        <div style="font-size: 12px; color: var(--muted); margin: 4px 0 8px;">
           ※ Repository を選ぶと、この環境のプロセスは選んだ範囲からのみ binding できます（事故防止）。空なら制限なし。
         </div>
         <label>許可する Repository <span style="font-size: 11px; color: var(--muted);">※ Ctrl/⌘ + クリックで複数選択</span></label>
@@ -721,7 +721,7 @@ function showToast(message) {
   toast.style.position = 'fixed';
   toast.style.bottom = '20px';
   toast.style.right = '20px';
-  toast.style.backgroundColor = 'var(--primary)';
+  toast.style.backgroundColor = 'var(--accent)';
   toast.style.color = '#fff';
   toast.style.padding = '12px 20px';
   toast.style.borderRadius = '8px';

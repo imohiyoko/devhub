@@ -1,0 +1,58 @@
+/* shared/ui/shell.css — the tool-page "app shell": the fixed-height flex body,
+   the 52px header bar, and the hub-link / divider / title / spacer chrome that
+   every full-screen devhub tool page repeats verbatim.
+
+   Opt-in UI layer (think component library, not contract): a page adopts it with
+       <link rel="stylesheet" href="/shared/ui/shell.css">
+   placed AFTER theme.css and BEFORE the page's own <style>, so the page can still
+   add to or override any rule locally (e.g. diff-kun's sticky header).
+
+   Deliberately not universal: the dashboard is a scrolling landing page with its
+   own header metrics, git ships its own git.css, and env-launcher uses a
+   borderless text-link header — those keep their own chrome and don't link this. */
+
+/* The full-screen app shell: a fixed-height column that never scrolls as a whole;
+   the panes inside manage their own overflow. */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* The top bar: fixed 52px, surface background, holds the hub-link + title + tools. */
+header {
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+/* "← Hub" back-link: a small boxed link back to the dashboard. */
+.hub-link {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.hub-link:hover { color: var(--text); background: var(--border); }
+
+/* Vertical hairline between the hub-link and the page title; flex-shrink:0 keeps
+   the 1px sliver from collapsing when the header row is tight. */
+.divider { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+
+/* The page title, e.g. "ports". */
+header h1 { font-size: 15px; font-weight: 600; }
+
+/* Pushes everything after it to the right edge of the header. */
+.spacer { flex: 1; }

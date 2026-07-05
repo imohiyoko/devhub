@@ -263,3 +263,33 @@ func TestToolPageReferencesSharedModules(t *testing.T) {
 		}
 	}
 }
+
+// The opt-in UI layer lives under shared/ui/ and rides the same recursive shared/
+// walk, served with a CSS content-type so a strict-MIME browser applies it. This
+// guards the path that lets adopter pages drop their duplicated app-shell CSS.
+func TestSharedUIShellServed(t *testing.T) {
+	s := newTestServer(t)
+	rr := s.do("GET", "/shared/ui/shell.css", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /shared/ui/shell.css = %d, want 200", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
+		t.Errorf("shell.css Content-Type = %q, want text/css; charset=utf-8", ct)
+	}
+	if !strings.Contains(rr.Body.String(), ".hub-link") {
+		t.Error("shell.css body missing .hub-link rule")
+	}
+}
+
+// A page that dropped its local body/header block must link the shared shell, or
+// its chrome would render unstyled. ports is one of the five adopter pages.
+func TestToolPageReferencesShell(t *testing.T) {
+	s := newTestServer(t)
+	rr := s.do("GET", "/ports", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /ports = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `href="/shared/ui/shell.css"`) {
+		t.Error("/ports page missing shell.css link")
+	}
+}
