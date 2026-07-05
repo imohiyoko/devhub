@@ -31,6 +31,10 @@ Usage:
 A bare 'devhub' (no arguments) prints this help. Starting the server is the
 explicit 'devhub start', so a reflexive 'devhub' never binds a port by surprise.
 
+'devhub start' can take an optional provenance — 'binary', 'homebrew', or
+'code' — to launch the server from a specific devhub instead of the current
+one (a one-off choice that touches no command slot; see 'devhub start -h').
+
 Flags (devhub start):
   -no-browser               do not open a browser on start
 
@@ -43,14 +47,31 @@ Environment:
   DEVHUB_BIN_DIR            command-slot directory checked by doctor
 `
 
-// startUsage is printed for `devhub start -h` or a flag parse error.
-const startUsage = `Usage: devhub start [flags]
+// startUsage is printed for `devhub start -h`, a flag parse error, or an
+// unknown provenance.
+const startUsage = `Usage: devhub start [<provenance>] [flags]
 
-Start the devhub server (serves the dashboard on 127.0.0.1 and, unless
--no-browser, opens a browser).
+Start the devhub server in the foreground: it serves the dashboard on
+127.0.0.1 (Ctrl+C to quit) and, unless -no-browser, opens a browser.
+
+With no <provenance> the server runs from the current devhub. A <provenance>
+hands off to a specific devhub implementation instead — a one-off choice that
+changes no command slot or PATH:
+
+  binary      the release binary installed under <DevhubHome>/bin
+  homebrew    a Homebrew-installed devhub found on PATH (not on Windows)
+  code        the current source, via 'go run' in a devhub checkout
+              (the current directory, the dev-shim's checkout, or $DEVHUB_SRC)
+
+Aliases: release=binary, brew=homebrew, source=code.
 
 Flags:
   -no-browser   do not open a browser on start
+
+Examples:
+  devhub start                      run from the current devhub
+  devhub start code                 run this checkout from source
+  devhub start binary -no-browser   run the release binary, no browser
 `
 
 // runSubcommand dispatches `devhub <name> …` and returns the process exit
