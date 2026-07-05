@@ -8,26 +8,12 @@
 <script src="/shared/dom.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <link rel="stylesheet" href="/shared/ui/shell.css">
+<link rel="stylesheet" href="/shared/ui/components.css">
 <style>
 
 /* app shell + header chrome: shared/ui/shell.css */
 
-.btn {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: border-color 0.1s, color 0.1s;
-}
-.btn:hover { border-color: var(--accent); color: var(--accent); }
-.btn-icon {
-  padding: 4px 8px;
-  font-size: 14px;
-}
-.btn-icon.active { border-color: var(--accent); color: var(--accent); }
+/* buttons: shared/ui/components.css (.btn / .btn-icon) */
 
 .search-wrap {
   position: relative;
@@ -149,19 +135,7 @@
 .dir-entry.repo .entry-name { color: var(--text); }
 .entry-actions { display: flex; gap: 5px; flex-shrink: 0; }
 .dir-empty { padding: 12px 10px; font-size: 12px; color: var(--muted); text-align: center; }
-.btn-sm {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.btn-sm:hover { border-color: var(--accent); color: var(--accent); }
-.btn-sm.add { border-color: var(--accent); color: var(--accent); }
-.btn-sm.add:hover { background: var(--accent); color: #fff; }
+/* .btn-sm + accent variant: shared/ui/components.css (.btn-sm / .btn-primary) */
 
 main {
   flex: 1;
@@ -224,12 +198,7 @@ main {
 }
 .repo-item:hover .hide-btn { opacity: 1; }
 .hide-btn:hover { color: #f85149; }
-.empty {
-  text-align: center;
-  color: var(--muted);
-  font-size: 13px;
-  padding: 48px 0;
-}
+/* .empty: shared/ui/components.css */
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -258,7 +227,7 @@ main {
     <div class="settings-title">未追加のリポジトリを探す</div>
     <div class="dir-browser">
       <div class="dir-browser-bar">
-        <button class="btn-sm" id="btn-up">↑ 上へ</button>
+        <button class="btn btn-sm" id="btn-up">↑ 上へ</button>
         <span class="dir-current" id="dir-current"></span>
       </div>
       <div class="dir-list" id="dir-list"></div>
@@ -268,7 +237,7 @@ main {
     <div class="settings-title">パスを直接追加</div>
     <div style="display:flex; gap:6px;">
       <input id="input-manual-path" type="text" placeholder="例: C:\path\to\repo または ~/repo" style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--text); padding:5px 8px; font-size:12px; outline:none;">
-      <button class="btn-sm" id="btn-manual-add" style="border-color:var(--accent); color:var(--accent);">追加</button>
+      <button class="btn btn-sm btn-primary" id="btn-manual-add">追加</button>
     </div>
     <div id="manual-add-message" style="font-size:11px; margin-top:6px; min-height:16px;"></div>
   </div>
@@ -398,8 +367,8 @@ async function browseTo(path) {
     const icon = e.is_git ? '<span style="color:var(--muted)">◈</span>' : '<span>📁</span>';
     const navAttr = !e.is_git ? `onclick="browseTo('${p}')"` : '';
     const addBtn = e.in_workspace ? '' :
-      `<button class="btn-sm add" onclick="handlePin(event,'${p}')">追加</button>`;
-    const codeBtn = `<button class="btn-sm" onclick="handleCode(event,'${p}')">code</button>`;
+      `<button class="btn btn-sm btn-primary" onclick="handlePin(event,'${p}')">追加</button>`;
+    const codeBtn = `<button class="btn btn-sm" onclick="handleCode(event,'${p}')">code</button>`;
     const arrow = !e.is_git ? '<span class="entry-arrow">→</span>' : '';
     return `
       <div class="dir-entry ${e.is_git ? 'repo' : 'nav'}" ${navAttr}>

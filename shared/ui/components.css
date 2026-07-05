@@ -1,0 +1,50 @@
+/* shared/ui/components.css — the shared interactive components: the button family
+   and the "empty / placeholder" caption. Opt-in UI layer, linked AFTER theme.css
+   (and shell.css if the page uses it) and BEFORE the page's own <style>, so a page
+   can still add variants or override locally.
+
+   The button base is the outline/ghost style the tool pages converged on: a muted,
+   1px-bordered button that brightens its text and gains an accent border on hover.
+   Colour variants (primary=accent, danger=red, success=green) stay outline at rest
+   and fill on hover; size/shape modifiers (sm, icon) are pure deltas over the base
+   and compose with it (class="btn btn-sm").
+
+   Not linked by git (ships its own git.css) or the dashboard (bespoke header
+   buttons). Text inputs stay page-local: they're bespoke widgets (header search
+   boxes, editing textareas, form fields) with no cross-page duplication to share. */
+
+.btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 11px;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+
+/* Colour variants: outline at rest, fill on hover. */
+.btn-primary { border-color: var(--accent); color: var(--accent); }
+.btn-primary:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.btn-danger { border-color: var(--red); color: var(--red); }
+.btn-danger:hover:not(:disabled) { background: var(--red); color: #fff; }
+.btn-success { border-color: var(--green); color: var(--green); }
+.btn-success:hover:not(:disabled) { background: var(--green); color: #fff; }
+
+/* Size / shape modifiers — compose with .btn (class="btn btn-sm"). */
+.btn-sm { font-size: 11px; padding: 3px 8px; border-radius: 5px; }
+.btn-icon { padding: 4px 8px; font-size: 14px; }
+.btn-icon.active { border-color: var(--accent); color: var(--accent); }
+
+/* Centered muted caption for loading / no-results / empty states. */
+.empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 40px 0;
+}
