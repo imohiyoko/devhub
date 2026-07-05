@@ -6,41 +6,10 @@
 <title>diagram — devhub</title>
 <script src="/shared/rebuild-reload.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
+<link rel="stylesheet" href="/shared/ui/shell.css">
 <style>
 
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
-}
-
-header {
-  height: 52px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-  gap: 10px;
-  flex-shrink: 0;
-}
-.hub-link {
-  font-size: 11px;
-  color: var(--muted);
-  text-decoration: none;
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-}
-.hub-link:hover { color: var(--text); background: var(--border); }
-.vdivider { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
-header h1 { font-size: 15px; font-weight: 600; }
-.spacer { flex: 1; }
+/* app shell + header chrome: shared/ui/shell.css */
 
 .mode-badge {
   font-size: 11px;
@@ -213,7 +182,7 @@ header h1 { font-size: 15px; font-weight: 600; }
 
 <header>
   <a href="/" class="hub-link">← Hub</a>
-  <div class="vdivider"></div>
+  <div class="divider"></div>
   <h1>diagram</h1>
   <span class="mode-badge" id="mode-badge">Mermaid → XML</span>
   <div class="spacer"></div>

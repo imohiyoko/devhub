@@ -7,58 +7,15 @@
 <script src="/shared/rebuild-reload.js"></script>
 <script src="/shared/dom.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
+<link rel="stylesheet" href="/shared/ui/shell.css">
 <style>
 html, body { overscroll-behavior: none; }
 
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
-}
-
-/* ── header ─────────────────────────────────────────────────────────── */
-header {
-  height: 52px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-  gap: 10px;
-  flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-}
-
-.hub-link {
-  font-size: 11px;
-  color: var(--muted);
-  text-decoration: none;
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.hub-link:hover { color: var(--text); background: var(--border); }
-
-.divider {
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-}
-
-header h1 { font-size: 15px; font-weight: 600; margin-right: 2px; }
-.spacer { flex: 1; }
+/* App shell + header chrome come from shared/ui/shell.css; diff-kun keeps only
+   its additions: a sticky header, a flex hub-link, and a bit of title spacing. */
+header { position: sticky; top: 0; z-index: 100; }
+.hub-link { line-height: 1; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+header h1 { margin-right: 2px; }
 
 .badge {
   font-size: 11px; padding: 2px 8px;
