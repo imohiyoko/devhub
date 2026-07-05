@@ -82,12 +82,12 @@ var Registry = []Surface{
 	},
 	{
 		ID:       "envs-run-shell",
-		Binaries: []string{"sh -c (unix)", "cmd /c (windows)"},
+		Binaries: []string{"sh -c (unix)", `cmd /S /C (windows)`},
 		Kind:     Fixed,
 		Trigger:  "POST /api/envs/launch and /api/envs/launch/process (fallback path when no terminal emulator is usable)",
 		Input:    "Runs the env definition's `command` string verbatim via the shell. The command is NOT taken from the request — it is read from the saved env definition (store), launched by env_id/process_id.",
 		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Writing env definitions goes through POST /api/envs (same gates).",
-		Notes:    "This is the widest surface: an arbitrary shell command runs. It is acceptable because the command is user-authored config launched by id, not a per-request payload — mirroring the id-indexed design the whole exec layer already follows.",
+		Notes:    "This is the widest surface: an arbitrary shell command runs. It is acceptable because the command is user-authored config launched by id, not a per-request payload — mirroring the id-indexed design the whole exec layer already follows. On Windows the raw command line is passed via SysProcAttr.CmdLine because cmd.exe does not interpret Go's default \\\" argument escaping (issue #114).",
 	},
 	{
 		ID:       "envs-run-terminal",
