@@ -41,6 +41,11 @@ devhub version / help
 詳細は [docs/env-launcher/0002](docs/env-launcher/0002-cli-env-stop.md) と
 [docs/root/0002](docs/root/0002-single-command-slot-and-cli.md)。
 
+`devhub start` は**起動元を選べます**: `devhub start binary|homebrew|code`
+（リリースバイナリ / Homebrew 版 / 手元ソースの `go run`）。コマンドスロットや
+PATH は変えず、その一回だけ別の devhub に委譲します。詳細は
+[docs/root/0004](docs/root/0004-devhub-start-provenance.md)。
+
 ## セットアップ
 
 devhub は単一バイナリで配布されます。インストーラは GitHub Releases から**バージョン固定**の成果物を取得し、**SHA256 を検証**してから配置します（ランタイム不要）。
@@ -117,6 +122,7 @@ install -m 0755 devhub ~/.local/bin/devhub
 ```bash
 devhub start               # ダッシュボードを起動してブラウザを開く
 devhub start --no-browser  # ブラウザを開かない
+devhub start code          # 手元のソースを go run で起動（起動元の選択。他に binary / homebrew）
 devhub --version           # バージョンを表示
 devhub                     # 引数なしはヘルプ（サーバーは起動しない）
 ```
