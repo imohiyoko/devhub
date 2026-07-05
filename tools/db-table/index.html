@@ -9,6 +9,7 @@
 <script src="/shared/net.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <link rel="stylesheet" href="/shared/ui/shell.css">
+<link rel="stylesheet" href="/shared/ui/components.css">
 <style>
 :root {
   --panel:  #111820;
@@ -116,22 +117,7 @@ aside {
 .driver-fields { display: contents; }
 .driver-fields.hidden { display: none; }
 
-.btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--muted);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 12px;
-  padding: 6px 11px;
-  white-space: nowrap;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-}
-.btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
-.btn.primary { border-color: var(--accent); color: var(--accent); }
-.btn.primary:hover:not(:disabled) { background: var(--accent); color: #fff; }
-.btn:disabled { opacity: 0.45; cursor: default; }
+/* buttons: shared/ui/components.css (.btn / .btn-primary) */
 
 .connection-list {
   max-height: 220px;
@@ -211,11 +197,9 @@ aside {
   font-family: "SF Mono", ui-monospace, monospace;
   font-size: 11px;
 }
-.empty {
-  color: var(--muted);
-  font-size: 13px;
-  padding: 18px 12px;
-}
+/* .empty base is shared/ui/components.css; db-table's side panels keep tighter,
+   left-aligned placeholders. */
+.empty { padding: 18px 12px; text-align: left; }
 
 main {
   display: flex;
@@ -473,7 +457,7 @@ main {
           </div>
         </div>
         <div class="form-actions">
-          <button class="btn primary" type="submit">接続</button>
+          <button class="btn btn-primary" type="submit">接続</button>
           <button class="btn" type="button" id="newBtn">新規</button>
         </div>
       </form>
@@ -522,7 +506,7 @@ main {
         <button class="btn" id="prevBtn" disabled>前へ</button>
         <button class="btn" id="nextBtn" disabled>次へ</button>
         <button class="btn" id="reloadBtn" disabled>再読込</button>
-        <button class="btn primary" id="addBtn" disabled>行追加</button>
+        <button class="btn btn-primary" id="addBtn" disabled>行追加</button>
       </div>
     </div>
     <div class="grid-wrap" id="gridWrap">

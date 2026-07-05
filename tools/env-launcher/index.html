@@ -8,6 +8,7 @@
 <script src="/shared/rebuild-reload.js"></script>
 <script src="/shared/dom.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
+<link rel="stylesheet" href="/shared/ui/components.css">
 <style>
 
 body {
@@ -39,18 +40,7 @@ header {
 .hub-link:hover { color: var(--text); }
 .header-title { font-weight: 600; color: var(--text); }
 .header-spacer { flex: 1; }
-.btn {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-}
-.btn:hover { border-color: var(--muted); }
-.btn-primary { background: var(--green); border-color: var(--green); color: #fff; }
-.btn-primary:hover { opacity: 0.9; }
+/* buttons: shared/ui/components.css (.btn; save/launch use .btn-success) */
 
 main {
   flex: 1;
@@ -159,7 +149,7 @@ main {
 .env-var-row.insert-before { box-shadow: 0 -2px 0 0 var(--green); }
 
 /* Empty state */
-.empty-state { text-align: center; color: var(--muted); padding: 40px; }
+/* .empty (was .empty-state): shared/ui/components.css */
 
 /* Launched (running environments) section */
 .section-title {
@@ -230,9 +220,7 @@ main {
 }
 .run-badge.up { border-color: var(--green); color: var(--green); }
 .run-badge.down { border-color: var(--muted); color: var(--muted); }
-.btn-sm { padding: 4px 9px; font-size: 12px; }
-.btn-danger { border-color: var(--red); color: var(--red); background: var(--surface); }
-.btn-danger:hover { background: var(--red); color: #fff; }
+/* .btn-sm / .btn-danger: shared/ui/components.css */
 </style>
 </head>
 <body>
@@ -254,7 +242,7 @@ main {
     <div id="launched"></div>
   </div>
   <div id="app">
-    <div class="empty-state">Loading...</div>
+    <div class="empty">Loading...</div>
   </div>
 </main>
 
@@ -304,7 +292,7 @@ main {
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeEnvModal()">キャンセル</button>
-      <button class="btn btn-primary" onclick="saveEnv()">保存</button>
+      <button class="btn btn-success" onclick="saveEnv()">保存</button>
     </div>
   </div>
 </div>
@@ -374,7 +362,7 @@ main {
         <div id="bulkEnvArea" style="display: none; margin-top: 8px;">
           <textarea id="bulkEnvText" class="form-control" rows="6" style="font-family: monospace; resize: vertical;" placeholder="export KEY=value または KEY=value を貼り付け&#10;# 行頭コメント・空行は無視（行末の # コメントは値の一部になります）"></textarea>
           <div style="display: flex; gap: 8px; margin-top: 6px;">
-            <button class="btn btn-primary" onclick="applyBulkEnv()">反映</button>
+            <button class="btn btn-success" onclick="applyBulkEnv()">反映</button>
             <button class="btn" onclick="toggleBulkEnv()">閉じる</button>
           </div>
         </div>
@@ -382,7 +370,7 @@ main {
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeProcessModal()">キャンセル</button>
-      <button class="btn btn-primary" onclick="saveProcess()">保存</button>
+      <button class="btn btn-success" onclick="saveProcess()">保存</button>
     </div>
   </div>
 </div>
@@ -750,7 +738,7 @@ function isMaskedKey(key) {
 function render() {
   const app = document.getElementById('app');
   if (!envsData.environments || envsData.environments.length === 0) {
-    app.innerHTML = '<div class="empty-state">環境がありません。「＋ 環境を追加」から作成してください。</div>';
+    app.innerHTML = '<div class="empty">環境がありません。「＋ 環境を追加」から作成してください。</div>';
     return;
   }
 
@@ -765,7 +753,7 @@ function render() {
           <h2>${envName}</h2>
           ${env.worktree?.enabled ? `<span style="font-size: 11px; background: var(--border); padding: 2px 6px; border-radius: 4px;">worktree</span>` : ''}
           <div class="env-actions">
-            <button class="btn btn-primary" data-action="launch-env" data-env-id="${envId}">▶ 全て起動</button>
+            <button class="btn btn-success" data-action="launch-env" data-env-id="${envId}">▶ 全て起動</button>
             <button class="btn" data-action="edit-env" data-e-idx="${eIdx}">編集</button>
             <button class="btn" data-action="delete-env" data-e-idx="${eIdx}" style="color: var(--red);">削除</button>
           </div>
@@ -813,7 +801,7 @@ function render() {
         `;
       });
     } else {
-      html += '<div class="empty-state" style="padding: 20px;">プロセスがありません</div>';
+      html += '<div class="empty" style="padding: 20px;">プロセスがありません</div>';
     }
     html += `</div></div>`;
   });
