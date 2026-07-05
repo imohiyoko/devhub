@@ -60,17 +60,11 @@ func inPath(name string) bool {
 func start(cmd *exec.Cmd) { _ = cmd.Start() }
 
 // runShell launches command via the platform shell (subprocess shell=True).
-// On Windows the configured shell is honoured (powershell / cmd).
-// On Unix we always use sh(1) — it is POSIX-required and available on every
-// supported OS, making it the safest choice for background process launching
-// regardless of the user's interactive shell (bash/zsh/fish/…).
+// The shell invocation is built per-OS in shell_windows.go / shell_unix.go —
+// Windows needs a raw command line (SysProcAttr.CmdLine) because cmd.exe does
+// not understand Go's default \" argument escaping.
 func runShell(cwd, command string, env []string) {
-	var cmd *exec.Cmd
-	if platform.IsWindows() {
-		cmd = exec.Command("cmd", "/c", command) //execaudit:envs-run-shell
-	} else {
-		cmd = exec.Command("sh", "-c", command) //execaudit:envs-run-shell
-	}
+	cmd := shellCmd(command)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
