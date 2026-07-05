@@ -8,6 +8,7 @@
 <script src="/shared/dom.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <link rel="stylesheet" href="/shared/ui/shell.css">
+<link rel="stylesheet" href="/shared/ui/components.css">
 <style>
 html, body { overscroll-behavior: none; }
 
@@ -39,14 +40,7 @@ header h1 { margin-right: 2px; }
 .tab-btn:hover:not(.active), .mode-btn:hover:not(.active) { background: var(--border); color: var(--text); }
 .tab-btn.active, .mode-btn.active { background: var(--accent); color: #fff; }
 
-.btn {
-  font-size: 12px; padding: 5px 12px;
-  border-radius: 6px; border: 1px solid var(--border);
-  background: var(--surface); color: var(--text); cursor: pointer;
-}
-.btn:hover { background: var(--border); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.primary:hover { opacity: 0.85; }
+/* buttons: shared/ui/components.css (.btn / .btn-primary) */
 
 /* ── panels ──────────────────────────────────────────────────────────── */
 .panel {
@@ -204,7 +198,7 @@ mark.wins { background: #3fb95050; color: #56d364; border-radius: 2px; font-styl
     <button class="mode-btn"        data-mode="split"   onclick="setMode(this)">サイドバイサイド</button>
   </div>
   <button class="btn" onclick="clearAll()">クリア</button>
-  <button class="btn primary" onclick="swapTexts()">↕ 入れ替え</button>
+  <button class="btn btn-primary" onclick="swapTexts()">↕ 入れ替え</button>
 </header>
 
 <!-- 編集パネル -->

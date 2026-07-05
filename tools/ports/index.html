@@ -9,6 +9,7 @@
 <script src="/shared/net.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <link rel="stylesheet" href="/shared/ui/shell.css">
+<link rel="stylesheet" href="/shared/ui/components.css">
 <style>
 
 /* app shell + header chrome: shared/ui/shell.css */
@@ -69,22 +70,7 @@
 .protected-input:focus { border-color: var(--accent); }
 .protected-input::placeholder { color: var(--muted); }
 
-.btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--muted);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 12px;
-  padding: 6px 11px;
-  white-space: nowrap;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-}
-.btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
-.btn.danger { border-color: var(--red); color: var(--red); }
-.btn.danger:hover:not(:disabled) { background: var(--red); color: #fff; }
-.btn:disabled { opacity: 0.45; cursor: default; }
+/* buttons: shared/ui/components.css (.btn / .btn-danger) */
 
 main {
   flex: 1;
@@ -161,12 +147,7 @@ main {
   height: 16px;
   width: 16px;
 }
-.empty {
-  color: var(--muted);
-  font-size: 13px;
-  padding: 36px 0;
-  text-align: center;
-}
+/* .empty: shared/ui/components.css */
 @media (max-width: 640px) {
   .protected-bar { flex-wrap: wrap; }
   .protected-title { width: 100%; }
@@ -413,7 +394,7 @@ function rowHtml(item) {
         </label>
       </td>
       <td>
-        <button class="btn danger" ${killDisabled ? 'disabled' : ''} title="${escapeHtml(killTitle)}"
+        <button class="btn btn-danger" ${killDisabled ? 'disabled' : ''} title="${escapeHtml(killTitle)}"
                 onclick="killPort(${escapeHtml(item.port)}, ${escapeHtml(item.pid)})">kill</button>
       </td>
     </tr>`;
