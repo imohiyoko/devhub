@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/imohiyoko/devhub/internal/platform"
 )
@@ -120,17 +121,42 @@ func buildCmdWithEnv(command string, env map[string]string, isWindows, isPowersh
 	}
 	sep := " && "
 	if isWindows && isPowershell {
-		// A newline, not ';': the only place this PowerShell form is used is the
-		// Windows Terminal (wt) launch path, and wt splits its command line on ';'
-		// with no working escape (its parser ignores backslash-escaping —
-		// microsoft/terminal#11314). A "$env:… ; <cmd>" payload would be torn
-		// across tabs, so the launch failed with 0x80070002. PowerShell takes a
-		// newline as the statement separator and wt has no reason to split on it.
+		// A newline, not ';': on Windows this PowerShell form is written to a launch
+		// script (writeLaunchScript) for the wt path, where a newline is the natural
+		// .ps1 statement separator. It must not be ';' — wt corrupts a -Command value
+		// containing ';' (or an inline newline), which is exactly why the script is
+		// passed via -File instead of -Command (microsoft/terminal#11314).
 		sep = "\n"
 	} else if isWindows {
 		sep = " & "
 	}
 	return strings.Join(exports, sep) + sep + command
+}
+
+// writeLaunchScript writes a composed shell command to a temp .ps1 so the Windows
+// Terminal launch can hand PowerShell a file path instead of an inline -Command.
+// wt corrupts a -Command value containing ';' or a newline (its parser splits or
+// chokes on them — microsoft/terminal#11314); a script path has neither.
+// PowerShell parses the whole file up front, so the caller can reclaim it shortly
+// after (removeLater).
+func writeLaunchScript(command string) (string, error) {
+	f, err := os.CreateTemp("", "devhub-launch-*.ps1")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(command + "\r\n"); err != nil {
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+// removeLater deletes a launch script after a grace period long enough for
+// PowerShell to have parsed it. Best-effort: a temp file leaked by an early crash
+// is harmless.
+func removeLater(path string) {
+	time.Sleep(30 * time.Second)
+	_ = os.Remove(path)
 }
 
 // openInTerminal launches command in a new terminal window at cwd, injecting env.
@@ -177,15 +203,30 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 		}
 	case "Windows":
 		if emulator == "wt" {
-			flag := "/c"
-			if isPowershell {
-				flag = "-Command"
-			}
 			args := append([]string{"new-tab", "--startingDirectory", cwd, shell}, shellArgs...)
-			args = append(args, flag, cmdWithEnv)
+			script := ""
+			if isPowershell {
+				// wt corrupts a -Command value containing ';' or a newline (its arg
+				// parser splits/chokes on them — microsoft/terminal#11314), so hand
+				// PowerShell a script file: wt only ever sees the path. Env is baked
+				// into the script so the port survives however wt spawns the tab. The
+				// temp script is local (no mark-of-the-web), so a RemoteSigned policy
+				// runs it as-is; we don't override the machine's ExecutionPolicy.
+				if p, err := writeLaunchScript(cmdWithEnv); err == nil {
+					script = p
+					args = append(args, "-File", script)
+				} else {
+					args = append(args, "-Command", cmdWithEnv) // best-effort fallback
+				}
+			} else {
+				args = append(args, "/c", cmdWithEnv)
+			}
 			cmd := exec.Command("wt", args...) //execaudit:envs-run-terminal
 			cmd.Env = merged
 			start(cmd)
+			if script != "" {
+				go removeLater(script)
+			}
 		} else {
 			runShell(cwd, command, merged)
 		}
