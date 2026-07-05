@@ -127,7 +127,7 @@ should track *your* code instead. Two ways:
 
 A `go run` launch compiles to a temp binary, so a running instance keeps serving
 its old code until you restart it: `scripts/dev.sh stop` (`scripts\dev.ps1 stop`
-on Windows) then `devhub` (or the dashboard's ↻ rebuild).
+on Windows) then `devhub start` (or the dashboard's ↻ rebuild).
 
 ## Add a tool
 
