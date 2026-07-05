@@ -36,7 +36,7 @@ func Edition(version string) string {
 	if version == "" || version == "dev" {
 		return EditionCode
 	}
-	if isHomebrewPath(executablePath()) {
+	if IsHomebrewPath(executablePath()) {
 		return EditionHomebrew
 	}
 	return EditionInstaller
@@ -57,12 +57,15 @@ func executablePath() string {
 	return exe
 }
 
-// isHomebrewPath reports whether p sits within a Homebrew installation. It
+// IsHomebrewPath reports whether p sits within a Homebrew installation. It
 // matches the cask store (Caskroom) and formula store (Cellar) — which cover
 // the `/usr/local` and `/opt/homebrew` prefixes on macOS — plus the generic
 // prefixes for Apple-Silicon and Linuxbrew. Matching is case-insensitive and
 // slash-normalised so it works regardless of OS path separator.
-func isHomebrewPath(p string) bool {
+//
+// Exported so the CLI can classify a candidate `devhub` on PATH when resolving
+// the `homebrew` provenance for `devhub start homebrew`.
+func IsHomebrewPath(p string) bool {
 	if p == "" {
 		return false
 	}

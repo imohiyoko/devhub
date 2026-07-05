@@ -45,12 +45,31 @@ func main() {
 	os.Exit(runSubcommand(args[0], args[1:]))
 }
 
-// runServer starts the dashboard server (`devhub start`) and returns the
-// process exit code. It parses the start-only flags, then blocks in srv.Run
-// until the process is stopped or re-execs itself. A self-restart (update /
-// rebuild / restart) carries os.Args forward, so the "start" subcommand is
-// preserved across the restart — the new process starts a server, not help.
+// runServer handles `devhub start [<provenance>] [flags]`. When the first
+// positional is a provenance (binary / homebrew / code) it hands the server off
+// to that specific devhub implementation (see start.go); otherwise it starts the
+// server in-process via startServer. The provenance is extracted here, before
+// flag parsing, because Go's flag package stops at the first non-flag token
+// anyway — so a provenance must lead, and everything after it is passed through
+// to the target's own `start`.
 func runServer(args []string) int {
+	if token, rest, present := provenanceArg(args); present {
+		prov, ok := parseProvenance(token)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "devhub start: unknown provenance %q (want: binary, homebrew, or code)\n\n%s", token, startUsage)
+			return 2
+		}
+		return runLaunch(prov, rest)
+	}
+	return startServer(args)
+}
+
+// startServer starts the dashboard server in-process and returns the process
+// exit code. It parses the start-only flags, then blocks in srv.Run until the
+// process is stopped or re-execs itself. A self-restart (update / rebuild /
+// restart) carries os.Args forward, so the "start" subcommand is preserved
+// across the restart — the new process starts a server, not help.
+func startServer(args []string) int {
 	fs := flag.NewFlagSet("devhub start", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	noBrowser := fs.Bool("no-browser", false, "do not open a browser on start")
