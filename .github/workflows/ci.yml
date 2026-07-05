@@ -194,3 +194,32 @@ jobs:
               GOOS=$GOOS GOARCH=$GOARCH go build ./...
             done
           done
+
+  # Single required status check for the "protect main" ruleset. It runs on every
+  # PR (if: always()) so it ALWAYS reports a status, unlike fmt/go/cross which are
+  # skipped on docs-only / site-only PRs. A skipped upstream job never materialises
+  # its check context (matrix legs like `go (ubuntu-latest)` are only created when
+  # the matrix expands), so requiring those contexts directly deadlocks docs PRs at
+  # "Expected — Waiting for status to be reported". Requiring only `gate` fixes that:
+  # it passes when the upstream jobs succeeded OR were legitimately skipped, and
+  # fails if any failed or was cancelled — so real regressions still block merge.
+  #
+  # Ruleset change that must accompany this (repo Settings → Rules → "protect main"):
+  # replace the required checks {fmt, cross, go (…×4)} with just {gate}.
+  gate:
+    needs: [fmt, go, cross]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: verify required jobs are green or skipped
+        run: |
+          for r in "${{ needs.fmt.result }}" "${{ needs.go.result }}" "${{ needs.cross.result }}"; do
+            case "$r" in
+              failure|cancelled)
+                echo "::error::a required job did not pass: $r"
+                exit 1 ;;
+            esac
+          done
+          echo "all required jobs succeeded or were skipped: fmt=${{ needs.fmt.result }} go=${{ needs.go.result }} cross=${{ needs.cross.result }}"
