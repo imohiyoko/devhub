@@ -4,6 +4,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -37,7 +38,10 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
-// mergedEnv returns os.Environ() overlaid with extra (extra wins).
+// mergedEnv returns os.Environ() overlaid with extra (extra wins). The PATH
+// value is sanitized (sanitizePath) so a newline-corrupted PATH inherited from
+// this process does not propagate to spawned children, where it would break
+// resolution of executables in PATH subdirectories.
 func mergedEnv(extra map[string]string) []string {
 	m := map[string]string{}
 	for _, e := range os.Environ() {
@@ -48,9 +52,82 @@ func mergedEnv(extra map[string]string) []string {
 	maps.Copy(m, extra)
 	out := make([]string, 0, len(m))
 	for k, v := range m {
+		if strings.EqualFold(k, "PATH") {
+			v = sanitizePath(v)
+		}
 		out = append(out, k+"="+v)
 	}
 	return out
+}
+
+// sanitizePath repairs a PATH value that has had CR/LF characters spliced into
+// it. This is a real corruption seen on Windows, where a registry Path value
+// gains a stray newline; because CreateProcess only auto-searches System32 (not
+// its subdirectories), the newline severs resolution of executables that live in
+// a PATH subdirectory — most notably powershell.exe under
+// System32\WindowsPowerShell\v1.0 — and every exec fails with 0x80070002. Any CR
+// or LF is treated as an entry break and empty entries are dropped, so
+// "…\Wbem;<LF>C:\…\v1.0" collapses back to "…\Wbem;C:\…\v1.0". A clean PATH is
+// returned untouched (no reordering).
+func sanitizePath(v string) string {
+	if !strings.ContainsAny(v, "\r\n") {
+		return v
+	}
+	sep := os.PathListSeparator
+	parts := strings.FieldsFunc(v, func(r rune) bool {
+		return r == '\r' || r == '\n' || r == sep
+	})
+	return strings.Join(parts, string(sep))
+}
+
+// resolveShell resolves a shell name (e.g. "powershell") to an absolute path,
+// searching a CR/LF-sanitized copy of PATH. Passing an absolute path is the only
+// robust fix for the Windows Terminal launch: wt hands the tab off to an
+// already-running WindowsTerminal.exe that resolves the shell against its own
+// (possibly stale, possibly newline-corrupted) PATH, ignoring the env we set on
+// the wt process — so an absolute path is the one thing that survives. Falls
+// back to the bare name when resolution fails, preserving prior behavior.
+func resolveShell(shell string) string {
+	if shell == "" || strings.ContainsAny(shell, `/\`) {
+		return shell // empty, or already an explicit path
+	}
+	if p, ok := lookPathIn(shell, sanitizePath(os.Getenv("PATH"))); ok {
+		return p
+	}
+	return shell
+}
+
+// lookPathIn resolves an executable name against an explicit PATH string, rather
+// than the process's live PATH that exec.LookPath is hardwired to read (which
+// may be the corrupted value we are trying to route around). On Windows it
+// honors PATHEXT so a bare "powershell" matches "powershell.exe". It checks only
+// that a matching regular file exists, not that it is executable — good enough
+// for resolving a known shell name, and the spawn itself is the real gate.
+func lookPathIn(name, pathEnv string) (string, bool) {
+	exts := []string{""}
+	if platform.IsWindows() && filepath.Ext(name) == "" {
+		pathext := os.Getenv("PATHEXT")
+		if pathext == "" {
+			pathext = ".COM;.EXE;.BAT;.CMD"
+		}
+		for _, e := range strings.Split(pathext, ";") {
+			if e = strings.TrimSpace(e); e != "" {
+				exts = append(exts, e)
+			}
+		}
+	}
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			continue
+		}
+		for _, e := range exts {
+			cand := filepath.Join(dir, name) + e
+			if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+				return cand, true
+			}
+		}
+	}
+	return "", false
 }
 
 func inPath(name string) bool {
@@ -168,6 +245,10 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 	sysName := platform.SystemName()
 	emulator, shell, shellArgs := c.termConfig()
 	isPowershell := strings.Contains(strings.ToLower(shell), "powershell") || strings.Contains(strings.ToLower(shell), "pwsh")
+	// Resolve the shell to an absolute path (family detection above uses the
+	// configured name). This is what lets the wt tab find powershell when PATH is
+	// newline-corrupted, and is harmless elsewhere (falls back to the bare name).
+	shell = resolveShell(shell)
 
 	cmdWithEnv := buildCmdWithEnv(command, env, platform.IsWindows(), isPowershell)
 	merged := mergedEnv(env)
