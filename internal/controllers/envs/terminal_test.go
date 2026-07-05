@@ -2,8 +2,11 @@ package envs
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/imohiyoko/devhub/internal/platform"
 )
 
 // On the Windows Terminal (wt) launch path the env prefix must be joined to the
@@ -52,5 +55,102 @@ func TestWriteLaunchScript(t *testing.T) {
 	}
 	if got := string(b); !strings.Contains(got, "$env:DEVHUB_PORT='8766'") || !strings.Contains(got, "go run ./cmd/devhub start") {
 		t.Errorf("script content missing the command: %q", got)
+	}
+}
+
+// sanitizePath must repair a PATH with CR/LF spliced in (the real Windows
+// registry corruption that severed powershell.exe resolution) while leaving a
+// clean PATH byte-for-byte unchanged.
+func TestSanitizePath(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	clean := "C:\\a" + sep + "C:\\b"
+	if got := sanitizePath(clean); got != clean {
+		t.Errorf("clean PATH must be unchanged, got %q", got)
+	}
+	// A newline spliced right after a separator (';\n' — the exact corruption).
+	if got := sanitizePath("C:\\a" + sep + "\nC:\\b"); got != clean {
+		t.Errorf("';<LF>' should collapse: got %q, want %q", got, clean)
+	}
+	// A bare newline standing in for the separator.
+	if got := sanitizePath("C:\\a\nC:\\b"); got != clean {
+		t.Errorf("newline-only separator: got %q, want %q", got, clean)
+	}
+	// CRLF plus a doubled separator both normalize to a single break.
+	if got := sanitizePath("C:\\a" + sep + sep + "\r\nC:\\b"); got != clean {
+		t.Errorf("CRLF/doubled sep: got %q, want %q", got, clean)
+	}
+}
+
+// mergedEnv must hand children a PATH free of CR/LF, whatever this process
+// inherited.
+func TestMergedEnvSanitizesPath(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", "C:\\a"+sep+"\nC:\\b")
+	var got string
+	found := false
+	for _, e := range mergedEnv(nil) {
+		if k, v, ok := strings.Cut(e, "="); ok && strings.EqualFold(k, "PATH") {
+			got, found = v, true
+		}
+	}
+	if !found {
+		t.Fatal("PATH missing from mergedEnv output")
+	}
+	if strings.ContainsAny(got, "\r\n") {
+		t.Errorf("mergedEnv PATH still contains CR/LF: %q", got)
+	}
+	if want := "C:\\a" + sep + "C:\\b"; got != want {
+		t.Errorf("mergedEnv PATH = %q, want %q", got, want)
+	}
+}
+
+// lookPathIn resolves against an explicit PATH (honoring PATHEXT on Windows) and
+// reports absence rather than falling back to the live PATH.
+func TestLookPathIn(t *testing.T) {
+	dir := t.TempDir()
+	name := "devhubfakeshell"
+	file := name
+	if platform.IsWindows() {
+		file = name + ".exe"
+	}
+	full := filepath.Join(dir, file)
+	if err := os.WriteFile(full, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Compare case-insensitively: on Windows the extension comes from PATHEXT
+	// (".EXE") while the file was created ".exe"; the FS is case-insensitive, and
+	// this mirrors what Go's own exec.LookPath returns.
+	if got, ok := lookPathIn(name, dir); !ok || !strings.EqualFold(got, full) {
+		t.Errorf("lookPathIn(%q) = %q, %v; want %q (any case), true", name, got, ok, full)
+	}
+	if _, ok := lookPathIn("devhub-nonexistent-xyz", dir); ok {
+		t.Error("lookPathIn found a nonexistent executable")
+	}
+}
+
+// resolveShell resolves from a (sanitized) PATH, returns explicit paths as-is,
+// and falls back to the bare name when nothing matches (never empty).
+func TestResolveShell(t *testing.T) {
+	dir := t.TempDir()
+	name := "devhubfakeshell"
+	file := name
+	if platform.IsWindows() {
+		file = name + ".exe"
+	}
+	full := filepath.Join(dir, file)
+	if err := os.WriteFile(full, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if got := resolveShell(name); !strings.EqualFold(got, full) {
+		t.Errorf("resolveShell(%q) = %q, want %q (any case)", name, got, full)
+	}
+	if got := resolveShell("devhub-nonexistent-xyz"); got != "devhub-nonexistent-xyz" {
+		t.Errorf("resolveShell fallback = %q, want the bare name", got)
+	}
+	// An explicit path is returned unchanged (contains a separator, not re-looked-up).
+	explicit := filepath.Join(dir, "somewhere", "sh")
+	if got := resolveShell(explicit); got != explicit {
+		t.Errorf("resolveShell(path) = %q, want %q", got, explicit)
 	}
 }
