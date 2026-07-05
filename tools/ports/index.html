@@ -8,41 +8,10 @@
 <script src="/shared/dom.js"></script>
 <script src="/shared/net.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
+<link rel="stylesheet" href="/shared/ui/shell.css">
 <style>
 
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
-}
-
-header {
-  height: 52px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 16px;
-  flex-shrink: 0;
-}
-.hub-link {
-  font-size: 11px;
-  color: var(--muted);
-  text-decoration: none;
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-}
-.hub-link:hover { color: var(--text); background: var(--border); }
-.divider { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
-header h1 { font-size: 15px; font-weight: 600; }
-.spacer { flex: 1; }
+/* app shell + header chrome: shared/ui/shell.css */
 .search {
   width: 240px;
   background: var(--bg);
