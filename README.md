@@ -23,7 +23,7 @@
 ブラウザを開かなくても、主要な操作はサブコマンドでできます。
 
 ```bash
-devhub                      # サーバー起動（従来どおり）
+devhub start                # サーバー起動（bare の devhub はヘルプ表示）
 devhub status               # 設定ポートの稼働確認（非稼働なら exit 1）
 devhub stop                 # そのインスタンスを停止（devhub であることを確認してから kill）
 devhub doctor               # 「何が起動するか / 何が動いているか」を診断（スロット・PATH・稼働状況）
@@ -36,7 +36,7 @@ devhub version / help
 `env start` / `env stop` はサーバー停止中でも動作します。`env stop` では保護
 ポート（ports ツールで設定）と devhub 本体のポートは kill されません。
 `env start` の baton プロセスは宣言ポートを奪取します（kill 内容を表示）。
-また、既に古い devhub が居座るポートへの `devhub` 起動は、Windows でも
+また、既に古い devhub が居座るポートへの `devhub start` は、Windows でも
 「新しい起動が勝つ」（devhub という名前のプロセスに限り reclaim）ようになりました。
 詳細は [docs/env-launcher/0002](docs/env-launcher/0002-cli-env-stop.md) と
 [docs/root/0002](docs/root/0002-single-command-slot-and-cli.md)。
@@ -115,9 +115,10 @@ install -m 0755 devhub ~/.local/bin/devhub
 ### 起動
 
 ```bash
-devhub               # ダッシュボードを起動してブラウザを開く
-devhub --no-browser  # ブラウザを開かない
-devhub --version     # バージョンを表示
+devhub start               # ダッシュボードを起動してブラウザを開く
+devhub start --no-browser  # ブラウザを開かない
+devhub --version           # バージョンを表示
+devhub                     # 引数なしはヘルプ（サーバーは起動しない）
 ```
 
 > 配布バイナリを使えない環境などで**ソースから実行**したい開発者は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください（ポート分離・worktree ベースの起動方法を記載）。

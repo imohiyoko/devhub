@@ -66,7 +66,7 @@ switch ($Action) {
     Require-Cmd go
     $dataHome = if ($env:DEVHUB_HOME) { $env:DEVHUB_HOME } else { "$env:LOCALAPPDATA\devhub" }
     Write-Host "devhub をソースから起動します (port=$Port, home=$dataHome)"
-    & go run ./cmd/devhub @(PassThruArgs)
+    & go run ./cmd/devhub start @(PassThruArgs)
   }
   'build' {
     Require-Cmd go
@@ -141,6 +141,6 @@ popd
   'restart' {
     & $PSCommandPath stop
     Start-Sleep -Seconds 1 # ポート解放を待つ
-    & go run ./cmd/devhub @(PassThruArgs)
+    & go run ./cmd/devhub start @(PassThruArgs)
   }
 }

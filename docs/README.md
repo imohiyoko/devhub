@@ -29,6 +29,7 @@ docs/
 |-----|------|
 | [root/0001](root/0001-reversible-hide-hidden-repos-vs-excludes.md) | git の「非表示」は `excludes` ではなく `hidden_repos`（取り消し可能・フロントフィルタ）を用いる |
 | [root/0002](root/0002-single-command-slot-and-cli.md) | コマンドスロットは 1 つのまま（最後の install が勝つ）、置き換えは告知し `devhub doctor`/`status`/`stop` で見える化する |
+| [root/0003](root/0003-devhub-start-explicit.md) | サーバー起動は明示的な `devhub start` に一本化し、bare `devhub` はヘルプ表示にする（反射的な起動事故を防ぐ） |
 | [git/0001](git/0001-worktree-cleanup-suggestions.md) | worktree／マージ済みローカルブランチのクリーンアップを理由別トーストで提案する（マージ済み worktree・ディレクトリ欠落・マージ済みブランチ） |
 | [env-launcher/0001](env-launcher/0001-worktree-verification-launch.md) | 検証環境は専用機能を作らず、既存 env-launcher（worktree バインド + offset ポート + `{{port}}`）で立てる |
 | [env-launcher/0002](env-launcher/0002-cli-env-stop.md) | `devhub env list` / `devhub env stop` は HTTP を経由せず、共有 SQLite の直読み + OS ポート kill で実装する |
