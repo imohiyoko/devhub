@@ -1,18 +1,34 @@
 package envs
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// The composed "set env ; run" command must reach Windows Terminal with ';'
-// escaped, so wt forwards it to a single shell instead of splitting the launch
-// across tabs (which left the real command malformed and failing with
-// 0x80070002). A ';'-free command must pass through unchanged.
-func TestWtEscape(t *testing.T) {
-	got := wtEscape("$env:DEVHUB_PORT='8766' ; go run ./cmd/devhub start")
-	want := `$env:DEVHUB_PORT='8766' \; go run ./cmd/devhub start`
+// On the Windows Terminal (wt) launch path the env prefix must be joined to the
+// command with a newline, never ';': wt splits its command line on ';' with no
+// working escape (microsoft/terminal#11314), which used to tear the composed
+// "$env:… ; <cmd>" across tabs and fail the launch with 0x80070002. PowerShell
+// accepts a newline as the statement separator.
+func TestBuildCmdWithEnvPowerShellUsesNewline(t *testing.T) {
+	got := buildCmdWithEnv("go run ./cmd/devhub start", map[string]string{"DEVHUB_PORT": "8766"}, true, true)
+	want := "$env:DEVHUB_PORT='8766'\ngo run ./cmd/devhub start"
 	if got != want {
-		t.Errorf("wtEscape() = %q, want %q", got, want)
+		t.Errorf("buildCmdWithEnv() = %q, want %q", got, want)
 	}
-	if got := wtEscape("go run ./cmd/devhub start"); got != "go run ./cmd/devhub start" {
-		t.Errorf("wtEscape() altered a ';'-free command: %q", got)
+	if strings.Contains(got, ";") {
+		t.Errorf("PowerShell/wt command must not contain ';' (wt would split it): %q", got)
+	}
+}
+
+// The non-PowerShell Windows path (cmd) keeps its ' & ' separator, and no env
+// means the command passes through untouched.
+func TestBuildCmdWithEnvOtherShells(t *testing.T) {
+	if got := buildCmdWithEnv("go build", nil, true, false); got != "go build" {
+		t.Errorf("no-env command should be unchanged, got %q", got)
+	}
+	cmd := buildCmdWithEnv("run", map[string]string{"K": "v"}, true, false)
+	if !strings.Contains(cmd, `set "K=v"`) || !strings.Contains(cmd, " & run") {
+		t.Errorf("cmd path should set-and-'&', got %q", cmd)
 	}
 }
