@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -205,10 +206,19 @@ func TestResolveLaunch_Homebrew(t *testing.T) {
 		t.Error("non-homebrew PATH devhub should not resolve as homebrew")
 	}
 
-	// Windows: homebrew is unavailable.
+	// Windows: homebrew is unavailable. Wire up inputs that WOULD resolve on a
+	// non-Windows host (a Homebrew devhub.exe on PATH), so the failure can only
+	// come from the isWin guard — then assert the error says so, not a generic
+	// "not found". (Note: the PATH name must be the .exe form, because
+	// scanPathForDevhub only looks for PATHEXT names when isWin is true.)
 	dWin := baseDeps()
 	dWin.isWin = true
-	if _, _, err := resolveLaunch(provHomebrew, nil, dWin); err == nil {
-		t.Error("homebrew provenance should error on Windows")
+	dWin.pathDirs = []string{brewDir}
+	dWin.execExists = existsSet(filepath.Join(brewDir, "devhub.exe"))
+	dWin.evalSyml = func(string) (string, error) {
+		return "/opt/homebrew/Cellar/devhub/1.0/bin/devhub", nil
+	}
+	if _, _, err := resolveLaunch(provHomebrew, nil, dWin); err == nil || !strings.Contains(err.Error(), "Windows") {
+		t.Errorf("homebrew on Windows: err = %v, want a Windows-specific error", err)
 	}
 }
