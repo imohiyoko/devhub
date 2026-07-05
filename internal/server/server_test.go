@@ -293,3 +293,35 @@ func TestToolPageReferencesShell(t *testing.T) {
 		t.Error("/ports page missing shell.css link")
 	}
 }
+
+// components.css (the button/empty component layer) rides the same shared/ walk
+// and is linked by the tool pages that dropped their local button CSS.
+func TestSharedUIComponentsServed(t *testing.T) {
+	s := newTestServer(t)
+	rr := s.do("GET", "/shared/ui/components.css", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /shared/ui/components.css = %d, want 200", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
+		t.Errorf("components.css Content-Type = %q, want text/css; charset=utf-8", ct)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{".btn ", ".btn-primary", ".empty "} {
+		if !strings.Contains(body, want) {
+			t.Errorf("components.css missing %q rule", want)
+		}
+	}
+}
+
+// env-launcher opts out of shell.css but still links the component layer for its
+// buttons — guard that a components-only adopter references it.
+func TestToolPageReferencesComponents(t *testing.T) {
+	s := newTestServer(t)
+	rr := s.do("GET", "/env-launcher", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /env-launcher = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `href="/shared/ui/components.css"`) {
+		t.Error("/env-launcher page missing components.css link")
+	}
+}
