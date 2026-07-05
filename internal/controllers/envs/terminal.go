@@ -120,21 +120,17 @@ func buildCmdWithEnv(command string, env map[string]string, isWindows, isPowersh
 	}
 	sep := " && "
 	if isWindows && isPowershell {
-		sep = " ; "
+		// A newline, not ';': the only place this PowerShell form is used is the
+		// Windows Terminal (wt) launch path, and wt splits its command line on ';'
+		// with no working escape (its parser ignores backslash-escaping —
+		// microsoft/terminal#11314). A "$env:… ; <cmd>" payload would be torn
+		// across tabs, so the launch failed with 0x80070002. PowerShell takes a
+		// newline as the statement separator and wt has no reason to split on it.
+		sep = "\n"
 	} else if isWindows {
 		sep = " & "
 	}
 	return strings.Join(exports, sep) + sep + command
-}
-
-// wtEscape backslash-escapes ';' so Windows Terminal forwards the whole command to
-// a single shell instead of treating ';' as its own "run the next command"
-// delimiter. Without it a composed "$env:PORT='…' ; <cmd>" (buildCmdWithEnv) is
-// split by wt: the env prefix runs in one shell and the real command, now
-// malformed, fails to start (0x80070002 "the system cannot find the file"). wt
-// consumes the backslash and passes a literal ';' through to the shell.
-func wtEscape(s string) string {
-	return strings.ReplaceAll(s, ";", `\;`)
 }
 
 // openInTerminal launches command in a new terminal window at cwd, injecting env.
@@ -186,7 +182,7 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 				flag = "-Command"
 			}
 			args := append([]string{"new-tab", "--startingDirectory", cwd, shell}, shellArgs...)
-			args = append(args, flag, wtEscape(cmdWithEnv))
+			args = append(args, flag, cmdWithEnv)
 			cmd := exec.Command("wt", args...) //execaudit:envs-run-terminal
 			cmd.Env = merged
 			start(cmd)
