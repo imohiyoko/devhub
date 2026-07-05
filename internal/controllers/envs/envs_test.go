@@ -75,8 +75,10 @@ func TestBuildCmdWithEnv(t *testing.T) {
 	if unixQuoted != "export X='a b' && cmd" {
 		t.Errorf("unixQuoted = %q", unixQuoted)
 	}
+	// PowerShell joins with a newline, not ';': the wt launch path splits its
+	// command line on ';' (microsoft/terminal#11314), so it must never emit one.
 	ps := buildCmdWithEnv("cmd", map[string]string{"PORT": "3000"}, true, true)
-	if ps != "$env:PORT='3000' ; cmd" {
+	if ps != "$env:PORT='3000'\ncmd" {
 		t.Errorf("powershell = %q", ps)
 	}
 	cmdexe := buildCmdWithEnv("cmd", map[string]string{"PORT": "3000"}, true, false)

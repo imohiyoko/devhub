@@ -120,7 +120,13 @@ func buildCmdWithEnv(command string, env map[string]string, isWindows, isPowersh
 	}
 	sep := " && "
 	if isWindows && isPowershell {
-		sep = " ; "
+		// A newline, not ';': the only place this PowerShell form is used is the
+		// Windows Terminal (wt) launch path, and wt splits its command line on ';'
+		// with no working escape (its parser ignores backslash-escaping —
+		// microsoft/terminal#11314). A "$env:… ; <cmd>" payload would be torn
+		// across tabs, so the launch failed with 0x80070002. PowerShell takes a
+		// newline as the statement separator and wt has no reason to split on it.
+		sep = "\n"
 	} else if isWindows {
 		sep = " & "
 	}
