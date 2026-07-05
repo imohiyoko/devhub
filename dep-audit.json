@@ -1,0 +1,5 @@
+{
+  "$comment": "手動ベンダリングしたサードパーティ資産の追跡台帳。Dependabot が見ない frontend 同梱物をここで管理する。/dep-audit スキルが読む。追加時は shared/vendor/ に置いた blob ごとに 1 エントリ足す。",
+  "staleness_days": 90,
+  "vendored": []
+}
