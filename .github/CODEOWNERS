@@ -1,0 +1,8 @@
+# Code owners for devhub.
+#
+# 全ファイルの既定オーナーを @imohiyoko とする。ruleset `protect main` の
+# require_code_owner_review と組み合わせることで、main への PR は必ず
+# code owner（@imohiyoko）のレビュー承認を要する。admin は ruleset の
+# bypass 対象のため自身の PR は単独でマージできるが、他のコラボレーターは
+# code owner の承認なしにセルフマージできない。
+*       @imohiyoko
