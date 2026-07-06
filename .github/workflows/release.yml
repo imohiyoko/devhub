@@ -38,7 +38,7 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest # CGO_ENABLED=0 cross-compiles all targets from one runner
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           fetch-depth: 0 # full history for the changelog and tag computation
 
@@ -80,11 +80,11 @@ jobs:
           git tag -a "${next}" -m "release ${next}"
           git push origin "${next}"
 
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: ${{ env.MISE_VERSION }}
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           version: "~> v2"
           args: release --clean
