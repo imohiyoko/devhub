@@ -207,7 +207,7 @@ jobs:
   # Ruleset change that must accompany this (repo Settings → Rules → "protect main"):
   # replace the required checks {fmt, cross, go (…×4)} with just {gate}.
   gate:
-    needs: [fmt, go, cross]
+    needs: [label, fmt, go, cross]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -215,11 +215,17 @@ jobs:
     steps:
       - name: verify required jobs are green or skipped
         run: |
-          for r in "${{ needs.fmt.result }}" "${{ needs.go.result }}" "${{ needs.cross.result }}"; do
+          # `label` is included so that a FAILURE of the gating job itself (e.g.
+          # the gh-api file scan erroring out) cannot silently skip fmt/go/cross
+          # and still turn `gate` green. label runs on every event and is never
+          # legitimately skipped, so a failure|cancelled here is always a real
+          # problem. fmt/go/cross may be legitimately `skipped` on docs-only PRs,
+          # which the loop treats as passing (only failure|cancelled block merge).
+          for r in "${{ needs.label.result }}" "${{ needs.fmt.result }}" "${{ needs.go.result }}" "${{ needs.cross.result }}"; do
             case "$r" in
               failure|cancelled)
                 echo "::error::a required job did not pass: $r"
                 exit 1 ;;
             esac
           done
-          echo "all required jobs succeeded or were skipped: fmt=${{ needs.fmt.result }} go=${{ needs.go.result }} cross=${{ needs.cross.result }}"
+          echo "all required jobs succeeded or were skipped: label=${{ needs.label.result }} fmt=${{ needs.fmt.result }} go=${{ needs.go.result }} cross=${{ needs.cross.result }}"
