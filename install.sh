@@ -70,7 +70,7 @@ if [ "${DEVHUB_VERIFY_SIGNATURE:-0}" = "1" ]; then
     cosign verify-blob \
       --bundle "$tmp/checksums.txt.sigstore.json" \
       --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-      --certificate-identity-regexp "^https://github.com/${OWNER_REPO}/\.github/workflows/release\.yml@refs/" \
+      --certificate-identity-regexp "^https://github.com/${OWNER_REPO}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)\$" \
       "$tmp/checksums.txt" \
       || { echo "エラー: checksums.txt の署名検証に失敗しました。" >&2; exit 1; }
   else
@@ -80,7 +80,7 @@ if [ "${DEVHUB_VERIFY_SIGNATURE:-0}" = "1" ]; then
       --certificate "$tmp/checksums.txt.pem" \
       --signature "$tmp/checksums.txt.sig" \
       --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-      --certificate-identity-regexp "^https://github.com/${OWNER_REPO}/\.github/workflows/release\.yml@refs/" \
+      --certificate-identity-regexp "^https://github.com/${OWNER_REPO}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)\$" \
       "$tmp/checksums.txt" \
       || { echo "エラー: checksums.txt の署名検証に失敗しました。" >&2; exit 1; }
   fi
