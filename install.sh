@@ -49,19 +49,31 @@ echo "Downloading $asset ($ver) ..."
 curl -fsSL "$base/$asset" -o "$tmp/$asset"
 curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
 
-# --- optional: verify checksums.txt signature (cosign keyless) ---
-# Off by default: the SHA256 check below already pins the binary to this
-# checksums.txt. Set DEVHUB_VERIFY_SIGNATURE=1 to additionally prove the
-# checksums.txt was produced by this repo's release workflow — this is what
-# defends against a *compromised release* that swaps the binary AND its
-# checksums.txt together (SHA256 alone cannot detect that). Requires cosign.
+# --- verify checksums.txt signature (cosign keyless) ---
+# On by default (fail-open): the signature proves checksums.txt was produced by
+# this repo's release workflow, which is what defends against a *compromised
+# release* that swaps the binary AND its checksums.txt together — SHA256 alone
+# cannot detect that. When cosign is installed we verify; when it is not, we
+# warn and continue with SHA256-only so the installer still works out of the box.
+#   DEVHUB_VERIFY_SIGNATURE=1  make it MANDATORY (fail if cosign is missing)
+#   DEVHUB_VERIFY_SIGNATURE=0  skip signature verification entirely
 #
 # cosign v3+ verifies the sigstore bundle (checksums.txt.sigstore.json); v2
 # lacks bundle-by-default and keeps verifying the legacy pair
 # (checksums.txt.sig / .pem). Releases attach both formats during the
 # migration window (issue #109).
-if [ "${DEVHUB_VERIFY_SIGNATURE:-0}" = "1" ]; then
-  require cosign
+do_verify=0
+case "${DEVHUB_VERIFY_SIGNATURE:-auto}" in
+  0) do_verify=0 ;;
+  1) require cosign; do_verify=1 ;;
+  *) if command -v cosign >/dev/null 2>&1; then
+       do_verify=1
+     else
+       echo "注意: cosign が見つからないため署名検証をスキップします（SHA256 のみで検証）。" >&2
+       echo "      署名検証を必須にするには cosign を入れて DEVHUB_VERIFY_SIGNATURE=1、明示的に無効化するには =0 を指定してください。" >&2
+     fi ;;
+esac
+if [ "$do_verify" = "1" ]; then
   echo "Verifying checksums.txt signature (cosign) ..."
   cosign_major="$(cosign version 2>&1 | sed -n 's/^GitVersion:[[:space:]]*v\{0,1\}\([0-9][0-9]*\).*/\1/p' | head -1 || true)"
   if [ "${cosign_major:-0}" -ge 3 ]; then
