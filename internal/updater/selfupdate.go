@@ -187,12 +187,6 @@ func cosignMajor(versionOutput []byte) int {
 	return n
 }
 
-// verifyCosign mirrors the install scripts' cosign verify-blob invocation. It
-// requires the cosign CLI on PATH when DEVHUB_VERIFY_SIGNATURE=1.
-//
-// cosign v3+ verifies the sigstore bundle (checksums.txt.sigstore.json); v2
-// lacks bundle-by-default and keeps verifying the legacy .sig/.pem pair.
-// Releases attach both formats during the migration window (issue #109).
 // releaseIdentityRegexp builds the cosign keyless identity regexp for the given
 // owner/repo. It mirrors install.sh / install.ps1 / .goreleaser.yaml exactly:
 // without the trailing anchor, cosign's substring match would accept an artifact
@@ -205,6 +199,12 @@ func releaseIdentityRegexp(ownerRepo string) string {
 		"/\\.github/workflows/release\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?)$"
 }
 
+// verifyCosign mirrors the install scripts' cosign verify-blob invocation. It
+// requires the cosign CLI on PATH when DEVHUB_VERIFY_SIGNATURE=1.
+//
+// cosign v3+ verifies the sigstore bundle (checksums.txt.sigstore.json); v2
+// lacks bundle-by-default and keeps verifying the legacy .sig/.pem pair.
+// Releases attach both formats during the migration window (issue #109).
 func verifyCosign(ctx context.Context, base, work, sumsPath string) error {
 	if _, err := exec.LookPath("cosign"); err != nil {
 		return fmt.Errorf("cosign が見つかりません（DEVHUB_VERIFY_SIGNATURE=1 には cosign が必要です）")
