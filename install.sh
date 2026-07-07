@@ -130,11 +130,14 @@ ensure_path_in_profile() {
   case ":$PATH:" in *":$BIN_DIR:"*) return 0 ;; esac
   local profile path_line
   case "${SHELL:-}" in
-    */zsh)  profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
-    */bash) profile="$HOME/.bashrc" ;;
-    *)      profile="$HOME/.profile" ;;
+    */zsh)  profile="${ZDOTDIR:-$HOME}/.zshrc" ; path_line="$(path_line_for_profile)" ;;
+    */bash) profile="$HOME/.bashrc"           ; path_line="$(path_line_for_profile)" ;;
+    # fish は ~/.profile を読まず PATH 構文も異なる（export 不可）。conf.d に
+    # スニペットを置き、fish_add_path で BIN_DIR を先頭に追加する（冪等）。
+    */fish) profile="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/devhub.fish"
+            path_line="fish_add_path \"$BIN_DIR\"" ;;
+    *)      profile="$HOME/.profile"           ; path_line="$(path_line_for_profile)" ;;
   esac
-  path_line="$(path_line_for_profile)"
   mkdir -p "$(dirname "$profile")"
   if [ -f "$profile" ] && grep -F "$BIN_DIR" "$profile" >/dev/null 2>&1; then return 0; fi
   if [ "$BIN_DIR" = "$HOME/.local/bin" ] && [ -f "$profile" ] && grep -F '$HOME/.local/bin' "$profile" >/dev/null 2>&1; then return 0; fi
