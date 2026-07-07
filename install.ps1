@@ -38,20 +38,38 @@ try {
     Invoke-WebRequest -Uri "$base/$asset" -OutFile (Join-Path $tmp $asset)
     Invoke-WebRequest -Uri "$base/checksums.txt" -OutFile (Join-Path $tmp "checksums.txt")
 
-    # --- optional: verify checksums.txt signature (cosign keyless) ---
-    # Off by default: the SHA256 check below already pins the binary to this
-    # checksums.txt. Set DEVHUB_VERIFY_SIGNATURE=1 to additionally prove the
-    # checksums.txt was produced by this repo's release workflow (defends against
-    # a compromised release that swaps the binary AND checksums.txt together).
+    # --- verify checksums.txt signature (cosign keyless) ---
+    # On by default (fail-open): the signature proves checksums.txt was produced
+    # by this repo's release workflow, defending against a compromised release
+    # that swaps the binary AND checksums.txt together (SHA256 alone can't detect
+    # that). When cosign is installed we verify; when it is not, we warn and
+    # continue with SHA256-only so the installer still works out of the box.
+    #   DEVHUB_VERIFY_SIGNATURE=1  make it MANDATORY (throw if cosign is missing)
+    #   DEVHUB_VERIFY_SIGNATURE=0  skip signature verification entirely
     #
     # cosign v3+ verifies the sigstore bundle (checksums.txt.sigstore.json); v2
     # lacks bundle-by-default and keeps verifying the legacy pair
     # (checksums.txt.sig / .pem). Releases attach both formats during the
     # migration window (issue #109).
-    if ($env:DEVHUB_VERIFY_SIGNATURE -eq "1") {
-        if (-not (Get-Command cosign -ErrorAction SilentlyContinue)) {
-            throw "cosign が見つかりません（DEVHUB_VERIFY_SIGNATURE=1 には cosign が必要です）。"
+    $cosignPresent = [bool](Get-Command cosign -ErrorAction SilentlyContinue)
+    $doVerify = $false
+    switch ($env:DEVHUB_VERIFY_SIGNATURE) {
+        "0" { $doVerify = $false }
+        "1" {
+            if (-not $cosignPresent) {
+                throw "cosign が見つかりません（DEVHUB_VERIFY_SIGNATURE=1 には cosign が必要です）。"
+            }
+            $doVerify = $true
         }
+        default {
+            if ($cosignPresent) {
+                $doVerify = $true
+            } else {
+                Write-Warning "cosign が見つからないため署名検証をスキップします（SHA256 のみで検証）。必須にするには cosign を入れて DEVHUB_VERIFY_SIGNATURE=1、明示的に無効化するには =0 を指定してください。"
+            }
+        }
+    }
+    if ($doVerify) {
         Write-Host "Verifying checksums.txt signature (cosign) ..."
         # stderr は敢えてリダイレクトしない（PowerShell 5.1 は EAP=Stop 下で
         # 2>&1 リダイレクトされた stderr 出力を NativeCommandError にしてしまう）。

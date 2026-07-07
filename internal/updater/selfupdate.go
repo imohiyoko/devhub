@@ -58,11 +58,13 @@ func SelfUpdate(ctx context.Context, targetTag string) error {
 		return fmt.Errorf("checksums.txt の取得に失敗: %w", err)
 	}
 
-	// Optional cosign keyless verification, same contract as the install
-	// scripts (off unless DEVHUB_VERIFY_SIGNATURE=1). Proves checksums.txt came
-	// from this repo's release workflow — defends against a release that swaps
-	// the binary AND its checksums.txt together, which SHA256 alone cannot catch.
-	if os.Getenv("DEVHUB_VERIFY_SIGNATURE") == "1" {
+	// cosign keyless verification, same contract as the install scripts. Proves
+	// checksums.txt came from this repo's release workflow — defends against a
+	// release that swaps the binary AND its checksums.txt together, which SHA256
+	// alone cannot catch. On by default (fail-open): verify when cosign is on
+	// PATH, otherwise proceed with SHA256-only. DEVHUB_VERIFY_SIGNATURE=1 makes
+	// it mandatory (verifyCosign errors if cosign is missing); =0 skips it.
+	if wantCosignVerify() {
 		if err := verifyCosign(ctx, base, work, sumsPath); err != nil {
 			return err
 		}
@@ -197,6 +199,27 @@ func cosignMajor(versionOutput []byte) int {
 func releaseIdentityRegexp(ownerRepo string) string {
 	return "^https://github.com/" + ownerRepo +
 		"/\\.github/workflows/release\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?)$"
+}
+
+// wantCosignVerify decides whether to run cosign verification, mirroring the
+// install scripts' policy:
+//
+//	DEVHUB_VERIFY_SIGNATURE=0  -> never verify
+//	DEVHUB_VERIFY_SIGNATURE=1  -> always verify (verifyCosign errors if cosign
+//	                              is missing — fail-closed)
+//	unset / anything else      -> verify when cosign is on PATH, else skip
+//	                              (fail-open, so an update still applies without
+//	                              cosign but is verified whenever it is present)
+func wantCosignVerify() bool {
+	switch os.Getenv("DEVHUB_VERIFY_SIGNATURE") {
+	case "0":
+		return false
+	case "1":
+		return true
+	default:
+		_, err := exec.LookPath("cosign")
+		return err == nil
+	}
 }
 
 // verifyCosign mirrors the install scripts' cosign verify-blob invocation. It
