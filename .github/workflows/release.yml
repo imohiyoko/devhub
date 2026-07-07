@@ -90,7 +90,16 @@ jobs:
             *) echo "::error::unknown bump: $BUMP"; exit 1 ;;
           esac
           next="v${major}.${minor}.${patch}"
-          [ -n "$PRE" ] && next="${next}-${PRE}"
+          # プレリリース識別子は semver の許容文字だけに絞る。ここで弾かないと、
+          # 例えば `+build` 付きタグが署名付きで公開されるのに、インストーラ/自己更新の
+          # cosign 検証 identity（vX.Y.Z(-pre) のみ許可、`+` 不可）が弾いて
+          # 「誰も検証できないリリース」になる。タグ規約: vX.Y.Z(-pre)、build metadata 不可。
+          if [ -n "$PRE" ]; then
+            case "$PRE" in
+              *[!0-9A-Za-z.-]*) echo "::error::prerelease は [0-9A-Za-z.-] のみ使用できます（現在: ${PRE}）"; exit 1 ;;
+            esac
+            next="${next}-${PRE}"
+          fi
           branch="release/${next}"
           if git rev-parse -q --verify "refs/tags/${next}" >/dev/null; then
             echo "::error::tag ${next} は既に存在します"
