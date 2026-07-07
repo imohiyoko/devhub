@@ -219,8 +219,12 @@ async function loadReleases() {
       info.appendChild(el("p", "note", "安定版（v1.0.0）は準備中です。現在はテスト版でお試しいただけます。"));
       content.appendChild(info);
     }
-    // pre-release が安定版より新しい場合のみ別カードで表示
-    if (pre && (!stable || pre.tag_name !== stable.tag_name)) {
+    // pre-release は安定版より後に公開されたときだけ別カードで表示する。
+    // 同一コミットで rc → 正式版と公開すると正式版の published_at が新しくなるため
+    // 古い rc は自動的に隠れる（tag 名は rc と正式版で必ず異なるので比較に使えない）。
+    const preIsNewer = pre && (!stable ||
+      new Date(pre.published_at).getTime() > new Date(stable.published_at).getTime());
+    if (preIsNewer) {
       content.appendChild(releaseCard(pre, "pre", os, arch));
     }
   } catch (e) {
