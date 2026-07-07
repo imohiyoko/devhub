@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -14,15 +15,16 @@ func TestReleaseIdentityRegexp(t *testing.T) {
 		ref  string
 		want bool
 	}{
-		{"heads/main", true},        // workflow_dispatch signs on main (v0.2.4 実績)
-		{"tags/v0.2.4", true},       // 直タグ push リリース
-		{"tags/v1.0.0-rc1", true},   // prerelease
-		{"tags/v10.20.30", true},    // multi-digit
-		{"heads/evil", false},       // 任意ブランチ署名を弾く
-		{"heads/main-evil", false},  // prefix match を弾く
-		{"tags/v1", false},          // 不完全 semver
-		{"tags/v1.2", false},        // 不完全 semver
-		{"tags/v1.2.3xevil", false}, // 完全 semver の後ろにゴミを付けた prefix 攻撃を末尾アンカーで弾く
+		{"heads/main", true},           // workflow_dispatch signs on main (v0.2.4 実績)
+		{"tags/v0.2.4", true},          // 直タグ push リリース
+		{"tags/v1.0.0-rc1", true},      // prerelease
+		{"tags/v10.20.30", true},       // multi-digit
+		{"heads/evil", false},          // 任意ブランチ署名を弾く
+		{"heads/main-evil", false},     // prefix match を弾く
+		{"tags/v1", false},             // 不完全 semver
+		{"tags/v1.2", false},           // 不完全 semver
+		{"tags/v1.2.3xevil", false},    // 完全 semver の後ろにゴミを付けた prefix 攻撃を末尾アンカーで弾く
+		{"tags/v1.2.3+build.1", false}, // build metadata (`+`) は意図的に弾く（release.yml で PRE を検証し `+` タグを作らせない）
 	}
 	for _, c := range cases {
 		got := re.MatchString(base + c.ref)
@@ -33,6 +35,59 @@ func TestReleaseIdentityRegexp(t *testing.T) {
 	// 別 repo（なりすまし）は必ず弾く。
 	if re.MatchString("https://github.com/evil/devhub/.github/workflows/release.yml@refs/heads/main") {
 		t.Error("identity regexp matched a different repository")
+	}
+}
+
+// TestReleaseIdentityRegexpMatchesScripts guards against drift between the Go
+// source of truth (releaseIdentityRegexp) and the six hand-maintained copies in
+// install.sh / install.ps1 / .goreleaser.yaml. The identity regexp is a security
+// control; if one copy is loosened without the others, this test fails in CI.
+func TestReleaseIdentityRegexpMatchesScripts(t *testing.T) {
+	want := releaseIdentityRegexp("imohiyoko/devhub")
+	// path -> number of copies expected in that file.
+	files := map[string]int{
+		filepath.Join("..", "..", ".goreleaser.yaml"): 2,
+		filepath.Join("..", "..", "install.sh"):       2,
+		filepath.Join("..", "..", "install.ps1"):      2,
+	}
+	for path, wantCount := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var found int
+		for _, line := range strings.Split(string(data), "\n") {
+			if !strings.Contains(line, "certificate-identity-regexp") {
+				continue
+			}
+			i := strings.Index(line, "^https://github.com/")
+			if i < 0 {
+				t.Errorf("%s: certificate-identity-regexp line without expected value: %q", path, line)
+				continue
+			}
+			rest := line[i:]
+			// The value contains no quote chars, so it ends at the next
+			// single/double quote (the closing shell/YAML quote).
+			j := strings.IndexAny(rest, "'\"")
+			if j < 0 {
+				t.Errorf("%s: unterminated identity value: %q", path, line)
+				continue
+			}
+			got := rest[:j]
+			// Strip context-specific interpolation and escaping so the
+			// value can be compared against the Go regexp verbatim.
+			got = strings.ReplaceAll(got, "${OWNER_REPO}", "imohiyoko/devhub") // install.sh
+			got = strings.ReplaceAll(got, "$Repo", "imohiyoko/devhub")         // install.ps1
+			got = strings.ReplaceAll(got, "`$", "$")                           // PowerShell escape
+			got = strings.ReplaceAll(got, "\\$", "$")                          // bash double-quote escape
+			if got != want {
+				t.Errorf("%s: identity regexp drifted\n got: %s\nwant: %s", path, got, want)
+			}
+			found++
+		}
+		if found != wantCount {
+			t.Errorf("%s: found %d identity regexp copies, want %d", path, found, wantCount)
+		}
 	}
 }
 
