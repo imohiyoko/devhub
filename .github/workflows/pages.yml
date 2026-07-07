@@ -34,7 +34,14 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # 常に main の site/ を配信する。release イベント等でタグの commit を
+      # checkout してしまうと古い内容へ巻き戻りうるため ref を固定する。
+      # releases.json は下の gh api（GH_TOKEN）で取得するので checkout の
+      # 資格情報は残さない。
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          persist-credentials: false
       # リリース一覧を最小スキーマで焼き込む（draft 除外）。認証済みなのでレート制限に余裕。
       - name: Generate releases.json
         env:

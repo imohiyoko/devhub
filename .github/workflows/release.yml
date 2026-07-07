@@ -34,6 +34,7 @@ on:
 permissions:
   contents: write # タグ作成 + GitHub Release 公開に必要
   id-token: write # cosign keyless 署名の OIDC トークン発行に必要
+  actions: write # 公開後に pages.yml を workflow_dispatch で起こすため
 
 # 同時に複数のリリースが走らないようにする（タグの競合・二重公開を防ぐ）。
 concurrency:
@@ -164,3 +165,13 @@ jobs:
           # GITHUB_TOKEN は同一リポジトリにしか書けないため別途必要。
           # 未発行時は空（このとき GoReleaser 側で skip_upload が true になるためアップロードのみスキップされる）。
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
+
+      # ダウンロードページ（GitHub Pages）の releases.json を焼き直す。
+      # pages.yml の `release:` トリガーは発火しない — goreleaser のリリース公開は
+      # GITHUB_TOKEN 由来のため、GitHub が再帰防止で release イベントを抑止する。
+      # そのため公開が終わってからここで pages.yml を明示的に起こす。
+      # workflow_dispatch は GITHUB_TOKEN でも抑止されない例外なので発火する。
+      - name: Refresh download page (releases.json)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --ref main
