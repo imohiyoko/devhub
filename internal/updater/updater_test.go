@@ -3,8 +3,38 @@ package updater
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
+
+func TestReleaseIdentityRegexp(t *testing.T) {
+	re := regexp.MustCompile(releaseIdentityRegexp("imohiyoko/devhub"))
+	base := "https://github.com/imohiyoko/devhub/.github/workflows/release.yml@refs/"
+	cases := []struct {
+		ref  string
+		want bool
+	}{
+		{"heads/main", true},        // workflow_dispatch signs on main (v0.2.4 実績)
+		{"tags/v0.2.4", true},       // 直タグ push リリース
+		{"tags/v1.0.0-rc1", true},   // prerelease
+		{"tags/v10.20.30", true},    // multi-digit
+		{"heads/evil", false},       // 任意ブランチ署名を弾く
+		{"heads/main-evil", false},  // prefix match を弾く
+		{"tags/v1", false},          // 不完全 semver
+		{"tags/v1.2", false},        // 不完全 semver
+		{"tags/v1.2.3xevil", false}, // 完全 semver の後ろにゴミを付けた prefix 攻撃を末尾アンカーで弾く
+	}
+	for _, c := range cases {
+		got := re.MatchString(base + c.ref)
+		if got != c.want {
+			t.Errorf("MatchString(%q) = %v, want %v", base+c.ref, got, c.want)
+		}
+	}
+	// 別 repo（なりすまし）は必ず弾く。
+	if re.MatchString("https://github.com/evil/devhub/.github/workflows/release.yml@refs/heads/main") {
+		t.Error("identity regexp matched a different repository")
+	}
+}
 
 func TestIsNewer(t *testing.T) {
 	cases := []struct {
