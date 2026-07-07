@@ -193,11 +193,23 @@ func cosignMajor(versionOutput []byte) int {
 // cosign v3+ verifies the sigstore bundle (checksums.txt.sigstore.json); v2
 // lacks bundle-by-default and keeps verifying the legacy .sig/.pem pair.
 // Releases attach both formats during the migration window (issue #109).
+// releaseIdentityRegexp builds the cosign keyless identity regexp for the given
+// owner/repo. It mirrors install.sh / install.ps1 / .goreleaser.yaml exactly:
+// without the trailing anchor, cosign's substring match would accept an artifact
+// signed on any ref (e.g. refs/heads/evil), so a forged release built off a
+// tampered release.yml on another branch would look legitimately signed. Limit
+// the accepted identity to the real release paths (main / semver tags) and
+// anchor the whole ref to the end.
+func releaseIdentityRegexp(ownerRepo string) string {
+	return "^https://github.com/" + ownerRepo +
+		"/\\.github/workflows/release\\.yml@refs/(heads/main|tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?)$"
+}
+
 func verifyCosign(ctx context.Context, base, work, sumsPath string) error {
 	if _, err := exec.LookPath("cosign"); err != nil {
 		return fmt.Errorf("cosign が見つかりません（DEVHUB_VERIFY_SIGNATURE=1 には cosign が必要です）")
 	}
-	identity := "^https://github.com/" + repo() + "/\\.github/workflows/release\\.yml@refs/"
+	identity := releaseIdentityRegexp(repo())
 
 	verOut, _ := exec.CommandContext(ctx, "cosign", "version").CombinedOutput() //execaudit:self-update-verify
 	if cosignMajor(verOut) >= 3 {
