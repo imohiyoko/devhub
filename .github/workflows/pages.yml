@@ -54,8 +54,25 @@ jobs:
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
         with:
           enablement: true
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+      # upload-pages-artifact@v3 の中身を展開して同梱する。この composite は内部で
+      # actions/upload-artifact@v4 を「タグ」参照するため、リポジトリの
+      # sha_pinning_required ポリシーに引っかかり弾かれる。tar 生成 + SHA 固定の
+      # upload-artifact に分解して、SHA ピン必須を保ったまま Pages 用アーティファクト
+      # （github-pages: 単一 gzip tar）を生成する。
+      - name: Archive Pages artifact
+        run: |
+          tar \
+            --dereference --hard-dereference \
+            --directory site \
+            -cvf "$RUNNER_TEMP/artifact.tar" \
+            --exclude=.git \
+            --exclude=.github \
+            .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          path: site
+          name: github-pages
+          path: ${{ runner.temp }}/artifact.tar
+          retention-days: 1
+          if-no-files-found: error
       - id: deployment
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
