@@ -71,7 +71,7 @@ try {
             & cosign verify-blob `
                 --bundle $bundle `
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
-                --certificate-identity-regexp "^https://github.com/$Repo/\.github/workflows/release\.yml@refs/(heads/main`$|tags/v[0-9])" `
+                --certificate-identity-regexp "^https://github.com/$Repo/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)`$" `
                 (Join-Path $tmp "checksums.txt")
             if ($LASTEXITCODE -ne 0) { throw "checksums.txt の署名検証に失敗しました。" }
         } else {
@@ -81,7 +81,7 @@ try {
                 --certificate (Join-Path $tmp "checksums.txt.pem") `
                 --signature (Join-Path $tmp "checksums.txt.sig") `
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
-                --certificate-identity-regexp "^https://github.com/$Repo/\.github/workflows/release\.yml@refs/(heads/main`$|tags/v[0-9])" `
+                --certificate-identity-regexp "^https://github.com/$Repo/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)`$" `
                 (Join-Path $tmp "checksums.txt")
             if ($LASTEXITCODE -ne 0) { throw "checksums.txt の署名検証に失敗しました。" }
         }
