@@ -48,7 +48,7 @@ PATH は変えず、その一回だけ別の devhub に委譲します。詳細�
 
 ## セットアップ
 
-devhub は単一バイナリで配布されます。インストーラは GitHub Releases から**バージョン固定**の成果物を取得し、**SHA256 を検証**してから配置します（ランタイム不要）。
+devhub は単一バイナリで配布されます。インストーラは GitHub Releases から**バージョン固定**の成果物を取得し、**SHA256 を検証**してから配置します（ランタイム不要）。加えて [cosign](https://github.com/sigstore/cosign) がインストールされていれば、`checksums.txt` の**署名（keyless / sigstore）を自動で検証**します（未インストールなら警告のうえ SHA256 のみで続行）。署名検証を必須にするには `DEVHUB_VERIFY_SIGNATURE=1`、無効化するには `=0` を指定します。
 
 > 🔽 **ダウンロードページ**: <https://imohiyoko.github.io/devhub/> — OS を自動判定して、あなたの環境向けのコマンドとバイナリを表示します。
 
