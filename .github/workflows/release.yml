@@ -122,7 +122,7 @@ jobs:
           git tag -a "${next}" -m "release ${next}"
           git push origin "${next}"
 
-      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
         with:
           version: ${{ env.MISE_VERSION }}
 
