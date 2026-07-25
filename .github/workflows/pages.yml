@@ -51,7 +51,7 @@ jobs:
             --jq '[.[] | select(.draft | not) | {tag_name, prerelease, published_at, assets: [.assets[] | {name, browser_download_url}]}]' \
             > site/releases.json
           echo "releases.json: $(jq length site/releases.json) entries"
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
         with:
           enablement: true
       # upload-pages-artifact@v3 の中身を展開して同梱する。この composite は内部で
