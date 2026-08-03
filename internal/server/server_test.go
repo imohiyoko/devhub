@@ -1,9 +1,11 @@
 package server
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -175,37 +177,66 @@ func TestUnknownRoutes(t *testing.T) {
 	}
 }
 
-func TestToolAssetsServed(t *testing.T) {
+// TestToolPagesAndAssetsServed is registry-driven: for every tool the nav
+// lists, the served page's /tools/ and /shared/ references must resolve with
+// the extension-appropriate Content-Type (strict MIME checking refuses a
+// stylesheet served as JS) and no-store caching, and the tool's raw
+// index.html must not be reachable — pages are token-injected at /<id>, so
+// serving the raw file would leak an un-shimmed page whose /api/ calls carry
+// no token. Deriving the tool list from /api/tools and the asset list from
+// each served page keeps split frontends (git: 11 scripts, env-launcher: 7)
+// covered without ever editing this test.
+func TestToolPagesAndAssetsServed(t *testing.T) {
 	s := newTestServer(t)
 
-	// The git page's split stylesheet: served with the CSS content type so the
-	// browser applies it under strict MIME checking.
-	rr := s.do("GET", "/tools/git/git.css", goodHost, "", "", nil)
+	rr := s.do("GET", "/api/tools", goodHost, testToken, "", nil)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("GET /tools/git/git.css = %d, want 200", rr.Code)
+		t.Fatalf("GET /api/tools = %d, want 200", rr.Code)
 	}
-	if ct := rr.Header().Get("Content-Type"); ct != "text/css; charset=utf-8" {
-		t.Errorf("git.css Content-Type = %q, want text/css; charset=utf-8", ct)
+	var nav struct {
+		Tools []struct {
+			ID string `json:"id"`
+		} `json:"tools"`
 	}
-	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("git.css Cache-Control = %q, want no-store", got)
+	if err := json.Unmarshal(rr.Body.Bytes(), &nav); err != nil {
+		t.Fatalf("decode /api/tools: %v", err)
+	}
+	if len(nav.Tools) == 0 {
+		t.Fatal("nav lists no tools")
 	}
 
-	// A split feature script: served as JS.
-	rr = s.do("GET", "/tools/git/core.js", goodHost, "", "", nil)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("GET /tools/git/core.js = %d, want 200", rr.Code)
-	}
-	if ct := rr.Header().Get("Content-Type"); ct != "application/javascript; charset=utf-8" {
-		t.Errorf("core.js Content-Type = %q, want application/javascript; charset=utf-8", ct)
-	}
-
-	// A tool's index.html must NOT be served raw here: those are token-injected
-	// by the gateway at the exact /<tool> route. Serving the raw file would leak
-	// an un-shimmed page whose /api/ calls carry no token.
-	rr = s.do("GET", "/tools/git/index.html", goodHost, "", "", nil)
-	if rr.Code == http.StatusOK {
-		t.Errorf("GET /tools/git/index.html = 200, want non-200 (raw page must not be served)")
+	refRe := regexp.MustCompile(`(?:src|href)="(/(?:tools|shared)/[^"]+)"`)
+	for _, tool := range nav.Tools {
+		rr := s.do("GET", "/"+tool.ID, goodHost, "", "", nil)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET /%s = %d, want 200", tool.ID, rr.Code)
+			continue
+		}
+		refs := refRe.FindAllStringSubmatch(rr.Body.String(), -1)
+		if len(refs) == 0 {
+			t.Errorf("/%s references no static assets (split or template regression?)", tool.ID)
+		}
+		for _, m := range refs {
+			path := m[1]
+			ar := s.do("GET", path, goodHost, "", "", nil)
+			if ar.Code != http.StatusOK {
+				t.Errorf("GET %s = %d, want 200 (referenced by /%s)", path, ar.Code, tool.ID)
+				continue
+			}
+			want := "application/javascript; charset=utf-8"
+			if strings.HasSuffix(path, ".css") {
+				want = "text/css; charset=utf-8"
+			}
+			if ct := ar.Header().Get("Content-Type"); ct != want {
+				t.Errorf("%s Content-Type = %q, want %q", path, ct, want)
+			}
+			if cc := ar.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("%s Cache-Control = %q, want no-store", path, cc)
+			}
+		}
+		if rr := s.do("GET", "/tools/"+tool.ID+"/index.html", goodHost, "", "", nil); rr.Code == http.StatusOK {
+			t.Errorf("GET /tools/%s/index.html = 200, want non-200 (raw page must not be served)", tool.ID)
+		}
 	}
 }
 

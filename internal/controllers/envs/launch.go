@@ -161,7 +161,7 @@ func (c *Controller) killPortsFor(procs []map[string]any) []BatonKill {
 		}
 	}
 	if len(killed) > 0 {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(c.settle)
 	}
 	return killed
 }

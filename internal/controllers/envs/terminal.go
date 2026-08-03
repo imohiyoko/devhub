@@ -137,19 +137,17 @@ func inPath(name string) bool {
 	return err == nil
 }
 
-func start(cmd *exec.Cmd) { _ = cmd.Start() }
-
 // runShell launches command via the platform shell (subprocess shell=True).
 // The shell invocation is built per-OS in shell_windows.go / shell_unix.go —
 // Windows needs a raw command line (SysProcAttr.CmdLine) because cmd.exe does
 // not understand Go's default \" argument escaping.
-func runShell(cwd, command string, env []string) {
+func (c *Controller) runShell(cwd, command string, env []string) {
 	cmd := shellCmd(command)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
 	cmd.Env = env
-	start(cmd)
+	c.spawn(cmd)
 }
 
 // termConfig reads the terminal settings for the current OS.
@@ -257,7 +255,7 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 
 	exempt := emulator == "Terminal.app" || emulator == "iTerm" || emulator == "wt"
 	if emulator == "" || (!exempt && !inPath(emulator)) {
-		runShell(cwd, command, merged)
+		c.runShell(cwd, command, merged)
 		return
 	}
 
@@ -272,17 +270,17 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 			args = append(args, "-c", cmdWithEnv)
 			cmd := exec.Command("ghostty", args...) //execaudit:envs-run-terminal
 			cmd.Env = merged
-			start(cmd)
+			c.spawn(cmd)
 		case "Terminal.app":
 			shCmd := "cd " + shellQuote(cwd) + " && " + cmdWithEnv
 			script := `tell application "Terminal" to do script "` + applescriptEscape(shCmd) + `"`
-			start(exec.Command("osascript", "-e", script)) //execaudit:envs-run-terminal
+			c.spawn(exec.Command("osascript", "-e", script)) //execaudit:envs-run-terminal
 		case "iTerm":
 			shCmd := "cd " + shellQuote(cwd) + " && " + cmdWithEnv
 			script := "\n            tell application \"iTerm\"\n                create window with default profile\n                tell current session of current window\n                    write text \"" + applescriptEscape(shCmd) + "\"\n                end tell\n            end tell\n            "
-			start(exec.Command("osascript", "-e", script)) //execaudit:envs-run-terminal
+			c.spawn(exec.Command("osascript", "-e", script)) //execaudit:envs-run-terminal
 		default:
-			runShell(cwd, command, merged)
+			c.runShell(cwd, command, merged)
 		}
 	case "Windows":
 		if emulator == "wt" {
@@ -306,12 +304,12 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 			}
 			cmd := exec.Command("wt", args...) //execaudit:envs-run-terminal
 			cmd.Env = merged
-			start(cmd)
+			c.spawn(cmd)
 			if script != "" {
 				go removeLater(script)
 			}
 		} else {
-			runShell(cwd, command, merged)
+			c.runShell(cwd, command, merged)
 		}
 	case "Linux":
 		switch emulator {
@@ -320,19 +318,19 @@ func (c *Controller) openInTerminal(cwd, command string, env map[string]string) 
 			args = append(args, "-c", cmdWithEnv)
 			cmd := exec.Command("gnome-terminal", args...) //execaudit:envs-run-terminal
 			cmd.Env = merged
-			start(cmd)
+			c.spawn(cmd)
 		case "xterm":
 			args := append([]string{"-e", shell}, shellArgs...)
 			args = append(args, "-c", cmdWithEnv)
 			cmd := exec.Command("xterm", args...) //execaudit:envs-run-terminal
 			cmd.Dir = cwd
 			cmd.Env = merged
-			start(cmd)
+			c.spawn(cmd)
 		default:
-			runShell(cwd, command, merged)
+			c.runShell(cwd, command, merged)
 		}
 	default:
-		runShell(cwd, command, merged)
+		c.runShell(cwd, command, merged)
 	}
 }
 
@@ -355,33 +353,33 @@ func (c *Controller) openTerminalInDir(cwd string) error {
 	case "Darwin":
 		switch {
 		case emulator == "ghostty" && inPath("ghostty"):
-			start(exec.Command("ghostty", "--working-directory="+cwd)) //execaudit:envs-open-terminal
+			c.spawn(exec.Command("ghostty", "--working-directory="+cwd)) //execaudit:envs-open-terminal
 		case emulator == "Terminal.app":
 			shCmd := "cd " + shellQuote(cwd)
 			safe := strings.ReplaceAll(strings.ReplaceAll(shCmd, `\`, `\\`), `"`, `\"`)
-			start(exec.Command("osascript", "-e", `tell application "Terminal" to do script "`+safe+`"`)) //execaudit:envs-open-terminal
+			c.spawn(exec.Command("osascript", "-e", `tell application "Terminal" to do script "`+safe+`"`)) //execaudit:envs-open-terminal
 		case emulator == "iTerm":
 			shCmd := "cd " + shellQuote(cwd)
 			safe := strings.ReplaceAll(strings.ReplaceAll(shCmd, `\`, `\\`), `"`, `\"`)
 			script := "\n            tell application \"iTerm\"\n                create window with default profile\n                tell current session of current window\n                    write text \"" + safe + "\"\n                end tell\n            end tell\n            "
-			start(exec.Command("osascript", "-e", script)) //execaudit:envs-open-terminal
+			c.spawn(exec.Command("osascript", "-e", script)) //execaudit:envs-open-terminal
 		default:
 			fallback()
 		}
 	case "Windows":
 		if emulator == "wt" && inPath("wt") {
-			start(exec.Command("wt", "new-tab", "--startingDirectory", cwd)) //execaudit:envs-open-terminal
+			c.spawn(exec.Command("wt", "new-tab", "--startingDirectory", cwd)) //execaudit:envs-open-terminal
 		} else {
 			fallback()
 		}
 	case "Linux":
 		switch {
 		case emulator == "gnome-terminal" && inPath("gnome-terminal"):
-			start(exec.Command("gnome-terminal", "--working-directory="+cwd)) //execaudit:envs-open-terminal
+			c.spawn(exec.Command("gnome-terminal", "--working-directory="+cwd)) //execaudit:envs-open-terminal
 		case emulator == "xterm" && inPath("xterm"):
 			cmd := exec.Command("xterm") //execaudit:envs-open-terminal
 			cmd.Dir = cwd
-			start(cmd)
+			c.spawn(cmd)
 		default:
 			fallback()
 		}
