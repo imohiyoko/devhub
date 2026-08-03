@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	devhub "github.com/imohiyoko/devhub"
@@ -40,6 +41,32 @@ func TestSettingsSeedAndRoundTrip(t *testing.T) {
 	// Saving a patch must not wipe other keys.
 	if s2["port"] == nil {
 		t.Error("port lost after patch save")
+	}
+}
+
+// TestEnvsSeedAndRoundTrip pins the v1 env-launcher config path: the embedded
+// example seeds first-run state unchanged, and a load->save->load through the
+// SQLite kv row is meaning-preserving. This is the backstop for the planned
+// dual-codec work (typed model in memory, v1 shape at rest).
+func TestEnvsSeedAndRoundTrip(t *testing.T) {
+	st, _ := openTest(t)
+	envs1, err := st.LoadEnvs()
+	if err != nil {
+		t.Fatalf("LoadEnvs: %v", err)
+	}
+	seeded, ok := envs1["environments"].([]any)
+	if !ok || len(seeded) == 0 {
+		t.Fatalf("expected environments seeded from envs.example.json, got %v", envs1)
+	}
+	if err := st.SaveEnvs(envs1); err != nil {
+		t.Fatalf("SaveEnvs: %v", err)
+	}
+	envs2, err := st.LoadEnvs()
+	if err != nil {
+		t.Fatalf("LoadEnvs after save: %v", err)
+	}
+	if !reflect.DeepEqual(envs1, envs2) {
+		t.Errorf("envs changed across save round-trip:\nbefore: %#v\nafter:  %#v", envs1, envs2)
 	}
 }
 
