@@ -2,8 +2,14 @@ package ports
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/imohiyoko/devhub/internal/httpx"
 )
 
 // fakeSettingsStore is a map-based, SQLite-free stand-in for the shared settings
@@ -80,6 +86,27 @@ func TestPortsHandlersWithFakeStore(t *testing.T) {
 	}
 	if got := c.protectedPorts(); len(got) != 2 || got[0] != 3000 || got[1] != 3001 {
 		t.Errorf("protectedPorts = %v, want [3000 3001]", got)
+	}
+}
+
+// TestKillPortProcessRefusals pins the two safety checks that run before any
+// OS port scan: a protected port and devhub's own PID are refused with 403.
+// Both fire before listOpen, so the test never shells out to lsof/netstat.
+func TestKillPortProcessRefusals(t *testing.T) {
+	c := New(newFakeSettingsStore())
+	if err := c.store.SaveSettings(map[string]any{"protected_ports": []any{float64(8765)}}); err != nil {
+		t.Fatalf("SaveSettings: %v", err)
+	}
+
+	err := c.killPortProcess(8765, 12345)
+	var he *httpx.HTTPError
+	if !errors.As(err, &he) || he.Status != http.StatusForbidden || !strings.Contains(he.Msg, "port 8765 is protected") {
+		t.Errorf("protected port err = %v, want 403 'port 8765 is protected'", err)
+	}
+
+	err = c.killPortProcess(3000, os.Getpid())
+	if !errors.As(err, &he) || he.Status != http.StatusForbidden || !strings.Contains(he.Msg, "devhub itself cannot be killed") {
+		t.Errorf("self-pid err = %v, want 403 'devhub itself cannot be killed'", err)
 	}
 }
 

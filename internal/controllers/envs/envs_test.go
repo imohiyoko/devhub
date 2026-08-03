@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	devhub "github.com/imohiyoko/devhub"
+	"github.com/imohiyoko/devhub/internal/storage"
 )
 
 func TestShellQuote(t *testing.T) {
@@ -175,6 +178,27 @@ func TestProcessEnv(t *testing.T) {
 	}
 	if got["PORT"] != "3001" {
 		t.Errorf("PORT (extraEnv) = %q, want 3001", got["PORT"])
+	}
+}
+
+// TestValidateEnvsAcceptsShippedExample guards backward compatibility: the
+// document a first run is actually seeded with (envs.example.json through the
+// real store's seeding path) must always pass save-time validation unchanged.
+func TestValidateEnvsAcceptsShippedExample(t *testing.T) {
+	st, err := storage.Open(t.TempDir(), devhub.Assets)
+	if err != nil {
+		t.Fatalf("storage.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	doc, err := st.LoadEnvs()
+	if err != nil {
+		t.Fatalf("LoadEnvs: %v", err)
+	}
+	if len(toAnySlice(doc["environments"])) == 0 {
+		t.Fatalf("expected environments seeded from envs.example.json, got %v", doc)
+	}
+	if err := validateEnvs(doc); err != nil {
+		t.Errorf("shipped example rejected by validateEnvs: %v", err)
 	}
 }
 

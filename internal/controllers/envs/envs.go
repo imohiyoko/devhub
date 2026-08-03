@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	gitctl "github.com/imohiyoko/devhub/internal/controllers/git"
 	portsctl "github.com/imohiyoko/devhub/internal/controllers/ports"
-	workspacectl "github.com/imohiyoko/devhub/internal/controllers/workspace"
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/pathutil"
 )
@@ -39,17 +40,52 @@ type launchStore interface {
 	LoadSettings() (map[string]any, error)
 }
 
+// gitService is the slice of the git controller the env-launcher uses: repo
+// discovery and worktree listing for binding resolution. *gitctl.Controller
+// satisfies it; tests substitute a fake.
+type gitService interface {
+	AllRepos() []gitctl.Repo
+	ListWorktrees(repoPath string) ([]map[string]any, error)
+}
+
+// portsService is the slice of the ports controller the env-launcher uses:
+// listener discovery (live status, offset assignment) and the safety-checked
+// port kill (baton take-over, env stop). *portsctl.Controller satisfies it.
+type portsService interface {
+	ListOpen() ([]portsctl.PortEntry, error)
+	KillPortProcess(port, pid int) error
+}
+
+// workspaceService is the slice of the workspace controller the env-launcher
+// uses: opening a launch's worktree in the editor. *workspacectl.Controller
+// satisfies it.
+type workspaceService interface {
+	OpenInEditor(path string)
+}
+
 // Controller serves env-launcher endpoints, reusing git/ports/workspace.
 type Controller struct {
 	store     launchStore
-	git       *gitctl.Controller
-	ports     *portsctl.Controller
-	workspace *workspacectl.Controller
+	git       gitService
+	ports     portsService
+	workspace workspaceService
+
+	// spawn launches a prepared command fire-and-forget (errors discarded, as
+	// before); settle is the pause after baton kills before processes start.
+	// Both are per-instance so tests can capture spawns and skip the wait
+	// without mutating package state — the HTTP launch path spawns on a
+	// goroutine, which a swapped package var would race.
+	spawn  func(*exec.Cmd)
+	settle time.Duration
 }
 
 // New returns an env-launcher controller.
-func New(store launchStore, git *gitctl.Controller, ports *portsctl.Controller, workspace *workspacectl.Controller) *Controller {
-	return &Controller{store: store, git: git, ports: ports, workspace: workspace}
+func New(store launchStore, git gitService, ports portsService, workspace workspaceService) *Controller {
+	return &Controller{
+		store: store, git: git, ports: ports, workspace: workspace,
+		spawn:  func(cmd *exec.Cmd) { _ = cmd.Start() },
+		settle: 500 * time.Millisecond,
+	}
 }
 
 // HandleGet serves GET /api/envs, /api/envs/launches, /api/envs/worktrees.
