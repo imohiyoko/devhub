@@ -1,126 +1,17 @@
 package envs
 
+// Launch orchestration: findEnv decodes the stored document into the typed
+// model, worktree resolution and the live port index collect current state,
+// planner.go computes what to do, and executor.go does it.
+
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"maps"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/imohiyoko/devhub/internal/pathutil"
 )
-
-const portPlaceholder = "{{port}}"
-
-// applyPortPlaceholder substitutes {{port}} in command when a port was assigned.
-func applyPortPlaceholder(command string, assignedPort *int) string {
-	if assignedPort == nil || command == "" {
-		return command
-	}
-	return strings.ReplaceAll(command, portPlaceholder, strconv.Itoa(*assignedPort))
-}
-
-// parsePortSpec expands a 'port' field into concrete ports. Accepts nil/""/int/
-// numeric string/"a-b" range. Doubles as the save-time validator. Mirrors
-// _parse_port_spec.
-func parsePortSpec(spec any) ([]int, error) {
-	switch v := spec.(type) {
-	case nil:
-		return []int{}, nil
-	case bool:
-		return nil, errors.New("invalid port")
-	case float64:
-		i := int(v)
-		if float64(i) != v {
-			return nil, errors.New("invalid port")
-		}
-		return validatePorts([]int{i})
-	case int:
-		return validatePorts([]int{v})
-	case string:
-		s := strings.TrimSpace(v)
-		if s == "" {
-			return []int{}, nil
-		}
-		if strings.Contains(s, "-") {
-			a, b, ok := strings.Cut(s, "-")
-			if !ok {
-				return nil, errors.New("invalid port")
-			}
-			lo, err1 := strconv.Atoi(strings.TrimSpace(a))
-			hi, err2 := strconv.Atoi(strings.TrimSpace(b))
-			if err1 != nil || err2 != nil {
-				return nil, errors.New("invalid port")
-			}
-			if lo > hi {
-				lo, hi = hi, lo
-			}
-			ports := make([]int, 0, hi-lo+1)
-			for p := lo; p <= hi; p++ {
-				ports = append(ports, p)
-			}
-			return validatePorts(ports)
-		}
-		i, err := strconv.Atoi(s)
-		if err != nil {
-			return nil, errors.New("invalid port")
-		}
-		return validatePorts([]int{i})
-	default:
-		return nil, errors.New("invalid port")
-	}
-}
-
-func validatePorts(ports []int) ([]int, error) {
-	for _, p := range ports {
-		if p < 1 || p > 65535 {
-			return nil, errors.New("port out of range")
-		}
-	}
-	if len(ports) > 1000 {
-		return nil, errors.New("port range too large")
-	}
-	return ports, nil
-}
-
-func isOffset(proc map[string]any) bool {
-	return pStr(proc, "port_strategy") == "offset" && pStr(proc, "port_env_var") != ""
-}
-
-func assignPort(base int, taken map[int]bool) int {
-	for port := base; port <= 65535 && port-base < 200; port++ {
-		if !taken[port] {
-			return port
-		}
-	}
-	return base // window exhausted; proceed (may collide)
-}
-
-// assignPorts maps {process_id: assigned_port} for offset processes, reserving
-// each within the batch. Mirrors _assign_ports.
-func (c *Controller) assignPorts(envDef map[string]any, live map[int]int) map[string]int {
-	taken := map[int]bool{}
-	for p := range live {
-		taken[p] = true
-	}
-	assigned := map[string]int{}
-	for _, p := range processes(envDef) {
-		if !isOffset(p) {
-			continue
-		}
-		ports, err := parsePortSpec(p["port"])
-		if err != nil || len(ports) == 0 {
-			continue
-		}
-		port := assignPort(ports[0], taken)
-		assigned[pStr(p, "id")] = port
-		taken[port] = true
-	}
-	return assigned
-}
 
 // livePortIndex maps declared port -> listening pid (first listener wins).
 func (c *Controller) livePortIndex() map[int]int {
@@ -135,35 +26,6 @@ func (c *Controller) livePortIndex() map[int]int {
 		}
 	}
 	return index
-}
-
-// BatonKill records one process killed to free a declared (baton) port.
-type BatonKill struct{ Port, PID int }
-
-// killPortsFor frees the declared ports of the given processes (best-effort)
-// and returns what it killed. Baton means take-over: the kills are the
-// feature, so callers that face a user (the CLI) surface them instead of
-// letting the port change hands silently.
-func (c *Controller) killPortsFor(procs []map[string]any) []BatonKill {
-	live := c.livePortIndex()
-	var killed []BatonKill
-	for _, proc := range procs {
-		ports, err := parsePortSpec(proc["port"])
-		if err != nil {
-			continue
-		}
-		for _, p := range ports {
-			if pid, ok := live[p]; ok {
-				if err := c.ports.KillPortProcess(p, pid); err == nil {
-					killed = append(killed, BatonKill{Port: p, PID: pid})
-				}
-			}
-		}
-	}
-	if len(killed) > 0 {
-		time.Sleep(c.settle)
-	}
-	return killed
 }
 
 // resolveWorktree resolves (repo, branch) to an existing worktree path, or "".
@@ -189,252 +51,73 @@ func (c *Controller) resolveWorktree(repoPath, branch string) string {
 
 // setupWorktree resolves the env-level worktree binding to an existing path.
 // Returns "" when none is configured; errors when one is configured but missing.
-func (c *Controller) setupWorktree(worktreeDef map[string]any) (string, error) {
-	if worktreeDef == nil {
+func (c *Controller) setupWorktree(w worktree) (string, error) {
+	if !w.Enabled || w.RepoPath == "" || w.Branch == "" {
 		return "", nil
 	}
-	if enabled, _ := worktreeDef["enabled"].(bool); !enabled {
-		return "", nil
-	}
-	repoPath := pStr(worktreeDef, "repo_path")
-	branch := pStr(worktreeDef, "branch")
-	if repoPath == "" || branch == "" {
-		return "", nil
-	}
-	wt := c.resolveWorktree(repoPath, branch)
+	wt := c.resolveWorktree(w.RepoPath, w.Branch)
 	if wt == "" {
-		return "", fmt.Errorf("branch '%s' の worktree が見つかりません（%s）。git tool で作成してください。", branch, repoPath)
+		return "", fmt.Errorf("branch '%s' の worktree が見つかりません（%s）。git tool で作成してください。", w.Branch, w.RepoPath)
 	}
 	return wt, nil
 }
 
 // resolveCwds builds {process_id: cwd}; a bound process must have an existing
 // worktree (error otherwise), an unbound one inherits envCwdOverride.
-func (c *Controller) resolveCwds(envDef map[string]any, envCwdOverride string) (map[string]string, error) {
+func (c *Controller) resolveCwds(procs []process, envCwdOverride string) (map[string]string, error) {
 	cwds := map[string]string{}
-	for _, p := range processes(envDef) {
-		binding := pMap(p, "binding")
-		repo := pStr(binding, "repo_path")
-		branch := pStr(binding, "branch")
-		if repo != "" && branch != "" {
-			wt := c.resolveWorktree(repo, branch)
+	for _, p := range procs {
+		if p.Binding.RepoPath != "" && p.Binding.Branch != "" {
+			wt := c.resolveWorktree(p.Binding.RepoPath, p.Binding.Branch)
 			if wt == "" {
-				return nil, fmt.Errorf("process '%s': branch '%s' の worktree が見つかりません（%s）。git tool で作成してください。", pStr(p, "id"), branch, repo)
+				return nil, fmt.Errorf("process '%s': branch '%s' の worktree が見つかりません（%s）。git tool で作成してください。", p.ID, p.Binding.Branch, p.Binding.RepoPath)
 			}
-			cwds[pStr(p, "id")] = wt
+			cwds[p.ID] = wt
 		} else {
-			cwds[pStr(p, "id")] = envCwdOverride
+			cwds[p.ID] = envCwdOverride
 		}
 	}
 	return cwds, nil
 }
 
-// topoOrder runs Kahn's algorithm over the processes' depends_on edges and
-// returns them in dependency order. The returned order is valid only when both
-// unknownDep and cyclic are zero/false. On an unknown dependency it reports the
-// missing dep and the process that referenced it; on a cycle it sets cyclic.
-// Callers (validateDeps, topoSort) format their own error messages so they can
-// scope them to an environment id without duplicating the algorithm.
-func topoOrder(procs []map[string]any) (order []string, unknownDep, badProc string, cyclic bool) {
-	inDegree := map[string]int{}
-	adj := map[string][]string{}
-	for _, p := range procs {
-		id := pStr(p, "id")
-		inDegree[id] = 0
-		adj[id] = nil
-	}
-	for _, p := range procs {
-		id := pStr(p, "id")
-		for _, dep := range toStringSlice(p["depends_on"]) {
-			if _, ok := adj[dep]; !ok {
-				return nil, dep, id, false
-			}
-			adj[dep] = append(adj[dep], id)
-			inDegree[id]++
-		}
-	}
-	var queue []string
-	for _, p := range procs { // iterate procs (stable order) to mirror dict insertion order
-		id := pStr(p, "id")
-		if inDegree[id] == 0 {
-			queue = append(queue, id)
-		}
-	}
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		order = append(order, id)
-		for _, nxt := range adj[id] {
-			inDegree[nxt]--
-			if inDegree[nxt] == 0 {
-				queue = append(queue, nxt)
-			}
-		}
-	}
-	if len(order) != len(procs) {
-		return nil, "", "", true
-	}
-	return order, "", "", false
-}
-
-// topoSort returns process ids in dependency order, or an error on a cycle / unknown dep.
-func topoSort(procs []map[string]any) ([]string, error) {
-	order, unknownDep, badProc, cyclic := topoOrder(procs)
-	if unknownDep != "" {
-		return nil, fmt.Errorf("Dependency '%s' for process '%s' not found in environment", unknownDep, badProc)
-	}
-	if cyclic {
-		return nil, errors.New("Circular dependency detected in depends_on")
-	}
-	return order, nil
-}
-
-// runProcesses topologically sorts and launches the env's processes with
-// per-process delays. Mirrors _run_processes. The HTTP path runs the loop on
-// a goroutine (the request returns while terminals spawn); the CLI path runs
-// it inline — a short-lived `devhub env start` process must not exit while
-// launches are still pending on a goroutine, or they are simply lost.
-func (c *Controller) runProcesses(envDef map[string]any, cwdByPid map[string]string, cwdOverride string, envByPid map[string]map[string]string, portByPid map[string]int, async bool) error {
-	procs := processes(envDef)
-	sorted, err := topoSort(procs)
-	if err != nil {
-		return err
-	}
-	pidToDef := map[string]map[string]any{}
-	for _, p := range procs {
-		pidToDef[pStr(p, "id")] = p
-	}
-	run := func() {
-		for i, pid := range sorted {
-			pDef := pidToDef[pid]
-			cwd, ok := cwdByPid[pid]
-			if !ok {
-				cwd = cwdOverride
-			}
-			var assignedPort *int
-			if v, ok := portByPid[pid]; ok {
-				vv := v
-				assignedPort = &vv
-			}
-			c.launchProcess(pDef, cwd, envByPid[pid], assignedPort)
-			if i < len(sorted)-1 {
-				time.Sleep(processDelay(pDef))
-			}
-		}
-	}
-	if async {
-		go run()
-	} else {
-		run()
-	}
-	return nil
-}
-
-func processDelay(pDef map[string]any) time.Duration {
-	raw, ok := pDef["delay_seconds"]
-	if !ok || raw == nil {
-		return time.Second
-	}
-	var sec float64 = 1.0
-	switch v := raw.(type) {
-	case float64:
-		sec = v
-	case int:
-		sec = float64(v)
-	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-		if err != nil {
-			sec = 1.0
-		} else {
-			sec = f
-		}
-	}
-	if sec < 0 {
-		sec = 0
-	}
-	return time.Duration(sec * float64(time.Second))
-}
-
-// launchProcess resolves cwd/env/port for a single process and opens a terminal.
-func (c *Controller) launchProcess(processDef map[string]any, cwdOverride string, extraEnv map[string]string, assignedPort *int) {
-	cwd := cwdOverride
-	if cwd == "" {
-		if raw := pStr(processDef, "cwd"); raw != "" {
-			cwd = pathutil.ExpandUser(raw)
-		}
-	}
-	command := applyPortPlaceholder(pStr(processDef, "command"), assignedPort)
-	c.openInTerminal(cwd, command, processEnv(processDef, extraEnv))
-}
-
-// processEnv builds a process's resolved environment: its declared env (with a
-// leading ~ expanded in values, so e.g. DEVHUB_HOME=~/.devhub-verify points at
-// the home dir like cwd does) overlaid by extraEnv (e.g. the offset port var).
-//
-// env is an ordered list of {key, value} pairs (a JSON array) so the user's
-// input order survives the save round-trip — a JSON object would be re-sorted
-// alphabetically by encoding/json on save.
-func processEnv(processDef map[string]any, extraEnv map[string]string) map[string]string {
-	env := map[string]string{}
-	for _, item := range toAnySlice(processDef["env"]) {
-		m, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		k := pStr(m, "key")
-		if k == "" {
-			continue
-		}
-		val := ""
-		if raw, ok := m["value"]; ok && raw != nil {
-			val = fmt.Sprintf("%v", raw)
-		}
-		env[k] = pathutil.ExpandUser(val)
-	}
-	maps.Copy(env, extraEnv)
-	return env
-}
-
-// recordLaunch appends a launch record to the registry under the registry lock.
-func (c *Controller) recordLaunch(envDef map[string]any, worktreePath string, cwds map[string]string, assigned map[string]int) error {
-	wt := pMap(envDef, "worktree")
-	enabled, _ := wt["enabled"].(bool)
+// recordLaunch appends a launch record to the registry. The record is built as
+// the raw map the registry stores and the UI reads back — the persistence
+// boundary where the typed model ends.
+func (c *Controller) recordLaunch(env environment, worktreePath string, cwds map[string]string, assigned map[string]int) error {
 	repoPath := ""
 	branch := ""
-	if enabled {
-		repoPath = pathutil.ExpandUser(pStr(wt, "repo_path"))
-		branch = pStr(wt, "branch")
+	if env.Worktree.Enabled {
+		repoPath = pathutil.ExpandUser(env.Worktree.RepoPath)
+		branch = env.Worktree.Branch
 	}
 	procRecords := []any{}
-	for _, p := range processes(envDef) {
-		id := pStr(p, "id")
-		binding := pMap(p, "binding")
-		label := pStr(p, "label")
+	for _, p := range env.Processes {
+		label := p.Label
 		if label == "" {
-			label = id
+			label = p.ID
 		}
 		var assignedPort any
-		if ap, ok := assigned[id]; ok {
+		if ap, ok := assigned[p.ID]; ok {
 			assignedPort = ap
 		}
 		procRecords = append(procRecords, map[string]any{
-			"id":            id,
+			"id":            p.ID,
 			"label":         label,
-			"command":       pStr(p, "command"),
-			"port":          p["port"],
-			"worktree_path": orNil(cwds[id]),
-			"repo_path":     pStr(binding, "repo_path"),
-			"branch":        pStr(binding, "branch"),
+			"command":       p.Command,
+			"port":          p.Port,
+			"worktree_path": orNil(cwds[p.ID]),
+			"repo_path":     p.Binding.RepoPath,
+			"branch":        p.Binding.Branch,
 			"assigned_port": assignedPort,
 		})
 	}
-	name := pStr(envDef, "name")
+	name := env.Name
 	if name == "" {
-		name = pStr(envDef, "id")
+		name = env.ID
 	}
 	record := map[string]any{
 		"launch_id":     time.Now().Format("20060102-150405-") + tokenHex(3),
-		"env_id":        pStr(envDef, "id"),
+		"env_id":        env.ID,
 		"env_name":      name,
 		"worktree_path": orNil(worktreePath),
 		"repo_path":     repoPath,
@@ -464,37 +147,33 @@ func (c *Controller) StartEnvironment(envID string) ([]BatonKill, error) {
 }
 
 func (c *Controller) startEnvironment(envID string, async bool) ([]BatonKill, error) {
-	envDef, err := c.findEnv(envID)
+	env, err := c.findEnv(envID)
 	if err != nil {
 		return nil, err
 	}
-	envCwd, err := c.setupWorktree(pMap(envDef, "worktree"))
+	envCwd, err := c.setupWorktree(env.Worktree)
 	if err != nil {
 		return nil, err
 	}
-	cwds, err := c.resolveCwds(envDef, envCwd)
+	cwds, err := c.resolveCwds(env.Processes, envCwd)
 	if err != nil {
 		return nil, err
 	}
-	var batonProcs []map[string]any
-	for _, p := range processes(envDef) {
-		if !isOffset(p) {
-			batonProcs = append(batonProcs, p)
-		}
-	}
-	killed := c.killPortsFor(batonProcs)
-	assigned := c.assignPorts(envDef, c.livePortIndex())
-	envByPid := map[string]map[string]string{}
-	for _, p := range processes(envDef) {
-		id := pStr(p, "id")
-		if port, ok := assigned[id]; ok {
-			envByPid[id] = map[string]string{pStr(p, "port_env_var"): strconv.Itoa(port)}
-		}
-	}
-	if err := c.recordLaunch(envDef, envCwd, cwds, assigned); err != nil {
+	killed := c.killPorts(batonKillTargets(env.Processes, c.livePortIndex()))
+	// Offset assignment observes the port index again, after the baton kills,
+	// so ports just freed count as available.
+	assigned := assignPorts(env.Processes, c.livePortIndex())
+	// The record is written before the spawn plan is computed: a document with
+	// a dependency cycle still leaves a launch record behind (as it always has).
+	if err := c.recordLaunch(env, envCwd, cwds, assigned); err != nil {
 		return killed, err
 	}
-	return killed, c.runProcesses(envDef, cwds, envCwd, envByPid, assigned, async)
+	steps, err := planSpawns(env.Processes, cwds, assigned)
+	if err != nil {
+		return killed, err
+	}
+	c.runSpawns(steps, async)
+	return killed, nil
 }
 
 func tokenHex(n int) string {

@@ -131,10 +131,10 @@ func TestTopoSort(t *testing.T) {
 	// validateDeps and topoSort share topoOrder; this locks the ordering output
 	// (deps before dependents, stable on insertion order) that validateDeps's
 	// error-only assertions don't cover.
-	procs := []map[string]any{
-		{"id": "a"},
-		{"id": "b", "depends_on": []any{"a"}},
-		{"id": "c", "depends_on": []any{"a", "b"}},
+	procs := []process{
+		{ID: "a"},
+		{ID: "b", DependsOn: []string{"a"}},
+		{ID: "c", DependsOn: []string{"a", "b"}},
 	}
 	got, err := topoSort(procs)
 	if err != nil {
@@ -151,25 +151,25 @@ func TestTopoSort(t *testing.T) {
 	if !(pos["a"] < pos["b"] && pos["b"] < pos["c"]) {
 		t.Errorf("topoSort order violates deps: %v", got)
 	}
-	if _, err := topoSort([]map[string]any{
-		{"id": "a", "depends_on": []any{"b"}},
-		{"id": "b", "depends_on": []any{"a"}},
+	if _, err := topoSort([]process{
+		{ID: "a", DependsOn: []string{"b"}},
+		{ID: "b", DependsOn: []string{"a"}},
 	}); err == nil {
 		t.Error("topoSort should error on a cycle")
 	}
-	if _, err := topoSort([]map[string]any{
-		{"id": "a", "depends_on": []any{"ghost"}},
+	if _, err := topoSort([]process{
+		{ID: "a", DependsOn: []string{"ghost"}},
 	}); err == nil {
 		t.Error("topoSort should error on an unknown dep")
 	}
 }
 
 func TestProcessEnv(t *testing.T) {
-	def := map[string]any{"env": []any{
+	def := decodeProcess(map[string]any{"env": []any{
 		map[string]any{"key": "DEVHUB_HOME", "value": "~/.devhub-verify"}, // leading ~ expands like cwd does
 		map[string]any{"key": "PLAIN", "value": "literal"},                // non-~ value passes through untouched
-	}}
-	got := processEnv(def, map[string]string{"PORT": "3001"})
+	}})
+	got := processEnv(def.Env, map[string]string{"PORT": "3001"})
 	if dh := got["DEVHUB_HOME"]; strings.HasPrefix(dh, "~") || !strings.HasSuffix(dh, ".devhub-verify") || dh == ".devhub-verify" {
 		t.Errorf("DEVHUB_HOME not expanded from ~: %q", dh)
 	}

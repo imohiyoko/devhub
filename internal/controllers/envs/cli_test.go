@@ -28,7 +28,7 @@ func TestStopTargetPorts(t *testing.T) {
 		}},
 		"not-a-record", // malformed entries are skipped
 	}
-	got := stopTargetPorts(envDef, launches, "dev")
+	got := stopTargetPorts(decodeEnvironment(envDef), launches)
 	want := []int{3000, 3001, 8080, 8081, 8082, 9000}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("stopTargetPorts = %v, want %v", got, want)
@@ -37,7 +37,7 @@ func TestStopTargetPorts(t *testing.T) {
 
 func TestStopTargetPortsEmpty(t *testing.T) {
 	envDef := map[string]any{"id": "dev", "processes": []any{map[string]any{"id": "a"}}}
-	if got := stopTargetPorts(envDef, nil, "dev"); len(got) != 0 {
+	if got := stopTargetPorts(decodeEnvironment(envDef), nil); len(got) != 0 {
 		t.Errorf("no declared ports should yield no targets, got %v", got)
 	}
 }
