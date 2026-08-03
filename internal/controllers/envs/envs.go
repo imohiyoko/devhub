@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -171,42 +172,31 @@ func (c *Controller) launchSingleProcess(data map[string]any) error {
 	if envID == "" || processID == "" {
 		return httpx.Errorf(http.StatusBadRequest, "env_id and process_id are required")
 	}
-	envDef, err := c.findEnv(envID)
+	env, err := c.findEnv(envID)
 	if err != nil {
 		return err
 	}
-	var processDef map[string]any
-	for _, p := range processes(envDef) {
-		if pStr(p, "id") == processID {
-			processDef = p
-			break
-		}
-	}
-	if processDef == nil {
+	i := slices.IndexFunc(env.Processes, func(p process) bool { return p.ID == processID })
+	if i < 0 {
 		return fmt.Errorf("Process '%s' not found", processID)
 	}
-	envCwd, err := c.setupWorktree(pMap(envDef, "worktree"))
+	proc := env.Processes[i]
+	envCwd, err := c.setupWorktree(env.Worktree)
 	if err != nil {
 		return err
 	}
-	wrapper := map[string]any{"processes": []any{processDef}}
-	cwds, err := c.resolveCwds(wrapper, envCwd)
+	single := []process{proc}
+	cwds, err := c.resolveCwds(single, envCwd)
 	if err != nil {
 		return err
 	}
-	var extraEnv map[string]string
-	var assignedPort *int
-	if isOffset(processDef) {
-		assigned := c.assignPorts(wrapper, c.livePortIndex())
-		if ap, ok := assigned[processID]; ok {
-			extraEnv = map[string]string{pStr(processDef, "port_env_var"): fmt.Sprintf("%d", ap)}
-			v := ap
-			assignedPort = &v
-		}
+	var assigned map[string]int
+	if proc.isOffset() {
+		assigned = assignPorts(single, c.livePortIndex())
 	} else {
-		c.killPortsFor([]map[string]any{processDef})
+		c.killPorts(batonKillTargets(single, c.livePortIndex()))
 	}
-	c.launchProcess(processDef, cwds[processID], extraEnv, assignedPort)
+	c.runSpawns([]spawnStep{spawnStepFor(proc, cwds[processID], assigned)}, false)
 	return nil
 }
 
@@ -242,17 +232,19 @@ func (c *Controller) worktreeInventory() []any {
 	return repos
 }
 
-func (c *Controller) findEnv(envID string) (map[string]any, error) {
+// findEnv looks the environment up in the stored document and decodes it into
+// the typed model — the point where maps end and types begin on the launch paths.
+func (c *Controller) findEnv(envID string) (environment, error) {
 	data, err := c.store.LoadEnvs()
 	if err != nil {
-		return nil, err
+		return environment{}, err
 	}
 	for _, e := range toAnySlice(data["environments"]) {
 		if m, ok := e.(map[string]any); ok && pStr(m, "id") == envID {
-			return m, nil
+			return decodeEnvironment(m), nil
 		}
 	}
-	return nil, fmt.Errorf("Environment '%s' not found", envID)
+	return environment{}, fmt.Errorf("Environment '%s' not found", envID)
 }
 
 // validateEnvs mirrors the save-time validation in handle_post('/api/envs').
@@ -350,10 +342,10 @@ func validateEnvs(data map[string]any) error {
 }
 
 // validateDeps checks for unknown/circular dependencies with env-scoped messages.
-// It shares the dependency-sort core with topoSort (launch.go) so the two can't
+// It shares the dependency-sort core with topoSort (planner.go) so the two can't
 // drift; only the error wording differs (scoped to the environment id here).
 func validateDeps(procs []map[string]any, eid string) error {
-	_, unknownDep, badProc, cyclic := topoOrder(procs)
+	_, unknownDep, badProc, cyclic := topoOrder(decodeProcesses(procs))
 	if unknownDep != "" {
 		return fmt.Errorf("Dependency '%s' for process '%s' not found in environment '%s'", unknownDep, badProc, eid)
 	}
