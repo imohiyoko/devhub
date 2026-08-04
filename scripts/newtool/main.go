@@ -126,6 +126,11 @@ func run(args []string) error {
 	fmt.Printf("  %s  (added %s() to the registry)\n", rel(root, registryFile), ctor)
 	fmt.Println()
 	fmt.Println("next: go build ./... && go run ./cmd/devhub   # the card appears automatically")
+	// A new route is a new answer owed to the exec ledger, and the guard will
+	// say so on the next test run. Say it here first, so the failure reads as a
+	// step that was skipped rather than as a broken scaffold.
+	fmt.Println("then:  classify the new route in internal/execaudit — a Surface's Callers if it can spawn a process,")
+	fmt.Println("       execFreeEndpoints in callers_test.go if it cannot. go test ./internal/execaudit will insist.")
 	return nil
 }
 
