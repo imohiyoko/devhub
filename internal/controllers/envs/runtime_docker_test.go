@@ -32,6 +32,11 @@ func (f *fakeRunner) Run(_ context.Context, cwd, name string, args ...string) (s
 	return f.stdout, f.stderr, f.err
 }
 
+// colimaRT is an environment running on a named Colima profile.
+func colimaRT(profile string) runtimeSpec {
+	return runtimeSpec{Provider: providerColima, Profile: profile}
+}
+
 func testCompose(runner commandRunner) *dockerCompose {
 	return &dockerCompose{
 		runner:   runner,
@@ -78,7 +83,7 @@ func TestComposeAvailableChecksThePlugin(t *testing.T) {
 // about to run reports a missing plugin by itself.
 func TestComposeRunSkipsThePluginProbe(t *testing.T) {
 	runner := &fakeRunner{stdout: "[]"}
-	if _, err := testCompose(runner).ServiceStates(context.Background(), "", composeSpec{Project: "p"}); err != nil {
+	if _, err := testCompose(runner).ServiceStates(context.Background(), runtimeSpec{}, composeSpec{Project: "p"}); err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
 	if len(runner.calls) != 1 {
@@ -96,7 +101,7 @@ func TestComposeArgvCarriesTheDockerContext(t *testing.T) {
 	spec := composeSpec{Cwd: "~/platform", Project: "platform-local", Services: []string{"mysql", "redis"}}
 
 	runner := &fakeRunner{stdout: "[]"}
-	if _, err := testCompose(runner).ServiceStates(context.Background(), "colima-dev", spec); err != nil {
+	if _, err := testCompose(runner).ServiceStates(context.Background(), colimaRT("dev"), spec); err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
 	want := []string{"--context", "colima-dev", "compose", "--project-name", "platform-local", "ps", "--format", "json", "--all"}
@@ -105,7 +110,7 @@ func TestComposeArgvCarriesTheDockerContext(t *testing.T) {
 	}
 
 	up := &fakeRunner{}
-	if err := testCompose(up).Up(context.Background(), "colima-dev", spec); err != nil {
+	if err := testCompose(up).Up(context.Background(), colimaRT("dev"), spec); err != nil {
 		t.Fatalf("Up: %v", err)
 	}
 	wantUp := []string{"--context", "colima-dev", "compose", "--project-name", "platform-local", "up", "--detach", "--wait", "mysql", "redis"}
@@ -114,7 +119,7 @@ func TestComposeArgvCarriesTheDockerContext(t *testing.T) {
 	}
 
 	stop := &fakeRunner{}
-	if err := testCompose(stop).Stop(context.Background(), "colima-dev", spec); err != nil {
+	if err := testCompose(stop).Stop(context.Background(), colimaRT("dev"), spec); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
 	if got := stop.calls[0].args; !slices.Equal(got[:2], []string{"--context", "colima-dev"}) {
@@ -125,7 +130,7 @@ func TestComposeArgvCarriesTheDockerContext(t *testing.T) {
 	// charge and a user who switched contexts in their shell gets what they
 	// expect.
 	ambient := &fakeRunner{stdout: "[]"}
-	if _, err := testCompose(ambient).ServiceStates(context.Background(), "", spec); err != nil {
+	if _, err := testCompose(ambient).ServiceStates(context.Background(), runtimeSpec{}, spec); err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
 	if got := ambient.calls[0].args[0]; got != "compose" {
@@ -138,7 +143,7 @@ func TestComposeServiceStatesBuildsScopedArgv(t *testing.T) {
 	spec := composeSpec{Cwd: "~/platform", Files: []string{"compose.yml", "compose.override.yml"},
 		Project: "platform-local", Services: []string{"mysql"}}
 
-	states, err := testCompose(runner).ServiceStates(context.Background(), "", spec)
+	states, err := testCompose(runner).ServiceStates(context.Background(), runtimeSpec{}, spec)
 	if err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
@@ -174,7 +179,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 	adapter := &dockerCompose{runner: runner, lookPath: func(string) (string, error) {
 		return "", errors.New("exec: \"docker\": executable file not found in $PATH")
 	}}
-	_, err := adapter.ServiceStates(context.Background(), "", composeSpec{Project: "p"})
+	_, err := adapter.ServiceStates(context.Background(), runtimeSpec{}, composeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "docker コマンドが見つかりません") {
 		t.Errorf("missing docker: err = %v", err)
 	}
@@ -186,7 +191,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 	// "not installed" and "daemon down" need different fixes.
 	daemonDown := "failed to connect to the docker API at unix:///var/run/docker.sock; check if the daemon is running\nsecond line"
 	runner = &fakeRunner{stderr: daemonDown, err: errors.New("exit status 1")}
-	_, err = testCompose(runner).ServiceStates(context.Background(), "", composeSpec{Project: "p"})
+	_, err = testCompose(runner).ServiceStates(context.Background(), runtimeSpec{}, composeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "failed to connect to the docker API") {
 		t.Errorf("daemon down: err = %v, want docker's own message", err)
 	}
@@ -196,7 +201,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 
 	// A failure with nothing on stderr still reports something actionable.
 	runner = &fakeRunner{err: errors.New("context deadline exceeded")}
-	_, err = testCompose(runner).ServiceStates(context.Background(), "", composeSpec{Project: "p"})
+	_, err = testCompose(runner).ServiceStates(context.Background(), runtimeSpec{}, composeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("silent failure: err = %v", err)
 	}

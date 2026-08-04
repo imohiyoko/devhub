@@ -66,11 +66,13 @@ type Controller struct {
 	ports     portsService
 	workspace workspaceService
 
-	// compose reads and operates on compose_service components; colima reports
-	// the profiles this host offers. Per-instance like the seams below so
-	// tests answer without Docker or Colima installed.
-	compose composeAdapter
-	colima  colimaProvider
+	// compose and containerd read and operate on compose_service components,
+	// one per container engine; colima reports the profiles this host offers.
+	// Per-instance like the seams below so tests answer without Docker or
+	// Colima installed.
+	compose    composeAdapter
+	containerd composeAdapter
+	colima     colimaProvider
 
 	// spawn starts a prepared command and reports whether it started; settle is
 	// the pause after baton kills before processes start. Both are per-instance
@@ -85,10 +87,11 @@ type Controller struct {
 func New(store launchStore, git gitService, ports portsService, workspace workspaceService) *Controller {
 	return &Controller{
 		store: store, git: git, ports: ports, workspace: workspace,
-		compose: newDockerCompose(),
-		colima:  newColimaCLI(),
-		spawn:   func(cmd *exec.Cmd) error { return cmd.Start() },
-		settle:  500 * time.Millisecond,
+		compose:    newDockerCompose(),
+		containerd: newNerdctlCompose(),
+		colima:     newColimaCLI(),
+		spawn:      func(cmd *exec.Cmd) error { return cmd.Start() },
+		settle:     500 * time.Millisecond,
 	}
 }
 
@@ -362,13 +365,23 @@ func (c *Controller) composeStates(env environment) map[string]componentStatus {
 		groups[key].comps = append(groups[key].comps, comp)
 	}
 
-	dockerContext := dockerContextFor(env.Runtime)
+	// An environment whose engine has no adapter reports that as the reason
+	// its components are unknown, exactly like an unreachable daemon: the rest
+	// of the environment still works.
+	adapter, adapterErr := c.composeFor(env.Runtime)
+	probe := func(spec composeSpec) (map[string]componentState, error) {
+		if adapterErr != nil {
+			return nil, adapterErr
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), composeProbeTimeout)
+		defer cancel()
+		return adapter.ServiceStates(ctx, env.Runtime, spec)
+	}
+
 	out := make(map[string]componentStatus, len(env.Components))
 	for _, key := range order {
 		g := groups[key]
-		ctx, cancel := context.WithTimeout(context.Background(), composeProbeTimeout)
-		services, err := c.compose.ServiceStates(ctx, dockerContext, g.spec)
-		cancel()
+		services, err := probe(g.spec)
 		for _, comp := range g.comps {
 			if err != nil {
 				out[comp.ID] = componentStatus{stateUnknown, err.Error()}
