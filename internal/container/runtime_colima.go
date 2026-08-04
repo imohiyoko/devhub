@@ -51,6 +51,10 @@ func (p ColimaProfile) running() bool { return strings.EqualFold(p.Status, "Runn
 // ProfileLister reports the profiles this host offers. Runtime holds it as an
 // interface so tests cover the Colima-absent and non-macOS paths on any CI
 // runner.
+//
+// Implementations must bound themselves, for the same reason Adapter's methods
+// do: neither Providers nor Warnings sets a deadline, so an implementation that
+// blocks on an unbounded context hangs its caller with nothing to catch it.
 type ProfileLister interface {
 	Profiles(ctx context.Context) ([]ColimaProfile, error)
 }

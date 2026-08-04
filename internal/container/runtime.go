@@ -94,11 +94,11 @@ func (r *Runtime) Providers(ctx context.Context) []Provider {
 	// Colima itself can host: an option the user could pick and devhub could
 	// not act on is worse than one that is absent with a reason.
 	colima := Provider{ID: ProviderColima, Label: "Colima", Supported: true, Engines: drivableEngines()}
-	if err := profilesErr; err != nil {
-		colima.Reason = err.Error()
+	if profilesErr != nil {
+		colima.Reason = profilesErr.Error()
 		// The one failure that is about the machine rather than its setup: no
 		// amount of installing makes Colima available on Linux or Windows.
-		colima.Supported = !errors.Is(err, ErrColimaUnsupportedOS)
+		colima.Supported = !errors.Is(profilesErr, ErrColimaUnsupportedOS)
 	} else {
 		colima.Available = true
 		for _, p := range profiles {
