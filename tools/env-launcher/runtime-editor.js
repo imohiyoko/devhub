@@ -85,21 +85,35 @@ function runtimeSectionHtml(env, eIdx) {
 
 // --- editor ---
 
-function openRuntimeModal(index) {
+async function openRuntimeModal(index) {
+  // Capabilities are fetched on load in parallel with everything else, so a
+  // quick click can arrive first. Opening the picker with no options would let
+  // the user "save" a provider that was never offered, so the modal waits for
+  // real data — the same await-then-open shape openEnvModal uses for
+  // worktrees. The host always reports three providers, so an empty list can
+  // only mean the request has not succeeded.
+  if (!(runtimeCaps.providers || []).length) await fetchRuntimes();
+  if (!(runtimeCaps.providers || []).length) {
+    alert('実行基盤を取得できませんでした。しばらくしてからもう一度お試しください。');
+    return;
+  }
+
   currentRuntimeIndex = index;
   const rt = (envsData.environments[index] || {}).runtime || {};
+  // The document's provider, defaulted once: an environment that declares no
+  // runtime is on the docker provider, and every branch below must agree.
+  const want = rt.provider || 'docker';
   const select = document.getElementById('runtimeProvider');
-  const providers = selectableProviders();
-  select.innerHTML = providers.map(p => {
+  select.innerHTML = selectableProviders().map(p => {
     const suffix = p.available ? '' : '（利用不可）';
     return `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}${suffix}</option>`;
   }).join('');
-  select.value = rt.provider || 'docker';
+  select.value = want;
   // A document naming a provider this host cannot offer still has to be
   // editable, so its value is kept as an option rather than silently reset.
-  if (select.value !== (rt.provider || 'docker')) {
-    select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(rt.provider)}">${escapeHtml(rt.provider)}（この環境では利用不可）</option>`);
-    select.value = rt.provider;
+  if (select.value !== want) {
+    select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(want)}">${escapeHtml(want)}（この環境では利用不可）</option>`);
+    select.value = want;
   }
 
   // The stored values are passed in rather than assigned to the selects first:
@@ -167,11 +181,18 @@ async function saveRuntime() {
   const env = envsData.environments[currentRuntimeIndex];
   if (!env) return;
   envsData.environments[currentRuntimeIndex] = Object.assign({}, env, { runtime: runtime });
-  closeRuntimeModal();
   // Awaited, not fired alongside: the state endpoint reports the *stored*
   // runtime, so reading it before the save lands would redraw the card with
   // the value the user just replaced.
-  await saveEnvsData();
+  if (!await saveEnvsData()) {
+    // Put the environment back. A rejected runtime left in envsData would be
+    // persisted by the next save of anything else, which the user would have
+    // no reason to connect to the failure they already dismissed. The modal
+    // stays open so they can correct it.
+    envsData.environments[currentRuntimeIndex] = env;
+    return;
+  }
+  closeRuntimeModal();
   // The declared runtime also decides which engine components are probed on,
   // so their states are stale too.
   fetchSwitchState();
