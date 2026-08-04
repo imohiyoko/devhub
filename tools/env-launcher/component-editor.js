@@ -61,29 +61,6 @@ function readComposeFields() {
   return compose;
 }
 
-// saveEnvEdit applies a mutation to one environment and persists it, restoring
-// the environment when the save is rejected. saveEnvsData replaces the whole
-// stored document, so an edit left in envsData after a failed save is not
-// discarded — it would ride along with whatever is saved next, long after the
-// alert the user dismissed.
-//
-// A successful v2 save re-reads the observed state: the card renders its
-// component list from the config, but the state dots beside it come from
-// /api/envs/state, which a newly added or removed component would otherwise not
-// appear in. v1 cards show no state, and the probe costs a port scan, so they
-// do not pay for it.
-async function saveEnvEdit(envIndex, mutate) {
-  const before = JSON.parse(JSON.stringify(envsData.environments[envIndex]));
-  mutate(envsData.environments[envIndex]);
-  if (await saveEnvsData()) {
-    if (isV2Document()) fetchSwitchState();
-    return true;
-  }
-  envsData.environments[envIndex] = before;
-  render();
-  return false;
-}
-
 // deleteComponent also drops the id from every scenario that lists it. A
 // scenario referencing a component that no longer exists fails validateScenarios
 // on the server, which rejects the entire document — including untouched edits

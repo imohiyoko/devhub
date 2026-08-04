@@ -51,7 +51,7 @@ function closeEnvModal() {
   document.getElementById('envModalOverlay').classList.remove('open');
 }
 
-function saveEnv() {
+async function saveEnv() {
   const id = document.getElementById('envId').value.trim();
   if (!id) {
     alert("IDを入力してください。");
@@ -87,27 +87,29 @@ function saveEnv() {
 
   if (!edited.id) { alert('IDは必須です'); return; }
 
-  if (currentEnvIndex >= 0) {
-    // Merge onto the stored object: saveEnvsData() does a full-document
-    // replace, so fields this modal doesn't edit (processes, and newer schema
-    // fields like components/scenarios/runtime) must be carried over or an
-    // edit here would silently delete them.
-    envsData.environments[currentEnvIndex] =
-      Object.assign({}, envsData.environments[currentEnvIndex], edited);
-  } else {
-    // A v2 document defines environments through components/scenarios and the
-    // server rejects a processes key there, so only seed the v1 shape.
-    if (envsData.version !== 2) edited.processes = [];
-    envsData.environments.push(edited);
-  }
-
-  closeEnvModal();
-  saveEnvsData();
+  // Snapshot the index: the save is awaited and the modal stays open on
+  // failure, so nothing should depend on the global still pointing here.
+  const at = currentEnvIndex;
+  const saved = await saveEnvDocEdit(() => {
+    if (at >= 0) {
+      // Merge onto the stored object: saveEnvsData() does a full-document
+      // replace, so fields this modal doesn't edit (processes, and newer schema
+      // fields like components/scenarios/runtime) must be carried over or an
+      // edit here would silently delete them.
+      envsData.environments[at] = Object.assign({}, envsData.environments[at], edited);
+    } else {
+      // A v2 document defines environments through components/scenarios and the
+      // server rejects a processes key there, so only seed the v1 shape.
+      if (envsData.version !== 2) edited.processes = [];
+      envsData.environments.push(edited);
+    }
+  });
+  // Only close once the save landed: saveEnvDocEdit has already put the
+  // document back, so closing on failure would discard the user's input too.
+  if (saved) closeEnvModal();
 }
 
 function deleteEnv(index) {
-  if (confirm('この環境を削除しますか？')) {
-    envsData.environments.splice(index, 1);
-    saveEnvsData();
-  }
+  if (!confirm('この環境を削除しますか？')) return;
+  saveEnvDocEdit(() => envsData.environments.splice(index, 1));
 }
