@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRunner records the invocations and replays canned results.
@@ -25,10 +26,20 @@ type runnerCall struct {
 	cwd  string
 	name string
 	args []string
+	// bounded and budget record the deadline the command ran under. Since the
+	// adapters set their own deadlines and every caller now passes a plain
+	// background context, this is the only place a test can see that a bound
+	// was applied at all, and which one.
+	bounded bool
+	budget  time.Duration
 }
 
-func (f *fakeRunner) Run(_ context.Context, cwd, name string, args ...string) (string, string, error) {
-	f.calls = append(f.calls, runnerCall{cwd: cwd, name: name, args: args})
+func (f *fakeRunner) Run(ctx context.Context, cwd, name string, args ...string) (string, string, error) {
+	call := runnerCall{cwd: cwd, name: name, args: args}
+	if deadline, ok := ctx.Deadline(); ok {
+		call.bounded, call.budget = true, time.Until(deadline).Round(time.Second)
+	}
+	f.calls = append(f.calls, call)
 	return f.stdout, f.stderr, f.err
 }
 

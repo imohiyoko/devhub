@@ -18,17 +18,23 @@ import (
 	"github.com/imohiyoko/devhub/internal/pathutil"
 )
 
-// ComposeProbeTimeout bounds one `docker compose ps`. A status endpoint must
-// not hang when the daemon is slow to answer or is coming up.
-const ComposeProbeTimeout = 10 * time.Second
+// composeProbeTimeout bounds one compose read — `compose ps`, or the
+// availability probe. A status endpoint must not hang when the daemon is slow
+// to answer or is coming up.
+const composeProbeTimeout = 10 * time.Second
 
-// ComposeOpTimeout bounds one mutating compose call — `up` or `stop`. It is
+// composeOpTimeout bounds one mutating compose call — `up` or `stop`. It is
 // generous because a first `up` may pull images; the operation is synchronous
 // by design, since its exit status is what tells the caller the services
 // actually came up. `stop` shares it rather than getting a tighter one of its
 // own: a stop that is slow for the same reason an up is (a busy or
 // still-starting daemon) should not be the one call that gives up early.
-const ComposeOpTimeout = 5 * time.Minute
+//
+// Both are unexported because the method that needs one applies it itself: it
+// knows which subcommand it is about to run, and no caller has to. A caller
+// that wants to give up sooner still can, since the deadline is derived from
+// the context it passes and the shorter of the two wins.
+const composeOpTimeout = 5 * time.Minute
 
 // ErrDockerMissing is the one failure devhub diagnoses itself; every other
 // reason a compose call fails comes from Docker's own output.
@@ -42,6 +48,10 @@ type Adapter interface {
 	// Available reports why the adapter cannot run at all, or nil. It is the
 	// "is this engine usable" half of the runtimes API, so it checks what
 	// every other method needs.
+	//
+	// Implementations must bound themselves: Providers sets no deadline of its
+	// own, so an implementation that blocks on an unbounded context hangs the
+	// runtimes endpoint outright. There is no outer net to catch it.
 	Available(ctx context.Context) error
 	// The operational methods take the environment's runtime and derive what
 	// they need from it — a Docker context, a Colima profile. It is a
@@ -49,6 +59,10 @@ type Adapter interface {
 	// engine globally (plan §6.3): making every call site name the runtime is
 	// what keeps `docker context use` unnecessary, and what stops one
 	// environment's profile leaking into another's commands.
+	//
+	// These bound themselves too, and callers pass a plain background context:
+	// the method knows which subcommand it is about to run and therefore which
+	// budget applies, and no two callers can disagree about it.
 	ServiceStates(ctx context.Context, rt Spec, spec ComposeSpec) (map[string]State, error)
 	Up(ctx context.Context, rt Spec, spec ComposeSpec) error
 	Stop(ctx context.Context, rt Spec, spec ComposeSpec) error
@@ -79,7 +93,7 @@ func (d *dockerCompose) Available(ctx context.Context) error {
 	if err := d.binaryPresent(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, ComposeProbeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, composeProbeTimeout)
 	defer cancel()
 	if _, stderr, err := d.runner.Run(ctx, "", "docker", "compose", "version", "--short"); err != nil {
 		return fmt.Errorf("docker compose が使えません: %w", cliError(stderr, err))
@@ -101,6 +115,8 @@ func (d *dockerCompose) binaryPresent() error {
 // "docker is missing" and "the daemon is unreachable" are different problems
 // with different fixes, and only Docker can tell them apart reliably.
 func (d *dockerCompose) ServiceStates(ctx context.Context, rt Spec, spec ComposeSpec) (map[string]State, error) {
+	ctx, cancel := context.WithTimeout(ctx, composeProbeTimeout)
+	defer cancel()
 	stdout, err := d.run(ctx, rt, spec, "ps", "--format", "json", "--all")
 	if err != nil {
 		return nil, err
@@ -113,6 +129,8 @@ func (d *dockerCompose) ServiceStates(ctx context.Context, rt Spec, spec Compose
 // succeeded — that is what `--wait` buys, and why apply can tell the user
 // which components really came up.
 func (d *dockerCompose) Up(ctx context.Context, rt Spec, spec ComposeSpec) error {
+	ctx, cancel := context.WithTimeout(ctx, composeOpTimeout)
+	defer cancel()
 	_, err := d.run(ctx, rt, spec, append([]string{"up", "--detach", "--wait"}, spec.Services...)...)
 	return err
 }
@@ -120,6 +138,8 @@ func (d *dockerCompose) Up(ctx context.Context, rt Spec, spec ComposeSpec) error
 // Stop stops the component's services, leaving the rest of the project (and
 // any other project) alone.
 func (d *dockerCompose) Stop(ctx context.Context, rt Spec, spec ComposeSpec) error {
+	ctx, cancel := context.WithTimeout(ctx, composeOpTimeout)
+	defer cancel()
 	_, err := d.run(ctx, rt, spec, append([]string{"stop"}, spec.Services...)...)
 	return err
 }

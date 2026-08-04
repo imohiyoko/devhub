@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/imohiyoko/devhub/internal/platform"
 )
@@ -26,6 +27,12 @@ var (
 	ErrColimaUnsupportedOS = errors.New("Colima は macOS でのみ利用できます")
 	ErrColimaMissing       = errors.New("colima コマンドが見つかりません")
 )
+
+// colimaProbeTimeout bounds one `colima list`. Profiles applies it itself, for
+// the same reason the compose adapter bounds its own calls: the capability
+// report and the switch plan both reach this through an interface, and neither
+// should have to know what listing VMs is allowed to cost.
+const colimaProbeTimeout = 10 * time.Second
 
 // ColimaProfile is one Colima VM as devhub reads it.
 type ColimaProfile struct {
@@ -44,6 +51,10 @@ func (p ColimaProfile) running() bool { return strings.EqualFold(p.Status, "Runn
 // ProfileLister reports the profiles this host offers. Runtime holds it as an
 // interface so tests cover the Colima-absent and non-macOS paths on any CI
 // runner.
+//
+// Implementations must bound themselves, for the same reason Adapter's methods
+// do: neither Providers nor Warnings sets a deadline, so an implementation that
+// blocks on an unbounded context hangs its caller with nothing to catch it.
 type ProfileLister interface {
 	Profiles(ctx context.Context) ([]ColimaProfile, error)
 }
@@ -73,6 +84,11 @@ func (c *colimaCLI) Profiles(ctx context.Context) ([]ColimaProfile, error) {
 	if _, err := c.lookPath("colima"); err != nil {
 		return nil, ErrColimaMissing
 	}
+	// Bounded only from here: the two checks above answer without spawning
+	// anything, so a host with no Colima keeps saying so — with its own reason
+	// — even when the context it was handed has already expired.
+	ctx, cancel := context.WithTimeout(ctx, colimaProbeTimeout)
+	defer cancel()
 	stdout, stderr, err := c.runner.Run(ctx, "", "colima", "list", "--json")
 	if err != nil {
 		return nil, cliError(stderr, err)
