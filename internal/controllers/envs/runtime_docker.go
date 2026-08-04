@@ -40,9 +40,15 @@ type composeAdapter interface {
 	// every other method needs: the docker binary *and* the compose plugin,
 	// which are separate packages on most Linux distributions.
 	Available(ctx context.Context) error
-	ServiceStates(ctx context.Context, spec composeSpec) (map[string]componentState, error)
-	Up(ctx context.Context, spec composeSpec) error
-	Stop(ctx context.Context, spec composeSpec) error
+	// The operational methods take the Docker context to run against ("" for
+	// the ambient one). It is a parameter rather than adapter state because
+	// devhub must never select a context globally (plan §6.3): making every
+	// call site name it is what keeps `docker context use` unnecessary, and
+	// what stops one environment's Colima profile leaking into another's
+	// commands.
+	ServiceStates(ctx context.Context, dockerContext string, spec composeSpec) (map[string]componentState, error)
+	Up(ctx context.Context, dockerContext string, spec composeSpec) error
+	Stop(ctx context.Context, dockerContext string, spec composeSpec) error
 }
 
 // dockerCompose talks to the local Docker via the `docker compose` CLI.
@@ -91,8 +97,8 @@ func (d *dockerCompose) binaryPresent() error {
 // reason a component's state is unknown, so it carries Docker's own wording:
 // "docker is missing" and "the daemon is unreachable" are different problems
 // with different fixes, and only Docker can tell them apart reliably.
-func (d *dockerCompose) ServiceStates(ctx context.Context, spec composeSpec) (map[string]componentState, error) {
-	stdout, err := d.run(ctx, spec, "ps", "--format", "json", "--all")
+func (d *dockerCompose) ServiceStates(ctx context.Context, dockerContext string, spec composeSpec) (map[string]componentState, error) {
+	stdout, err := d.run(ctx, dockerContext, spec, "ps", "--format", "json", "--all")
 	if err != nil {
 		return nil, err
 	}
@@ -103,26 +109,34 @@ func (d *dockerCompose) ServiceStates(ctx context.Context, spec composeSpec) (ma
 // host process handed to a terminal, this reports whether the start actually
 // succeeded — that is what `--wait` buys, and why apply can tell the user
 // which components really came up.
-func (d *dockerCompose) Up(ctx context.Context, spec composeSpec) error {
-	_, err := d.run(ctx, spec, append([]string{"up", "--detach", "--wait"}, spec.Services...)...)
+func (d *dockerCompose) Up(ctx context.Context, dockerContext string, spec composeSpec) error {
+	_, err := d.run(ctx, dockerContext, spec, append([]string{"up", "--detach", "--wait"}, spec.Services...)...)
 	return err
 }
 
 // Stop stops the component's services, leaving the rest of the project (and
 // any other project) alone.
-func (d *dockerCompose) Stop(ctx context.Context, spec composeSpec) error {
-	_, err := d.run(ctx, spec, append([]string{"stop"}, spec.Services...)...)
+func (d *dockerCompose) Stop(ctx context.Context, dockerContext string, spec composeSpec) error {
+	_, err := d.run(ctx, dockerContext, spec, append([]string{"stop"}, spec.Services...)...)
 	return err
 }
 
-// run executes one `docker compose` subcommand for spec's project. Building
-// the scoping flags in one place is what guarantees every operation devhub
-// performs — read or write — is confined to the declared project.
-func (d *dockerCompose) run(ctx context.Context, spec composeSpec, sub ...string) (string, error) {
+// run executes one `docker compose` subcommand for spec's project in the given
+// Docker context. Building the scoping flags in one place is what guarantees
+// every operation devhub performs — read or write — is confined to the declared
+// project on the intended engine.
+//
+// --context is a flag of `docker` itself, so it goes before the `compose`
+// subcommand; `docker compose --context …` is rejected as an unknown flag.
+func (d *dockerCompose) run(ctx context.Context, dockerContext string, spec composeSpec, sub ...string) (string, error) {
 	if err := d.binaryPresent(); err != nil {
 		return "", err
 	}
-	args := []string{"compose", "--project-name", spec.Project}
+	var args []string
+	if dockerContext != "" {
+		args = append(args, "--context", dockerContext)
+	}
+	args = append(args, "compose", "--project-name", spec.Project)
 	for _, file := range spec.Files {
 		args = append(args, "--file", pathutil.ExpandUser(file))
 	}

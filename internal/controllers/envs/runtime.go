@@ -65,17 +65,17 @@ func (c *Controller) RuntimeProviders(ctx context.Context) []RuntimeProvider {
 		docker.Available, docker.Reason = false, err.Error()
 	}
 
-	// Colima can host either engine, so both are offered even on a host where
-	// no profile currently runs containerd: the engine list describes the
-	// provider's capability, while a profile's own Engine describes reality.
-	colima := RuntimeProvider{ID: providerColima, Label: "Colima", Engines: []string{engineDocker, engineContainerd}}
+	// Colima advertises the engines devhub can drive on it, not every engine
+	// Colima itself can host: an option the user could pick and devhub could
+	// not act on is worse than one that is absent with a reason.
+	colima := RuntimeProvider{ID: providerColima, Label: "Colima", Engines: drivableEngines()}
 	profiles, err := c.colima.Profiles(ctx)
 	if err != nil {
 		colima.Reason = err.Error()
 	} else {
 		colima.Available = true
 		for _, p := range profiles {
-			supported, reason := engineSupport(p.Engine, colima.Engines)
+			supported, reason := engineSupport(p.Engine)
 			colima.Profiles = append(colima.Profiles, RuntimeProfile{
 				Name: p.Name, Status: p.Status, Engine: p.Engine, Arch: p.Arch,
 				Context: colimaDockerContext(p.Name), Supported: supported, Reason: reason,
@@ -86,13 +86,84 @@ func (c *Controller) RuntimeProviders(ctx context.Context) []RuntimeProvider {
 	return []RuntimeProvider{host, docker, colima}
 }
 
+// dockerContextFor is the Docker context an environment's compose commands
+// must run in: a Colima profile's own context, or "" — the ambient context —
+// for the plain docker provider. Returning "" rather than the resolved name of
+// the current context matters: devhub passes no --context at all there, so a
+// user who switches contexts in their shell gets what they expect, and devhub
+// still never runs `docker context use` (plan §6.3).
+func dockerContextFor(rt runtimeSpec) string {
+	if rt.Provider == providerColima {
+		return colimaDockerContext(rt.Profile)
+	}
+	return ""
+}
+
+// RuntimeWarnings reports what the user should know before devhub drives an
+// environment's containers: the declared profile is missing, is not running,
+// or runs a different engine than the definition claims. They are warnings
+// rather than errors because devhub does not repair any of it — starting or
+// reconfiguring a profile is the user's call (plan §6.4, §13) — and because a
+// switch may not touch a container component at all.
+//
+// Only a colima environment pays the probe; anything else returns immediately.
+func (c *Controller) RuntimeWarnings(ctx context.Context, env environment) []string {
+	rt := env.Runtime
+	if rt.Provider != providerColima {
+		return nil
+	}
+	profiles, err := c.colima.Profiles(ctx)
+	if err != nil {
+		return []string{fmt.Sprintf("Colima の状態を確認できません: %v。コンテナの操作は失敗する可能性があります。", err)}
+	}
+
+	name := rt.Profile
+	if name == "" {
+		name = defaultColimaProfile
+	}
+	i := slices.IndexFunc(profiles, func(p colimaProfile) bool { return p.Name == name })
+	if i < 0 {
+		return []string{fmt.Sprintf("Colima profile '%s' が見つかりません。`colima start -p %s` で作成してください。", name, name)}
+	}
+
+	var warnings []string
+	profile := profiles[i]
+	if !profile.running() {
+		warnings = append(warnings,
+			fmt.Sprintf("Colima profile '%s' は %s です。devhub は profile を起動しないので、`colima start -p %s` を実行してください。", name, profile.Status, name))
+	}
+	// An engine devhub cannot observe is not a mismatch: a stopped profile
+	// reports none, and the warning above already covers that case.
+	if profile.Engine != "" && rt.Engine != "" && profile.Engine != rt.Engine {
+		warnings = append(warnings, fmt.Sprintf(
+			"設定は engine '%s' ですが profile '%s' は '%s' で動いています。devhub は engine を切り替えません（既存のイメージとコンテナに影響するため）。別 profile を作るか、profile を作り直してください。",
+			rt.Engine, name, profile.Engine))
+	}
+	if supported, reason := engineSupport(profile.Engine); !supported {
+		warnings = append(warnings, fmt.Sprintf("profile '%s': %s", name, reason))
+	}
+	return warnings
+}
+
+// drivableEngines are the container engines devhub has an adapter for. It is
+// what a provider advertises and what decides whether a profile is usable, so
+// devhub never offers an engine it cannot actually drive. containerd joins the
+// list together with its adapter (plan §11 PR 3).
+//
+// A definition may still *declare* engineContainerd: there, the engine is an
+// assertion about the profile that devhub checks, not a request for a driver.
+// Such an environment is accepted and warned about rather than silently driven
+// with the wrong tool.
+func drivableEngines() []string { return []string{engineDocker} }
+
 // engineSupport judges whether devhub can drive a profile. Colima also hosts
-// engines this tool has no adapter for (incus), and such a profile must be
-// reported as unusable up front rather than offered and then rejected at save
-// time. An engine devhub cannot observe — a stopped profile reports none — is
-// not called unsupported: nothing is known about it yet.
-func engineSupport(engine string, supported []string) (bool, string) {
-	if engine == "" || slices.Contains(supported, engine) {
+// engines this tool has no adapter for (incus, and containerd until its
+// adapter lands), and such a profile must be reported as unusable up front
+// rather than offered and then rejected later. An engine devhub cannot
+// observe — a stopped profile reports none — is not called unsupported:
+// nothing is known about it yet.
+func engineSupport(engine string) (bool, string) {
+	if engine == "" || slices.Contains(drivableEngines(), engine) {
 		return true, ""
 	}
 	return false, fmt.Sprintf("engine '%s' に対応するアダプタがありません", engine)

@@ -31,7 +31,23 @@ func (c *Controller) PlanSwitch(envID string, target SwitchTarget) (SwitchPlan, 
 	if err != nil {
 		return SwitchPlan{}, err
 	}
-	return planSwitch(env, target, states)
+	plan, err := planSwitch(env, target, states)
+	if err != nil {
+		return SwitchPlan{}, err
+	}
+	plan.Warnings = append(plan.Warnings, c.runtimeWarnings(env)...)
+	return plan, nil
+}
+
+// runtimeWarnings reports the execution base's own problems — a Colima profile
+// that is missing, stopped, or running an engine other than the definition
+// claims. They ride on the plan so the confirmation screen and `devhub env
+// switch` show them before anything is started, which is the point: devhub
+// will not start or reconfigure a profile on the user's behalf.
+func (c *Controller) runtimeWarnings(env environment) []string {
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeProbeTimeout)
+	defer cancel()
+	return c.RuntimeWarnings(ctx, env)
 }
 
 // ApplySwitch switches envID to target and returns the plan it acted on with
@@ -54,12 +70,16 @@ func (c *Controller) ApplySwitch(envID string, target SwitchTarget, fingerprint 
 		return SwitchPlan{}, nil, httpx.Errorf(http.StatusConflict,
 			"環境の状態が変化しています。もう一度確認してから適用してください。")
 	}
+	// Collected here too, not just at plan time: `devhub env switch … -y`
+	// never renders a plan, and a stopped Colima profile is exactly the case
+	// where one line up front beats reading a socket error per component.
+	plan.Warnings = append(plan.Warnings, c.runtimeWarnings(env)...)
 
 	byID := make(map[string]component, len(env.Components))
 	for _, comp := range env.Components {
 		byID[comp.ID] = comp
 	}
-	results := c.applyStops(plan, byID, portsByProcess(env, nil), c.livePortIndex())
+	results := c.applyStops(env, plan, byID, portsByProcess(env, nil), c.livePortIndex())
 	results = append(results, c.applyStarts(env, plan, byID)...)
 	return plan, results, nil
 }
@@ -80,14 +100,15 @@ func (c *Controller) applySwitch(data map[string]any) (map[string]any, error) {
 // applyStops stops each planned component: a compose service through the
 // adapter, a host process by killing the listeners that made it look running
 // in the first place.
-func (c *Controller) applyStops(plan SwitchPlan, byID map[string]component, ports map[string][]int, live map[int]int) []ApplyResult {
+func (c *Controller) applyStops(env environment, plan SwitchPlan, byID map[string]component, ports map[string][]int, live map[int]int) []ApplyResult {
+	dockerContext := dockerContextFor(env.Runtime)
 	results := make([]ApplyResult, 0, len(plan.Stop))
 	for _, step := range plan.Stop {
 		comp := byID[step.ID]
 		var err error
 		if comp.Kind == kindComposeService {
 			ctx, cancel := context.WithTimeout(context.Background(), composeUpTimeout)
-			err = c.compose.Stop(ctx, comp.Compose)
+			err = c.compose.Stop(ctx, dockerContext, comp.Compose)
 			cancel()
 		} else {
 			err = c.stopHostComponent(ports[comp.ID], live)
@@ -138,6 +159,7 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 		cwds, assigned, hostErr = c.prepareHostStarts(env, procs)
 	}
 
+	dockerContext := dockerContextFor(env.Runtime)
 	results := make([]ApplyResult, 0, len(plan.Start))
 	for i, step := range plan.Start {
 		comp := byID[step.ID]
@@ -145,7 +167,7 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 		switch {
 		case comp.Kind == kindComposeService:
 			ctx, cancel := context.WithTimeout(context.Background(), composeUpTimeout)
-			err = c.compose.Up(ctx, comp.Compose)
+			err = c.compose.Up(ctx, dockerContext, comp.Compose)
 			cancel()
 		case hostErr != nil:
 			err = hostErr
