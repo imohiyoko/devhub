@@ -66,10 +66,54 @@ func componentStates(env environment, launches []any, live map[int]int, adapted 
 	return out
 }
 
-// switchRequest is the target state to switch to: a scenario id, or an
+// ComponentReport is one component's identity and observed state — what the
+// state API renders and what `devhub env status` prints.
+type ComponentReport struct {
+	ID     string
+	Label  string
+	Kind   string
+	Shared bool
+	State  string
+	Reason string // why State is unknown; empty otherwise
+}
+
+// ScenarioInfo names a scenario an environment can be switched to.
+type ScenarioInfo struct {
+	ID         string
+	Name       string
+	Components []string
+}
+
+// componentReports pairs each component with its observed state, in definition
+// order.
+func componentReports(env environment, states map[string]componentStatus) []ComponentReport {
+	out := make([]ComponentReport, 0, len(env.Components))
+	for _, comp := range env.Components {
+		status := states[comp.ID]
+		out = append(out, ComponentReport{
+			ID: comp.ID, Label: comp.displayLabel(), Kind: comp.Kind, Shared: comp.Shared,
+			State: string(status.State), Reason: status.Reason,
+		})
+	}
+	return out
+}
+
+func scenarioInfos(env environment) []ScenarioInfo {
+	out := make([]ScenarioInfo, 0, len(env.Scenarios))
+	for _, s := range env.Scenarios {
+		members := s.Components
+		if members == nil {
+			members = []string{}
+		}
+		out = append(out, ScenarioInfo{ID: s.ID, Name: s.Name, Components: members})
+	}
+	return out
+}
+
+// SwitchTarget is the target state to switch to: a scenario id, or an
 // explicit component selection (plan §9). Shared components join the target
 // either way, so an empty selection means "only the shared components".
-type switchRequest struct {
+type SwitchTarget struct {
 	ScenarioID string
 	Components []string
 }
@@ -122,7 +166,7 @@ func stateFingerprint(states map[string]componentStatus) string {
 // Dependency problems are reported as errors rather than partial plans: the
 // document is validated on save, but decode is lenient, so a hand-edited file
 // can still reach here with a cycle or a dangling dependency.
-func planSwitch(env environment, req switchRequest, states map[string]componentStatus) (SwitchPlan, error) {
+func planSwitch(env environment, req SwitchTarget, states map[string]componentStatus) (SwitchPlan, error) {
 	order, unknownDep, badNode, cyclic := topoOrder(componentNodes(env.Components))
 	if unknownDep != "" {
 		return SwitchPlan{}, fmt.Errorf("Dependency '%s' for component '%s' not found in environment '%s'", unknownDep, badNode, env.ID)
@@ -176,7 +220,7 @@ func planSwitch(env environment, req switchRequest, states map[string]componentS
 // shared component (implicitly part of every scenario, plan §5), the requested
 // components, and — transitively — everything they depend on, so a scenario
 // only has to name its entry points.
-func targetComponents(env environment, req switchRequest) (map[string]bool, error) {
+func targetComponents(env environment, req SwitchTarget) (map[string]bool, error) {
 	byID := make(map[string]component, len(env.Components))
 	for _, comp := range env.Components {
 		byID[comp.ID] = comp

@@ -16,34 +16,42 @@ import (
 	"github.com/imohiyoko/devhub/internal/httpx"
 )
 
-// applyResult is one executed operation.
-type applyResult struct {
+// ApplyResult is one executed operation.
+type ApplyResult struct {
 	Step   PlanStep
 	Action string // "stop" | "start"
 	Err    error
 }
 
-// applySwitch serves POST /api/envs/switch/apply. It recomputes the plan from
-// the current state rather than trusting one the caller passed: the target is
-// declarative, so re-deriving is both safe and the only way to act on reality.
-// An optional fingerprint (from the plan the user approved) makes that safety
-// visible — if the observed state moved since, the request is refused instead
-// of stopping something the user never saw listed.
-func (c *Controller) applySwitch(data map[string]any) (map[string]any, error) {
-	envID, req, err := parseSwitchRequest(data)
-	if err != nil {
-		return nil, err
-	}
+// PlanSwitch computes what switching envID to target would do, without
+// touching anything. The UI and the CLI share it so they can never disagree
+// about what a switch means.
+func (c *Controller) PlanSwitch(envID string, target SwitchTarget) (SwitchPlan, error) {
 	env, states, err := c.observeEnv(envID)
 	if err != nil {
-		return nil, err
+		return SwitchPlan{}, err
 	}
-	plan, err := planSwitch(env, req, states)
+	return planSwitch(env, target, states)
+}
+
+// ApplySwitch switches envID to target and returns the plan it acted on with
+// one result per operation. It recomputes the plan from the current state
+// rather than trusting one the caller passed: the target is declarative, so
+// re-deriving is both safe and the only way to act on reality. A non-empty
+// fingerprint (from the plan the user approved) makes that safety visible — if
+// the observed state moved since, the switch is refused instead of stopping
+// something the user never saw listed.
+func (c *Controller) ApplySwitch(envID string, target SwitchTarget, fingerprint string) (SwitchPlan, []ApplyResult, error) {
+	env, states, err := c.observeEnv(envID)
 	if err != nil {
-		return nil, err
+		return SwitchPlan{}, nil, err
 	}
-	if want := pStr(data, "fingerprint"); want != "" && want != plan.Fingerprint {
-		return nil, httpx.Errorf(http.StatusConflict,
+	plan, err := planSwitch(env, target, states)
+	if err != nil {
+		return SwitchPlan{}, nil, err
+	}
+	if fingerprint != "" && fingerprint != plan.Fingerprint {
+		return SwitchPlan{}, nil, httpx.Errorf(http.StatusConflict,
 			"環境の状態が変化しています。もう一度確認してから適用してください。")
 	}
 
@@ -53,14 +61,27 @@ func (c *Controller) applySwitch(data map[string]any) (map[string]any, error) {
 	}
 	results := c.applyStops(plan, byID, portsByProcess(env, nil), c.livePortIndex())
 	results = append(results, c.applyStarts(env, plan, byID)...)
+	return plan, results, nil
+}
+
+// applySwitch serves POST /api/envs/switch/apply.
+func (c *Controller) applySwitch(data map[string]any) (map[string]any, error) {
+	envID, target, err := parseSwitchRequest(data)
+	if err != nil {
+		return nil, err
+	}
+	plan, results, err := c.ApplySwitch(envID, target, pStr(data, "fingerprint"))
+	if err != nil {
+		return nil, err
+	}
 	return applyResultsJSON(plan, results), nil
 }
 
 // applyStops stops each planned component: a compose service through the
 // adapter, a host process by killing the listeners that made it look running
 // in the first place.
-func (c *Controller) applyStops(plan SwitchPlan, byID map[string]component, ports map[string][]int, live map[int]int) []applyResult {
-	results := make([]applyResult, 0, len(plan.Stop))
+func (c *Controller) applyStops(plan SwitchPlan, byID map[string]component, ports map[string][]int, live map[int]int) []ApplyResult {
+	results := make([]ApplyResult, 0, len(plan.Stop))
 	for _, step := range plan.Stop {
 		comp := byID[step.ID]
 		var err error
@@ -71,7 +92,7 @@ func (c *Controller) applyStops(plan SwitchPlan, byID map[string]component, port
 		} else {
 			err = c.stopHostComponent(ports[comp.ID], live)
 		}
-		results = append(results, applyResult{Step: step, Action: "stop", Err: err})
+		results = append(results, ApplyResult{Step: step, Action: "stop", Err: err})
 	}
 	return results
 }
@@ -100,7 +121,7 @@ func (c *Controller) stopHostComponent(ports []int, live map[int]int) error {
 // applyStarts starts the planned components in the plan's order, which is
 // dependency order across both kinds — a host process that depends on a
 // compose service waits for that service's `up --wait` to return.
-func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[string]component) []applyResult {
+func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[string]component) []ApplyResult {
 	procs := make([]process, 0, len(plan.Start))
 	for _, step := range plan.Start {
 		if comp := byID[step.ID]; comp.Kind == kindHostProcess {
@@ -117,7 +138,7 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 		cwds, assigned, hostErr = c.prepareHostStarts(env, procs)
 	}
 
-	results := make([]applyResult, 0, len(plan.Start))
+	results := make([]ApplyResult, 0, len(plan.Start))
 	for i, step := range plan.Start {
 		comp := byID[step.ID]
 		var err error
@@ -134,7 +155,7 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 				time.Sleep(comp.Proc.Delay)
 			}
 		}
-		results = append(results, applyResult{Step: step, Action: "start", Err: err})
+		results = append(results, ApplyResult{Step: step, Action: "start", Err: err})
 	}
 	return results
 }
@@ -164,7 +185,7 @@ func (c *Controller) prepareHostStarts(env environment, procs []process) (map[st
 
 // applyResultsJSON renders the outcome. ok is false when any operation failed,
 // so a caller that only checks a flag still learns the switch was partial.
-func applyResultsJSON(plan SwitchPlan, results []applyResult) map[string]any {
+func applyResultsJSON(plan SwitchPlan, results []ApplyResult) map[string]any {
 	ok := true
 	out := []any{}
 	for _, r := range results {
