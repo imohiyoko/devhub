@@ -1,4 +1,4 @@
-package envs
+package container
 
 // Tests for the containerd adapter. Its whole reason to exist is that the
 // argv differs from Docker's, so that is what these assert — plus the two
@@ -24,7 +24,7 @@ func testNerdctl(runner commandRunner) *nerdctlCompose {
 // bearing: colima's own -p selects the VM profile and compose's -p names the
 // project, so without it the project name would be read as a profile.
 func TestNerdctlArgv(t *testing.T) {
-	spec := composeSpec{Cwd: "~/platform", Files: []string{"compose.yml"},
+	spec := ComposeSpec{Cwd: "~/platform", Files: []string{"compose.yml"},
 		Project: "platform-local", Services: []string{"mysql", "redis"}}
 
 	runner := &fakeRunner{stdout: "[]"}
@@ -76,12 +76,12 @@ func TestNerdctlArgv(t *testing.T) {
 // provider but no profile: it must still land on a real VM.
 func TestNerdctlAddressesTheDefaultProfile(t *testing.T) {
 	runner := &fakeRunner{stdout: "[]"}
-	rt := runtimeSpec{Provider: providerColima, Engine: engineContainerd}
-	if _, err := testNerdctl(runner).ServiceStates(context.Background(), rt, composeSpec{Project: "p"}); err != nil {
+	rt := Spec{Provider: ProviderColima, Engine: EngineContainerd}
+	if _, err := testNerdctl(runner).ServiceStates(context.Background(), rt, ComposeSpec{Project: "p"}); err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
-	if got := runner.calls[0].args[2]; got != defaultColimaProfile {
-		t.Errorf("profile = %q, want %q", got, defaultColimaProfile)
+	if got := runner.calls[0].args[2]; got != DefaultColimaProfile {
+		t.Errorf("profile = %q, want %q", got, DefaultColimaProfile)
 	}
 }
 
@@ -98,20 +98,20 @@ func TestNerdctlAvailability(t *testing.T) {
 
 	missing := testNerdctl(&fakeRunner{})
 	missing.lookPath = func(string) (string, error) { return "", errors.New("not found") }
-	if err := missing.Available(context.Background()); !errors.Is(err, errColimaMissing) {
-		t.Errorf("err = %v, want errColimaMissing", err)
+	if err := missing.Available(context.Background()); !errors.Is(err, ErrColimaMissing) {
+		t.Errorf("err = %v, want ErrColimaMissing", err)
 	}
 
 	linux := testNerdctl(&fakeRunner{})
 	linux.darwin = false
-	if err := linux.Available(context.Background()); !errors.Is(err, errColimaUnsupportedOS) {
-		t.Errorf("err = %v, want errColimaUnsupportedOS", err)
+	if err := linux.Available(context.Background()); !errors.Is(err, ErrColimaUnsupportedOS) {
+		t.Errorf("err = %v, want ErrColimaUnsupportedOS", err)
 	}
 	// An operation on a host that cannot run Colima must fail without
 	// spawning anything.
 	runner = &fakeRunner{}
 	linux.runner = runner
-	if err := linux.Up(context.Background(), containerdRT("dev"), composeSpec{Project: "p"}); err == nil {
+	if err := linux.Up(context.Background(), containerdRT("dev"), ComposeSpec{Project: "p"}); err == nil {
 		t.Error("Up succeeded on a non-macOS host")
 	}
 	if len(runner.calls) != 0 {
@@ -124,7 +124,7 @@ func TestNerdctlSurfacesCLIError(t *testing.T) {
 		stderr: `time="…" level=fatal msg="colima is not running"` + "\nsecond line",
 		err:    errors.New("exit status 1"),
 	}
-	_, err := testNerdctl(runner).ServiceStates(context.Background(), containerdRT("dev"), composeSpec{Project: "p"})
+	_, err := testNerdctl(runner).ServiceStates(context.Background(), containerdRT("dev"), ComposeSpec{Project: "p"})
 	if err == nil || err.Error() != `time="…" level=fatal msg="colima is not running"` {
 		t.Errorf("err = %v, want colima's own first stderr line", err)
 	}
@@ -137,11 +137,11 @@ func TestNerdctlPSParsing(t *testing.T) {
 	runner := &fakeRunner{stdout: `{"ID":"a","Name":"p_mysql_1","Project":"p","Service":"mysql","State":"running","Health":"","ExitCode":0}
 {"ID":"b","Name":"p_redis_1","Project":"p","Service":"redis","State":"exited","Health":"","ExitCode":1}`}
 
-	states, err := testNerdctl(runner).ServiceStates(context.Background(), containerdRT("dev"), composeSpec{Project: "p"})
+	states, err := testNerdctl(runner).ServiceStates(context.Background(), containerdRT("dev"), ComposeSpec{Project: "p"})
 	if err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
-	if states["mysql"] != stateRunning || states["redis"] != stateStopped {
+	if states["mysql"] != StateRunning || states["redis"] != StateStopped {
 		t.Errorf("states = %v, want mysql running and redis stopped", states)
 	}
 }
@@ -150,20 +150,20 @@ func TestNerdctlPSParsing(t *testing.T) {
 // declaration, not the profile's reality: devhub never silently re-routes to
 // another engine (plan §6.4).
 func TestComposeForPicksTheAdapter(t *testing.T) {
-	c, _ := newTestController(&fakeStore{envs: map[string]any{}}, testDeps{})
-	c.containerd = &fakeCompose{}
+	c := newTestRuntime(testDeps{})
+	c.Containerd = &fakeCompose{}
 
 	for _, tc := range []struct {
 		name string
-		rt   runtimeSpec
-		want composeAdapter
+		rt   Spec
+		want Adapter
 	}{
-		{"docker provider", runtimeSpec{Provider: providerDocker}, c.compose},
-		{"colima without an engine", runtimeSpec{Provider: providerColima}, c.compose},
-		{"colima with docker", runtimeSpec{Provider: providerColima, Engine: engineDocker}, c.compose},
-		{"colima with containerd", runtimeSpec{Provider: providerColima, Engine: engineContainerd}, c.containerd},
+		{"docker provider", Spec{Provider: ProviderDocker}, c.Docker},
+		{"colima without an engine", Spec{Provider: ProviderColima}, c.Docker},
+		{"colima with docker", Spec{Provider: ProviderColima, Engine: EngineDocker}, c.Docker},
+		{"colima with containerd", Spec{Provider: ProviderColima, Engine: EngineContainerd}, c.Containerd},
 	} {
-		got, err := c.composeFor(tc.rt)
+		got, err := c.ComposeFor(tc.rt)
 		if err != nil {
 			t.Errorf("%s: %v", tc.name, err)
 			continue
@@ -176,11 +176,11 @@ func TestComposeForPicksTheAdapter(t *testing.T) {
 	// containerd outside Colima is rejected rather than driven with Docker.
 	// Save-time validation already refuses it; decode is lenient, so a
 	// hand-edited document can still reach here.
-	if _, err := c.composeFor(runtimeSpec{Provider: providerDocker, Engine: engineContainerd}); !errors.Is(err, errContainerdUnsupported) {
+	if _, err := c.ComposeFor(Spec{Provider: ProviderDocker, Engine: EngineContainerd}); !errors.Is(err, errContainerdUnsupported) {
 		t.Errorf("err = %v, want errContainerdUnsupported", err)
 	}
 }
 
-func containerdRT(profile string) runtimeSpec {
-	return runtimeSpec{Provider: providerColima, Profile: profile, Engine: engineContainerd}
+func containerdRT(profile string) Spec {
+	return Spec{Provider: ProviderColima, Profile: profile, Engine: EngineContainerd}
 }

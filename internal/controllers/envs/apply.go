@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imohiyoko/devhub/internal/container"
 	"github.com/imohiyoko/devhub/internal/httpx"
 )
 
@@ -45,7 +46,7 @@ func (c *Controller) PlanSwitch(envID string, target SwitchTarget) (SwitchPlan, 
 // switch` show them before anything is started, which is the point: devhub
 // will not start or reconfigure a profile on the user's behalf.
 func (c *Controller) runtimeWarnings(env environment) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeProbeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), container.ProbeTimeout)
 	defer cancel()
 	return c.RuntimeWarnings(ctx, env)
 }
@@ -101,14 +102,14 @@ func (c *Controller) applySwitch(data map[string]any) (map[string]any, error) {
 // adapter, a host process by killing the listeners that made it look running
 // in the first place.
 func (c *Controller) applyStops(env environment, plan SwitchPlan, byID map[string]component, ports map[string][]int, live map[int]int) []ApplyResult {
-	adapter, adapterErr := c.composeFor(env.Runtime)
+	adapter, adapterErr := c.runtime.ComposeFor(env.Runtime)
 	results := make([]ApplyResult, 0, len(plan.Stop))
 	for _, step := range plan.Stop {
 		comp := byID[step.ID]
 		var err error
 		if comp.Kind == kindComposeService {
 			if err = adapterErr; err == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), composeUpTimeout)
+				ctx, cancel := context.WithTimeout(context.Background(), container.ComposeUpTimeout)
 				err = adapter.Stop(ctx, env.Runtime, comp.Compose)
 				cancel()
 			}
@@ -161,7 +162,7 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 		cwds, assigned, hostErr = c.prepareHostStarts(env, procs)
 	}
 
-	adapter, adapterErr := c.composeFor(env.Runtime)
+	adapter, adapterErr := c.runtime.ComposeFor(env.Runtime)
 	results := make([]ApplyResult, 0, len(plan.Start))
 	for i, step := range plan.Start {
 		comp := byID[step.ID]
@@ -169,7 +170,7 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 		switch {
 		case comp.Kind == kindComposeService:
 			if err = adapterErr; err == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), composeUpTimeout)
+				ctx, cancel := context.WithTimeout(context.Background(), container.ComposeUpTimeout)
 				err = adapter.Up(ctx, env.Runtime, comp.Compose)
 				cancel()
 			}

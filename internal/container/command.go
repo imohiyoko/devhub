@@ -1,4 +1,4 @@
-package envs
+package container
 
 // The seam for the external commands the runtime adapters run. Every such
 // spawn funnels through execRunner, so the execaudit registry has one call site
@@ -27,7 +27,7 @@ type commandRunner interface {
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, cwd, name string, args ...string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, name, args...) //execaudit:envs-runtime
+	cmd := exec.CommandContext(ctx, name, args...) //execaudit:container-runtime
 	if cwd != "" {
 		cmd.Dir = cwd
 	}

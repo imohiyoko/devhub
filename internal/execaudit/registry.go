@@ -72,6 +72,15 @@ var Registry = []Surface{
 		Gate:     "Not reachable over HTTP; runs in-process at boot only.",
 	},
 	{
+		ID:       "container-runtime",
+		Binaries: []string{"docker", "colima"},
+		Kind:     Fixed,
+		Trigger:  "docker/colima nerdctl: GET /api/envs/state and POST /api/envs/switch/plan (read: `ps`); POST /api/envs/switch/apply (write: `up`/`stop`); GET /api/envs/runtimes (read: docker `compose version`). colima: GET /api/envs/runtimes and POST /api/envs/switch/{plan,apply} (read: `list`).",
+		Input:    "Fixed argv per operation. docker: `[--context colima-<profile>] compose --project-name <project> [--file <f>…]` followed by `ps --format json --all`, `up --detach --wait <services>` or `stop <services>`. containerd goes through the same colima binary: `nerdctl --profile <profile> -- compose --project-name <project> [--file <f>…]` followed by the same three subcommands (no --wait, which nerdctl does not have). project/files/cwd/services/profile come from the saved env definition, not from the request, and the profile name is restricted to [A-Za-z0-9_-] at save time. The capability probe is a bare `compose version --short`. colima: `list --json`, which takes no input at all. No command string is accepted from the caller on any path.",
+		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Writing env definitions goes through POST /api/envs (same gates).",
+		Notes:    "Every invocation that touches containers is scoped to the definition's compose project name and to the services that definition declares, which is how devhub bounds itself to the containers the environment owns: it can start and stop those, and nothing else. The engine is selected per command — a --context for docker, a --profile for colima nerdctl — and `docker context use` is never run, so the user's other terminals keep whatever context they had (plan §6.3). An environment that declares no Colima profile passes no --context and uses the ambient one. Note that `colima nerdctl` runs inside the profile's VM, so the compose files and cwd are resolved against the VM's mounts. Colima itself is only ever asked to list profiles — devhub never starts, stops or reconfigures a VM. All calls funnel through execRunner in internal/container/command.go, which is why one Surface covers every runtime adapter — and why a second consumer of that package inherits the same bounds.",
+	},
+	{
 		ID:       "envs-open-terminal",
 		Binaries: []string{"settings.terminal.<os>.emulator: ghostty|wt|gnome-terminal|xterm", "osascript (Terminal.app/iTerm)"},
 		Kind:     Dynamic,
@@ -97,15 +106,6 @@ var Registry = []Surface{
 		Input:    "Emulator runs the env definition's `command` (from the store, not the request) with env exports. Same command source as envs-run-shell.",
 		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api).",
 		Notes:    "Both the emulator (user config) and the command (saved def) are user-controlled; see envs-run-shell for why launch-by-id is the trust model.",
-	},
-	{
-		ID:       "envs-runtime",
-		Binaries: []string{"docker", "colima"},
-		Kind:     Fixed,
-		Trigger:  "docker/colima nerdctl: GET /api/envs/state and POST /api/envs/switch/plan (read: `ps`); POST /api/envs/switch/apply (write: `up`/`stop`); GET /api/envs/runtimes (read: docker `compose version`). colima: GET /api/envs/runtimes and POST /api/envs/switch/{plan,apply} (read: `list`).",
-		Input:    "Fixed argv per operation. docker: `[--context colima-<profile>] compose --project-name <project> [--file <f>…]` followed by `ps --format json --all`, `up --detach --wait <services>` or `stop <services>`. containerd goes through the same colima binary: `nerdctl --profile <profile> -- compose --project-name <project> [--file <f>…]` followed by the same three subcommands (no --wait, which nerdctl does not have). project/files/cwd/services/profile come from the saved env definition, not from the request, and the profile name is restricted to [A-Za-z0-9_-] at save time. The capability probe is a bare `compose version --short`. colima: `list --json`, which takes no input at all. No command string is accepted from the caller on any path.",
-		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Writing env definitions goes through POST /api/envs (same gates).",
-		Notes:    "Every invocation that touches containers is scoped to the definition's compose project name and to the services that definition declares, which is how devhub bounds itself to the containers the environment owns: it can start and stop those, and nothing else. The engine is selected per command — a --context for docker, a --profile for colima nerdctl — and `docker context use` is never run, so the user's other terminals keep whatever context they had (plan §6.3). An environment that declares no Colima profile passes no --context and uses the ambient one. Note that `colima nerdctl` runs inside the profile's VM, so the compose files and cwd are resolved against the VM's mounts. Colima itself is only ever asked to list profiles — devhub never starts, stops or reconfigures a VM. All calls funnel through execRunner in internal/controllers/envs/command.go, which is why one Surface covers every runtime adapter.",
 	},
 	{
 		ID:       "git",

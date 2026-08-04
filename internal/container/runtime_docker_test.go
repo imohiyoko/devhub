@@ -1,4 +1,4 @@
-package envs
+package container
 
 // Tests for the Docker Compose adapter. Nothing here runs Docker: the command
 // runner is a fake, so the assertions are about the argv devhub builds, how it
@@ -33,8 +33,8 @@ func (f *fakeRunner) Run(_ context.Context, cwd, name string, args ...string) (s
 }
 
 // colimaRT is an environment running on a named Colima profile.
-func colimaRT(profile string) runtimeSpec {
-	return runtimeSpec{Provider: providerColima, Profile: profile}
+func colimaRT(profile string) Spec {
+	return Spec{Provider: ProviderColima, Profile: profile}
 }
 
 func testCompose(runner commandRunner) *dockerCompose {
@@ -83,7 +83,7 @@ func TestComposeAvailableChecksThePlugin(t *testing.T) {
 // about to run reports a missing plugin by itself.
 func TestComposeRunSkipsThePluginProbe(t *testing.T) {
 	runner := &fakeRunner{stdout: "[]"}
-	if _, err := testCompose(runner).ServiceStates(context.Background(), runtimeSpec{}, composeSpec{Project: "p"}); err != nil {
+	if _, err := testCompose(runner).ServiceStates(context.Background(), Spec{}, ComposeSpec{Project: "p"}); err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
 	if len(runner.calls) != 1 {
@@ -98,7 +98,7 @@ func TestComposeRunSkipsThePluginProbe(t *testing.T) {
 // context is named per invocation so other terminals are unaffected (plan
 // §6.3).
 func TestComposeArgvCarriesTheDockerContext(t *testing.T) {
-	spec := composeSpec{Cwd: "~/platform", Project: "platform-local", Services: []string{"mysql", "redis"}}
+	spec := ComposeSpec{Cwd: "~/platform", Project: "platform-local", Services: []string{"mysql", "redis"}}
 
 	runner := &fakeRunner{stdout: "[]"}
 	if _, err := testCompose(runner).ServiceStates(context.Background(), colimaRT("dev"), spec); err != nil {
@@ -130,7 +130,7 @@ func TestComposeArgvCarriesTheDockerContext(t *testing.T) {
 	// charge and a user who switched contexts in their shell gets what they
 	// expect.
 	ambient := &fakeRunner{stdout: "[]"}
-	if _, err := testCompose(ambient).ServiceStates(context.Background(), runtimeSpec{}, spec); err != nil {
+	if _, err := testCompose(ambient).ServiceStates(context.Background(), Spec{}, spec); err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
 	if got := ambient.calls[0].args[0]; got != "compose" {
@@ -140,14 +140,14 @@ func TestComposeArgvCarriesTheDockerContext(t *testing.T) {
 
 func TestComposeServiceStatesBuildsScopedArgv(t *testing.T) {
 	runner := &fakeRunner{stdout: `[{"Service":"mysql","State":"running"}]`}
-	spec := composeSpec{Cwd: "~/platform", Files: []string{"compose.yml", "compose.override.yml"},
+	spec := ComposeSpec{Cwd: "~/platform", Files: []string{"compose.yml", "compose.override.yml"},
 		Project: "platform-local", Services: []string{"mysql"}}
 
-	states, err := testCompose(runner).ServiceStates(context.Background(), runtimeSpec{}, spec)
+	states, err := testCompose(runner).ServiceStates(context.Background(), Spec{}, spec)
 	if err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
-	if states["mysql"] != stateRunning {
+	if states["mysql"] != StateRunning {
 		t.Errorf("mysql = %q, want running", states["mysql"])
 	}
 	if len(runner.calls) != 1 {
@@ -179,7 +179,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 	adapter := &dockerCompose{runner: runner, lookPath: func(string) (string, error) {
 		return "", errors.New("exec: \"docker\": executable file not found in $PATH")
 	}}
-	_, err := adapter.ServiceStates(context.Background(), runtimeSpec{}, composeSpec{Project: "p"})
+	_, err := adapter.ServiceStates(context.Background(), Spec{}, ComposeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "docker コマンドが見つかりません") {
 		t.Errorf("missing docker: err = %v", err)
 	}
@@ -191,7 +191,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 	// "not installed" and "daemon down" need different fixes.
 	daemonDown := "failed to connect to the docker API at unix:///var/run/docker.sock; check if the daemon is running\nsecond line"
 	runner = &fakeRunner{stderr: daemonDown, err: errors.New("exit status 1")}
-	_, err = testCompose(runner).ServiceStates(context.Background(), runtimeSpec{}, composeSpec{Project: "p"})
+	_, err = testCompose(runner).ServiceStates(context.Background(), Spec{}, ComposeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "failed to connect to the docker API") {
 		t.Errorf("daemon down: err = %v, want docker's own message", err)
 	}
@@ -201,7 +201,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 
 	// A failure with nothing on stderr still reports something actionable.
 	runner = &fakeRunner{err: errors.New("context deadline exceeded")}
-	_, err = testCompose(runner).ServiceStates(context.Background(), runtimeSpec{}, composeSpec{Project: "p"})
+	_, err = testCompose(runner).ServiceStates(context.Background(), Spec{}, ComposeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("silent failure: err = %v", err)
 	}
@@ -211,21 +211,21 @@ func TestParseComposePS(t *testing.T) {
 	cases := []struct {
 		name string
 		out  string
-		want map[string]componentState
+		want map[string]State
 	}{
-		{"empty output", "", map[string]componentState{}},
+		{"empty output", "", map[string]State{}},
 		{"json array", `[{"Service":"a","State":"running"},{"Service":"b","State":"exited"}]`,
-			map[string]componentState{"a": stateRunning, "b": stateStopped}},
+			map[string]State{"a": StateRunning, "b": StateStopped}},
 		{"newline delimited", "{\"Service\":\"a\",\"State\":\"running\"}\n{\"Service\":\"b\",\"State\":\"created\"}\n",
-			map[string]componentState{"a": stateRunning, "b": stateStopped}},
-		{"empty array", "[]", map[string]componentState{}},
+			map[string]State{"a": StateRunning, "b": StateStopped}},
+		{"empty array", "[]", map[string]State{}},
 		// Replicas: one container down makes the whole service not running,
 		// whichever order the entries arrive in.
 		{"replica down after up", `[{"Service":"a","State":"running"},{"Service":"a","State":"exited"}]`,
-			map[string]componentState{"a": stateStopped}},
+			map[string]State{"a": StateStopped}},
 		{"replica down before up", `[{"Service":"a","State":"exited"},{"Service":"a","State":"running"}]`,
-			map[string]componentState{"a": stateStopped}},
-		{"entry without a service name is skipped", `[{"State":"running"}]`, map[string]componentState{}},
+			map[string]State{"a": StateStopped}},
+		{"entry without a service name is skipped", `[{"State":"running"}]`, map[string]State{}},
 	}
 	for _, c := range cases {
 		got, err := parseComposePS(c.out)
@@ -253,24 +253,24 @@ func TestParseComposePS(t *testing.T) {
 }
 
 func TestComposeComponentState(t *testing.T) {
-	spec := composeSpec{Services: []string{"api", "worker"}}
+	spec := ComposeSpec{Services: []string{"api", "worker"}}
 	cases := []struct {
 		name     string
-		services map[string]componentState
-		want     componentState
+		services map[string]State
+		want     State
 	}{
-		{"all running", map[string]componentState{"api": stateRunning, "worker": stateRunning}, stateRunning},
-		{"one missing", map[string]componentState{"api": stateRunning}, stateStopped},
-		{"one stopped", map[string]componentState{"api": stateRunning, "worker": stateStopped}, stateStopped},
-		{"none", map[string]componentState{}, stateStopped},
+		{"all running", map[string]State{"api": StateRunning, "worker": StateRunning}, StateRunning},
+		{"one missing", map[string]State{"api": StateRunning}, StateStopped},
+		{"one stopped", map[string]State{"api": StateRunning, "worker": StateStopped}, StateStopped},
+		{"none", map[string]State{}, StateStopped},
 	}
 	for _, c := range cases {
-		if got := composeComponentState(spec, c.services); got != c.want {
+		if got := ComposeState(spec, c.services); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
 		}
 	}
 	// A definition that declares no service cannot be judged either way.
-	if got := composeComponentState(composeSpec{}, nil); got != stateUnknown {
+	if got := ComposeState(ComposeSpec{}, nil); got != StateUnknown {
 		t.Errorf("no declared services = %q, want unknown", got)
 	}
 }

@@ -1,9 +1,9 @@
-package envs
+package container
 
 // Colima capability detection. Colima is an optional dependency (plan §6.2):
 // it is only consulted on macOS with the CLI present, and no Colima type
-// escapes this file — the rest of env-launcher speaks in runtimeSpec,
-// RuntimeProvider and docker contexts.
+// escapes this file — the rest of env-launcher speaks in Spec,
+// Provider and docker contexts.
 //
 // Everything here is read-only. devhub never starts, stops or reconfigures a
 // profile: that is a slow, resource-reserving operation with effects far
@@ -21,12 +21,12 @@ import (
 )
 
 var (
-	errColimaUnsupportedOS = errors.New("Colima は macOS でのみ利用できます")
-	errColimaMissing       = errors.New("colima コマンドが見つかりません")
+	ErrColimaUnsupportedOS = errors.New("Colima は macOS でのみ利用できます")
+	ErrColimaMissing       = errors.New("colima コマンドが見つかりません")
 )
 
-// colimaProfile is one Colima VM as devhub reads it.
-type colimaProfile struct {
+// ColimaProfile is one Colima VM as devhub reads it.
+type ColimaProfile struct {
 	Name   string
 	Status string // colima's own wording: Running / Stopped / Broken …
 	// Engine is the container runtime the VM was created with. It is empty
@@ -37,13 +37,13 @@ type colimaProfile struct {
 	Arch   string
 }
 
-func (p colimaProfile) running() bool { return strings.EqualFold(p.Status, "Running") }
+func (p ColimaProfile) running() bool { return strings.EqualFold(p.Status, "Running") }
 
-// colimaProvider reports the profiles this host offers. The Controller holds
+// ProfileLister reports the profiles this host offers. The Controller holds
 // it as an interface so tests cover the Colima-absent and non-macOS paths on
 // any CI runner.
-type colimaProvider interface {
-	Profiles(ctx context.Context) ([]colimaProfile, error)
+type ProfileLister interface {
+	Profiles(ctx context.Context) ([]ColimaProfile, error)
 }
 
 // colimaCLI talks to the local Colima via its CLI.
@@ -64,12 +64,12 @@ func newColimaCLI() *colimaCLI {
 // cases are distinguished because they need different actions from the user:
 // a non-macOS host will never have Colima, while a macOS host without it can
 // install it.
-func (c *colimaCLI) Profiles(ctx context.Context) ([]colimaProfile, error) {
+func (c *colimaCLI) Profiles(ctx context.Context) ([]ColimaProfile, error) {
 	if !c.darwin {
-		return nil, errColimaUnsupportedOS
+		return nil, ErrColimaUnsupportedOS
 	}
 	if _, err := c.lookPath("colima"); err != nil {
-		return nil, errColimaMissing
+		return nil, ErrColimaMissing
 	}
 	stdout, stderr, err := c.runner.Run(ctx, "", "colima", "list", "--json")
 	if err != nil {
@@ -92,8 +92,8 @@ type colimaListEntry struct {
 // line. A host with no profile at all prints nothing and exits zero (verified
 // against colima 0.10.1), which must read as an empty list rather than an
 // error: "Colima is installed but you have no VM yet" is a normal state.
-func parseColimaList(out string) ([]colimaProfile, error) {
-	var profiles []colimaProfile
+func parseColimaList(out string) ([]ColimaProfile, error) {
+	var profiles []ColimaProfile
 	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -106,7 +106,7 @@ func parseColimaList(out string) ([]colimaProfile, error) {
 		if entry.Name == "" {
 			continue
 		}
-		profiles = append(profiles, colimaProfile{
+		profiles = append(profiles, ColimaProfile{
 			Name: entry.Name, Status: entry.Status, Engine: entry.Runtime, Arch: entry.Arch,
 		})
 	}
@@ -120,7 +120,7 @@ func parseColimaList(out string) ([]colimaProfile, error) {
 // carries the prefix is used as-is. Getting this wrong would point `--context`
 // at a VM that does not exist.
 func colimaDockerContext(profile string) string {
-	if profile == "" || profile == defaultColimaProfile || profile == "colima" {
+	if profile == "" || profile == DefaultColimaProfile || profile == "colima" {
 		return "colima"
 	}
 	if strings.HasPrefix(profile, "colima-") {

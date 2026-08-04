@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/imohiyoko/devhub/internal/container"
 )
 
 func TestDecodeEnvironmentLenient(t *testing.T) {
@@ -148,7 +150,7 @@ func TestDecodeV2Environment(t *testing.T) {
 	if mysql.Kind != kindComposeService || !mysql.Shared {
 		t.Errorf("mysql = %+v, want shared compose_service", mysql)
 	}
-	wantCompose := composeSpec{Cwd: "~/platform", Files: []string{"compose.yml"}, Project: "platform-local", Services: []string{"mysql"}}
+	wantCompose := container.ComposeSpec{Cwd: "~/platform", Files: []string{"compose.yml"}, Project: "platform-local", Services: []string{"mysql"}}
 	if !reflect.DeepEqual(mysql.Compose, wantCompose) {
 		t.Errorf("compose = %+v, want %+v", mysql.Compose, wantCompose)
 	}
@@ -169,13 +171,13 @@ func TestDecodeRuntime(t *testing.T) {
 	// No runtime block: the environment keeps using whatever Docker context
 	// the user's shell resolves to, which is what devhub did before runtimes
 	// existed.
-	if got := decodeRuntime(map[string]any{}); got != (runtimeSpec{Provider: providerDocker}) {
+	if got := decodeRuntime(map[string]any{}); got != (container.Spec{Provider: container.ProviderDocker}) {
 		t.Errorf("absent runtime = %+v, want the docker provider", got)
 	}
 
 	full := decodeRuntime(map[string]any{"runtime": map[string]any{
 		"provider": "colima", "profile": "development", "engine": "containerd"}})
-	if full != (runtimeSpec{Provider: providerColima, Profile: "development", Engine: engineContainerd}) {
+	if full != (container.Spec{Provider: container.ProviderColima, Profile: "development", Engine: container.EngineContainerd}) {
 		t.Errorf("runtime = %+v", full)
 	}
 
@@ -184,7 +186,7 @@ func TestDecodeRuntime(t *testing.T) {
 	v1 := decodeEnvironment(map[string]any{
 		"id": "legacy", "runtime": map[string]any{"provider": "colima"},
 	}, 1)
-	if v1.Runtime != (runtimeSpec{Provider: providerDocker}) {
+	if v1.Runtime != (container.Spec{Provider: container.ProviderDocker}) {
 		t.Errorf("v1 runtime = %+v, want the default", v1.Runtime)
 	}
 }
