@@ -163,9 +163,22 @@
   </div>
 </div>
 
+<!-- Switch Confirmation Modal -->
+<div class="modal-overlay" id="switchModalOverlay">
+  <div class="modal">
+    <div class="modal-header" id="switchModalTitle">切替内容の確認</div>
+    <div class="modal-body" id="switchModalBody"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeSwitchModal()">閉じる</button>
+      <button class="btn btn-success" id="switchApplyBtn" onclick="applySwitchPlan()">適用</button>
+    </div>
+  </div>
+</div>
+
 <script src="/tools/env-launcher/state.js"></script>
 <script src="/tools/env-launcher/api.js"></script>
 <script src="/tools/env-launcher/launches.js"></script>
+<script src="/tools/env-launcher/switch.js"></script>
 <script src="/tools/env-launcher/render.js"></script>
 <script src="/tools/env-launcher/env-editor.js"></script>
 <script src="/tools/env-launcher/process-editor.js"></script>

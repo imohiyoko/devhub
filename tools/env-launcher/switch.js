@@ -1,0 +1,139 @@
+// --- Scenario switching ---
+// Component states and scenarios come from /api/envs/state, what a switch
+// would do from /api/envs/switch/plan, and only an explicit confirmation of
+// that plan reaches /api/envs/switch/apply. Nothing here stops or starts
+// anything without the user having seen the list first.
+
+let switchState = { environments: [] };
+// The plan being confirmed, with the request that produced it: apply re-sends
+// that same target plus the plan's fingerprint, so the user cannot approve one
+// set of stops and have another one run.
+let pendingSwitch = null;
+
+// State is fetched on load and after an apply, never polled: probing a
+// compose_service shells out to `docker compose ps`, so a background poll
+// would spawn processes forever.
+async function fetchSwitchState() {
+  try {
+    const res = await fetch('/api/envs/state');
+    const data = await res.json();
+    if (res.ok && !data.error) {
+      switchState = data;
+      render();
+    }
+  } catch (e) { /* non-fatal: the switch section stays empty */ }
+}
+
+function switchEnvState(envId) {
+  return (switchState.environments || []).find(e => e.id === envId);
+}
+
+// --- plan ---
+
+async function requestSwitchPlan(envId, target, title) {
+  try {
+    const res = await fetch('/api/envs/switch/plan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({env_id: envId}, target))
+    });
+    const plan = await res.json();
+    if (!res.ok || plan.error) throw new Error(plan.error || '切替内容を計算できませんでした');
+    pendingSwitch = {envId, target, plan};
+    showSwitchPlan(plan, title);
+  } catch (e) {
+    alert('切替内容を計算できませんでした: ' + e.message);
+  }
+}
+
+// The scenario's display name is passed through for the dialog title: the plan
+// itself only carries ids, and an id is not what the user clicked.
+function switchToScenario(envId, scenarioId, scenarioName) {
+  requestSwitchPlan(envId, {scenario_id: scenarioId}, `シナリオ「${scenarioName || scenarioId}」へ切り替え`);
+}
+
+// An empty selection means "keep only the shared components" — the 全停止
+// action, which still leaves shared infrastructure (a database) running.
+function stopScenarioComponents(envId) {
+  requestSwitchPlan(envId, {components: []}, 'シナリオのコンポーネントを全停止');
+}
+
+function planSteps(title, steps, cls) {
+  if (!steps || !steps.length) return '';
+  const items = steps.map(s =>
+    `<li class="${cls}">${escapeHtml(s.label)}<span class="plan-kind">${escapeHtml(s.kind)}</span></li>`).join('');
+  return `<div class="plan-section"><div class="plan-title">${title}</div><ul class="plan-list">${items}</ul></div>`;
+}
+
+function showSwitchPlan(plan, title) {
+  const stops = plan.stop || [];
+  const starts = plan.start || [];
+  document.getElementById('switchModalTitle').textContent = title || '切替内容の確認';
+
+  let html = planSteps('停止', stops, 'plan-stop')
+    + planSteps('維持', plan.keep, 'plan-keep')
+    + planSteps('起動', starts, 'plan-start');
+  if (!stops.length && !starts.length) {
+    html += '<div class="empty" style="padding:16px;">変更はありません。</div>';
+  }
+  if ((plan.warnings || []).length) {
+    html += `<div class="plan-section plan-warnings"><div class="plan-title">警告</div><ul class="plan-list">${
+      plan.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul></div>`;
+  }
+  document.getElementById('switchModalBody').innerHTML = html;
+
+  // Stopping is the destructive half, so the button says how much of it there
+  // is instead of a generic 適用.
+  const apply = document.getElementById('switchApplyBtn');
+  apply.style.display = '';
+  apply.disabled = !stops.length && !starts.length;
+  apply.textContent = stops.length ? `${stops.length}件を停止して切り替える` : '起動する';
+  apply.className = stops.length ? 'btn btn-danger' : 'btn btn-success';
+  document.getElementById('switchModalOverlay').classList.add('open');
+}
+
+function closeSwitchModal() {
+  document.getElementById('switchModalOverlay').classList.remove('open');
+  pendingSwitch = null;
+}
+
+// --- apply ---
+
+async function applySwitchPlan() {
+  if (!pendingSwitch) return;
+  const {envId, target, plan} = pendingSwitch;
+  const apply = document.getElementById('switchApplyBtn');
+  const label = apply.textContent;
+  apply.disabled = true;
+  apply.textContent = '適用中...';
+  try {
+    const res = await fetch('/api/envs/switch/apply', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({env_id: envId, fingerprint: plan.fingerprint}, target))
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) throw new Error(result.error || '適用に失敗しました');
+    showSwitchResults(result);
+  } catch (e) {
+    alert(e.message);
+    apply.disabled = false;
+    apply.textContent = label;
+  }
+  // Whatever happened, what is running has probably changed.
+  fetchSwitchState();
+  fetchLaunches();
+}
+
+function showSwitchResults(result) {
+  const rows = (result.results || []).map(r => {
+    const action = r.action === 'stop' ? '停止' : '起動';
+    const detail = r.error ? `<span class="plan-error">${escapeHtml(r.error)}</span>` : '';
+    return `<li class="${r.ok ? 'plan-ok' : 'plan-fail'}">${r.ok ? '✔' : '✖'} ${action}: ${escapeHtml(r.label)}${detail}</li>`;
+  }).join('');
+  document.getElementById('switchModalBody').innerHTML =
+    `<div class="plan-section"><div class="plan-title">${result.ok ? '適用しました' : '一部の操作が失敗しました'}</div>` +
+    `<ul class="plan-list">${rows}</ul></div>`;
+  document.getElementById('switchApplyBtn').style.display = 'none';
+  pendingSwitch = null;
+}

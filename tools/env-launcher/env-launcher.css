@@ -208,3 +208,54 @@ main {
 .run-badge.up { border-color: var(--green); color: var(--green); }
 .run-badge.down { border-color: var(--muted); color: var(--muted); }
 /* .btn-sm / .btn-danger: shared/ui/components.css */
+
+/* --- scenario switching (switch.js / render.js) --- */
+.switch-section { display: flex; flex-direction: column; gap: 8px; }
+.switch-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.switch-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.component-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.component-info { flex: 1; }
+.component-label { font-weight: 600; font-size: 14px; }
+.component-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.component-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 400;
+}
+/* Observed state: running / stopped / unknown (the last one is never stopped
+   automatically, so it reads as a question, not a failure). */
+.state-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted); }
+.state-running { background: var(--green); }
+.state-stopped { background: var(--border); }
+.state-unknown { background: transparent; border: 1px solid var(--muted); }
+
+/* --- switch plan / result modal --- */
+.plan-section { margin-bottom: 14px; }
+.plan-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.plan-list { margin: 0; padding-left: 18px; font-size: 13px; }
+.plan-list li { margin-bottom: 4px; }
+.plan-kind { font-size: 11px; color: var(--muted); margin-left: 8px; }
+.plan-stop { color: var(--red); }
+.plan-start { color: var(--green); }
+.plan-keep { color: var(--muted); }
+.plan-warnings .plan-list { color: var(--text); }
+.plan-ok { color: var(--green); }
+.plan-fail { color: var(--red); }
+.plan-error { display: block; font-size: 12px; color: var(--muted); margin-left: 16px; }

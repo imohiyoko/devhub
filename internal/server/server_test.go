@@ -184,7 +184,7 @@ func TestUnknownRoutes(t *testing.T) {
 // index.html must not be reachable — pages are token-injected at /<id>, so
 // serving the raw file would leak an un-shimmed page whose /api/ calls carry
 // no token. Deriving the tool list from /api/tools and the asset list from
-// each served page keeps split frontends (git: 11 scripts, env-launcher: 7)
+// each served page keeps split frontends (git: 11 scripts, env-launcher: 8)
 // covered without ever editing this test.
 func TestToolPagesAndAssetsServed(t *testing.T) {
 	s := newTestServer(t)
