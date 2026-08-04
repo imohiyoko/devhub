@@ -81,6 +81,15 @@ var Registry = []Surface{
 		Notes:    "Every invocation that touches containers is scoped to the definition's compose project name and to the services that definition declares, which is how devhub bounds itself to the containers the environment owns: it can start and stop those, and nothing else. The engine is selected per command — a --context for docker, a --profile for colima nerdctl — and `docker context use` is never run, so the user's other terminals keep whatever context they had (plan §6.3). An environment that declares no Colima profile passes no --context and uses the ambient one. Note that `colima nerdctl` runs inside the profile's VM, so the compose files and cwd are resolved against the VM's mounts. Colima itself is only ever asked to list profiles — devhub never starts, stops or reconfigures a VM. All calls funnel through execRunner in internal/container/command.go, which is why one Surface covers every runtime adapter — and why a second consumer of that package inherits the same bounds.",
 	},
 	{
+		ID:       "containers-list",
+		Binaries: []string{"docker", "colima"},
+		Kind:     Fixed,
+		Trigger:  "GET /api/containers (the containers panel's only read).",
+		Input:    "Fixed argv, read-only: docker `[--context colima-<profile>] ps --all --format json`, or for a containerd profile `colima nerdctl --profile <profile> -- ps -a --format json`. Nothing from the request reaches the argv. The context and profile names are not user input either: they come from `colima list --json` via the capability probe, so the only values ever passed are ones Colima itself reported.",
+		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api).",
+		Notes:    "Deliberately NOT scoped to a compose project, which is the whole point of the panel and the reason this is a separate Surface from container-runtime rather than more calls under it: seeing a container devhub never declared — a leftover from a renamed project, something holding a port — requires listing past the declaration. The bound that remains is that it only ever reads: no subcommand here creates, starts, stops or removes anything, and the panel's write operations are a different Surface. It spawns through inventoryRunner in internal/container/inventory.go, kept separate from execRunner in the same package precisely so the project-scoped claim on container-runtime stays exact.",
+	},
+	{
 		ID:       "envs-open-terminal",
 		Binaries: []string{"settings.terminal.<os>.emulator: ghostty|wt|gnome-terminal|xterm", "osascript (Terminal.app/iTerm)"},
 		Kind:     Dynamic,
