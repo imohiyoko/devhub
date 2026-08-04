@@ -310,6 +310,55 @@ func TestStartEnvironmentUsesEnvWorktreeCwd(t *testing.T) {
 	}
 }
 
+// TestStartEnvironmentV2HostComponents locks backward compatibility of the
+// existing launch path over a version 2 document: host_process components
+// launch exactly like the equivalent v1 processes (baton kill, offset assign,
+// dependency order, registry record), per the plan's "host_processのみの環境は
+// 従来どおり動く" completion condition.
+func TestStartEnvironmentV2HostComponents(t *testing.T) {
+	store := &fakeStore{envs: map[string]any{
+		"version": 2,
+		"environments": []any{map[string]any{
+			"id": "dev", "name": "Dev",
+			"components": []any{
+				map[string]any{"id": "db", "kind": "host_process", "lifecycle": "shared",
+					"command": "run-db", "port": 3000, "delay_seconds": 0},
+				map[string]any{"id": "api", "command": "run-api --port {{port}}",
+					"port": 4000, "port_strategy": "offset", "port_env_var": "PORT",
+					"depends_on": []any{"db"}, "delay_seconds": 0},
+			},
+			"scenarios": []any{map[string]any{"id": "main", "components": []any{"api"}}},
+		}},
+	}}
+	ports := &fakePorts{open: []portsctl.PortEntry{
+		{Port: 3000, PID: 111},
+		{Port: 4000, PID: 222},
+	}}
+	c, spawned := newTestController(store, testDeps{ports: ports})
+
+	killed, err := c.StartEnvironment("dev")
+	if err != nil {
+		t.Fatalf("StartEnvironment: %v", err)
+	}
+	if len(killed) != 1 || killed[0] != (BatonKill{Port: 3000, PID: 111}) {
+		t.Errorf("killed = %+v, want [{3000 111}]", killed)
+	}
+	if len(store.launches) != 1 {
+		t.Fatalf("launches = %d records, want 1", len(store.launches))
+	}
+	procs := toAnySlice(store.launches[0].(map[string]any)["processes"])
+	if len(procs) != 2 || toIntVal(procs[1].(map[string]any)["assigned_port"]) != 4001 {
+		t.Errorf("record processes = %+v, want db+api with api assigned 4001", procs)
+	}
+	cmds := spawned.all()
+	if len(cmds) != 2 {
+		t.Fatalf("spawned %d commands, want 2 in dependency order", len(cmds))
+	}
+	if !slices.Contains(cmds[1].Env, "PORT=4001") || slices.Contains(cmds[0].Env, "PORT=4001") {
+		t.Errorf("offset var must reach only the api spawn")
+	}
+}
+
 // --- StopEnvironment / EnvStatuses (the CLI read/stop surface) ---
 
 func TestStopEnvironmentKillsAvoidsAndReportsErrors(t *testing.T) {
