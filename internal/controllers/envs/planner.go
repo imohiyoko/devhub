@@ -231,8 +231,10 @@ func topoSort(procs []process) ([]string, error) {
 }
 
 // spawnStep is one fully-resolved terminal launch: the executor only has to
-// open a terminal with these values and pause delay before the next step.
+// open a terminal with these values and pause delay before the next step. id
+// is carried along so a failure can name the process it belongs to.
 type spawnStep struct {
+	id      string
 	cwd     string
 	command string
 	env     map[string]string
@@ -255,6 +257,7 @@ func spawnStepFor(p process, cwd string, assigned map[string]int) spawnStep {
 		assignedPort = &v
 	}
 	return spawnStep{
+		id:      p.ID,
 		cwd:     cwd,
 		command: applyPortPlaceholder(p.Command, assignedPort),
 		env:     processEnv(p.Env, extraEnv),

@@ -70,12 +70,12 @@ type Controller struct {
 	// like the seams below so tests answer without Docker installed.
 	compose composeStater
 
-	// spawn launches a prepared command fire-and-forget (errors discarded, as
-	// before); settle is the pause after baton kills before processes start.
-	// Both are per-instance so tests can capture spawns and skip the wait
-	// without mutating package state — the HTTP launch path spawns on a
-	// goroutine, which a swapped package var would race.
-	spawn  func(*exec.Cmd)
+	// spawn starts a prepared command and reports whether it started; settle is
+	// the pause after baton kills before processes start. Both are per-instance
+	// so tests can capture spawns and skip the wait without mutating package
+	// state — the HTTP launch path spawns on a goroutine, which a swapped
+	// package var would race.
+	spawn  func(*exec.Cmd) error
 	settle time.Duration
 }
 
@@ -84,7 +84,7 @@ func New(store launchStore, git gitService, ports portsService, workspace worksp
 	return &Controller{
 		store: store, git: git, ports: ports, workspace: workspace,
 		compose: newDockerCompose(),
-		spawn:   func(cmd *exec.Cmd) { _ = cmd.Start() },
+		spawn:   func(cmd *exec.Cmd) error { return cmd.Start() },
 		settle:  500 * time.Millisecond,
 	}
 }
@@ -208,8 +208,8 @@ func (c *Controller) launchSingleProcess(data map[string]any) error {
 	} else {
 		c.killPorts(batonKillTargets(single, c.livePortIndex()))
 	}
-	c.runSpawns([]spawnStep{spawnStepFor(proc, cwds[processID], assigned)}, false)
-	return nil
+	// Inline (not async): this path can report a launch failure, and does.
+	return spawnErr(c.runSpawns([]spawnStep{spawnStepFor(proc, cwds[processID], assigned)}, false))
 }
 
 // environmentStates serves GET /api/envs/state: every environment's components
