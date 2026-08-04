@@ -411,9 +411,18 @@ func TestStartEnvironmentReportsSpawnFailure(t *testing.T) {
 		t.Errorf("err = %v, want only the failing process named", err)
 	}
 	// The dependent process was still attempted: one failure does not abort
-	// the launch.
-	if cmds := spawned.all(); len(cmds) != 2 {
-		t.Errorf("spawned %d commands, want both attempted", len(cmds))
+	// the launch. Checking which commands ran (not just how many) is what
+	// separates "db failed, api still launched" from "db was retried twice".
+	cmds := spawned.all()
+	if len(cmds) != 2 {
+		t.Fatalf("spawned %d commands, want both attempted", len(cmds))
+	}
+	launched := make([]string, 0, len(cmds))
+	for _, cmd := range cmds {
+		launched = append(launched, spawnedCommandLine(cmd))
+	}
+	if !strings.Contains(launched[0], "run-db") || !strings.Contains(launched[1], "run-api") {
+		t.Errorf("launched %v, want db attempted then api launched", launched)
 	}
 	// The launch record is written as before, so the UI still lists the launch.
 	if len(store.launches) != 1 {
