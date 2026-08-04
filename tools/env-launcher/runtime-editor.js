@@ -178,22 +178,17 @@ async function saveRuntime() {
     if (engine) runtime.engine = engine;
   }
 
-  const env = envsData.environments[currentRuntimeIndex];
-  if (!env) return;
-  envsData.environments[currentRuntimeIndex] = Object.assign({}, env, { runtime: runtime });
-  // Awaited, not fired alongside: the state endpoint reports the *stored*
-  // runtime, so reading it before the save lands would redraw the card with
-  // the value the user just replaced.
-  if (!await saveEnvsData()) {
-    // Put the environment back. A rejected runtime left in envsData would be
-    // persisted by the next save of anything else, which the user would have
-    // no reason to connect to the failure they already dismissed. The modal
-    // stays open so they can correct it.
-    envsData.environments[currentRuntimeIndex] = env;
-    return;
-  }
-  closeRuntimeModal();
-  // The declared runtime also decides which engine components are probed on,
-  // so their states are stale too.
-  fetchSwitchState();
+  const at = currentRuntimeIndex;
+  if (!envsData.environments[at]) return;
+  // saveEnvDocEdit puts the environment back if the save is rejected. A
+  // rejected runtime left in envsData would be persisted by the next save of
+  // anything else, which the user would have no reason to connect to the
+  // failure they already dismissed. It also re-reads the observed state, which
+  // this edit invalidates: the declared runtime decides which engine the
+  // components are probed on.
+  const saved = await saveEnvDocEdit(() => {
+    envsData.environments[at] = Object.assign({}, envsData.environments[at], { runtime: runtime });
+  });
+  // Only close once the save landed, so the user can correct a rejected value.
+  if (saved) closeRuntimeModal();
 }

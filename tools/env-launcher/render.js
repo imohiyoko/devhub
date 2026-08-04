@@ -215,19 +215,23 @@ function render() {
 }
 
 // 環境カードの並び替え：id 配列を並び替え→配列を再構築→保存（保存成功時に再描画）。
+// 保存が通らなかったときは並びごと元に戻す（saveEnvDocEdit）。並びだけが
+// メモリに残ると、次に別の理由で保存したときに一緒に永続化されてしまう。
 function reorderEnvironments(src, dst) {
-  const envs = envsData.environments || [];
-  const order = DevhubReorder.move(envs.map((_, i) => String(i)), src, dst);
-  envsData.environments = order.map(i => envs[Number(i)]);
-  saveEnvsData();
+  saveEnvDocEdit(() => {
+    const envs = envsData.environments || [];
+    const order = DevhubReorder.move(envs.map((_, i) => String(i)), src, dst);
+    envsData.environments = order.map(i => envs[Number(i)]);
+  });
 }
 
 // プロセスの並び替え：対象環境内でのみ。配列保存なので順序は永続化される。
 function reorderProcesses(envId, src, dst) {
-  const env = (envsData.environments || []).find(e => e.id === envId);
-  if (!env || !env.processes) return;
-  const procs = env.processes;
-  const order = DevhubReorder.move(procs.map((_, i) => String(i)), src, dst);
-  env.processes = order.map(i => procs[Number(i)]);
-  saveEnvsData();
+  saveEnvDocEdit(() => {
+    const env = (envsData.environments || []).find(e => e.id === envId);
+    if (!env || !env.processes) return;
+    const procs = env.processes;
+    const order = DevhubReorder.move(procs.map((_, i) => String(i)), src, dst);
+    env.processes = order.map(i => procs[Number(i)]);
+  });
 }

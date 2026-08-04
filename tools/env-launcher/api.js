@@ -56,6 +56,39 @@ async function saveEnvsData() {
   }
 }
 
+// saveEnvDocEdit applies a mutation to the stored document and persists it,
+// restoring the document when the save does not land. Every path that changes
+// envsData goes through here.
+//
+// The restore is what makes a rejected save harmless. saveEnvsData replaces the
+// whole document, so an edit left in envsData after a rejection is not
+// discarded: render() would draw it as though it had been applied, and the next
+// save the user made for an unrelated reason would persist it. That is true of
+// a server-side validation error and equally of a save refused for arriving
+// while another one was still in flight.
+//
+// A successful save re-reads the observed state for v2 documents: cards render
+// their component list from the config, but the state dots beside it come from
+// /api/envs/state, which a newly added or removed component is not in yet. v1
+// cards show no state and the probe costs a port scan, so they do not pay for it.
+async function saveEnvDocEdit(mutate) {
+  const before = JSON.parse(JSON.stringify(envsData));
+  mutate();
+  if (await saveEnvsData()) {
+    if (isV2Document()) fetchSwitchState();
+    return true;
+  }
+  envsData = before;
+  render();
+  return false;
+}
+
+// saveEnvEdit is saveEnvDocEdit scoped to one environment, which is all the
+// component and process editors ever change.
+function saveEnvEdit(envIndex, mutate) {
+  return saveEnvDocEdit(() => mutate(envsData.environments[envIndex]));
+}
+
 async function launchEnv(envId) {
   try {
     const res = await fetch('/api/envs/launch', {
