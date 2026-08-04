@@ -7,6 +7,8 @@ package envs
 // network and no processes — everything it needs is passed in.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 )
@@ -94,6 +96,26 @@ type SwitchPlan struct {
 	Keep       []PlanStep
 	Start      []PlanStep
 	Warnings   []string
+	// Fingerprint identifies the observed state this plan was computed from,
+	// so apply can refuse a plan the user approved against a different reality.
+	Fingerprint string
+}
+
+// stateFingerprint identifies an observed state (plan §9). It covers exactly
+// what the stop/keep/start difference is derived from, so an unchanged
+// fingerprint means re-deriving the plan would produce the same operations —
+// and in particular the same set of things to stop.
+func stateFingerprint(states map[string]componentStatus) string {
+	ids := make([]string, 0, len(states))
+	for id := range states {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	h := sha256.New()
+	for _, id := range ids {
+		fmt.Fprintf(h, "%s=%s\n", id, states[id].State)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 // planSwitch computes the plan for switching env to req's target state.
@@ -117,7 +139,7 @@ func planSwitch(env environment, req switchRequest, states map[string]componentS
 	for _, comp := range env.Components {
 		byID[comp.ID] = comp
 	}
-	plan := SwitchPlan{EnvID: env.ID, ScenarioID: req.ScenarioID}
+	plan := SwitchPlan{EnvID: env.ID, ScenarioID: req.ScenarioID, Fingerprint: stateFingerprint(states)}
 	for _, id := range order {
 		comp := byID[id]
 		status, observed := states[id]
