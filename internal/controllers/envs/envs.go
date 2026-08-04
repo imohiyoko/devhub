@@ -236,30 +236,32 @@ func (c *Controller) environmentStates() (map[string]any, error) {
 	for _, env := range decodeEnvironments(envsDoc) {
 		states := componentStates(env, launches, live, c.composeStates(env))
 		components := []any{}
-		for _, comp := range env.Components {
-			status := states[comp.ID]
+		for _, r := range componentReports(env, states) {
 			components = append(components, map[string]any{
-				"id":     comp.ID,
-				"label":  comp.displayLabel(),
-				"kind":   comp.Kind,
-				"shared": comp.Shared,
-				"state":  string(status.State),
-				"reason": status.Reason,
+				"id": r.ID, "label": r.Label, "kind": r.Kind,
+				"shared": r.Shared, "state": r.State, "reason": r.Reason,
 			})
 		}
 		scenarios := []any{}
-		for _, s := range env.Scenarios {
-			members := s.Components
-			if members == nil {
-				members = []string{}
-			}
-			scenarios = append(scenarios, map[string]any{"id": s.ID, "name": s.Name, "components": members})
+		for _, s := range scenarioInfos(env) {
+			scenarios = append(scenarios, map[string]any{"id": s.ID, "name": s.Name, "components": s.Components})
 		}
 		envs = append(envs, map[string]any{
 			"id": env.ID, "name": env.Name, "components": components, "scenarios": scenarios,
 		})
 	}
 	return map[string]any{"environments": envs}, nil
+}
+
+// EnvComponents reports one environment's components with their observed state
+// and the scenarios it can be switched to — the read side `devhub env status`
+// prints.
+func (c *Controller) EnvComponents(envID string) ([]ComponentReport, []ScenarioInfo, error) {
+	env, states, err := c.observeEnv(envID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return componentReports(env, states), scenarioInfos(env), nil
 }
 
 // switchPlan serves POST /api/envs/switch/plan: the stop/keep/start difference
@@ -283,24 +285,24 @@ func (c *Controller) switchPlan(data map[string]any) (map[string]any, error) {
 
 // parseSwitchRequest reads the target of a plan/apply request: an environment
 // and exactly one of a scenario or an explicit component selection.
-func parseSwitchRequest(data map[string]any) (string, switchRequest, error) {
+func parseSwitchRequest(data map[string]any) (string, SwitchTarget, error) {
 	envID := pStr(data, "env_id")
 	if envID == "" {
-		return "", switchRequest{}, httpx.Errorf(http.StatusBadRequest, "env_id is required")
+		return "", SwitchTarget{}, httpx.Errorf(http.StatusBadRequest, "env_id is required")
 	}
-	req := switchRequest{ScenarioID: pStr(data, "scenario_id")}
+	req := SwitchTarget{ScenarioID: pStr(data, "scenario_id")}
 	selection, selected := data["components"]
 	if selected {
 		ids, ok := stringList(selection)
 		if !ok {
-			return "", switchRequest{}, httpx.Errorf(http.StatusBadRequest, "components must be an array of component ids")
+			return "", SwitchTarget{}, httpx.Errorf(http.StatusBadRequest, "components must be an array of component ids")
 		}
 		req.Components = ids
 	}
 	// An empty components array is a valid target (the shared components
 	// alone), so the request is read by key presence, not by emptiness.
 	if byScenario := req.ScenarioID != ""; byScenario == selected {
-		return "", switchRequest{}, httpx.Errorf(http.StatusBadRequest, "specify exactly one of scenario_id or components")
+		return "", SwitchTarget{}, httpx.Errorf(http.StatusBadRequest, "specify exactly one of scenario_id or components")
 	}
 	return envID, req, nil
 }
