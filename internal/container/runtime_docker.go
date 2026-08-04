@@ -22,14 +22,17 @@ import (
 // not hang when the daemon is slow to answer or is coming up.
 const ComposeProbeTimeout = 10 * time.Second
 
-// ComposeUpTimeout bounds one `docker compose up`. It is generous because a
-// first run may pull images; the operation is synchronous by design, since its
-// exit status is what tells the caller the services actually came up.
-const ComposeUpTimeout = 5 * time.Minute
+// ComposeOpTimeout bounds one mutating compose call — `up` or `stop`. It is
+// generous because a first `up` may pull images; the operation is synchronous
+// by design, since its exit status is what tells the caller the services
+// actually came up. `stop` shares it rather than getting a tighter one of its
+// own: a stop that is slow for the same reason an up is (a busy or
+// still-starting daemon) should not be the one call that gives up early.
+const ComposeOpTimeout = 5 * time.Minute
 
-// errDockerMissing is the one failure devhub diagnoses itself; every other
+// ErrDockerMissing is the one failure devhub diagnoses itself; every other
 // reason a compose call fails comes from Docker's own output.
-var errDockerMissing = errors.New("docker コマンドが見つかりません")
+var ErrDockerMissing = errors.New("docker コマンドが見つかりません")
 
 // Adapter is what devhub does with a Compose implementation: read the
 // state of a project's services, and start or stop the services a component
@@ -86,7 +89,7 @@ func (d *dockerCompose) Available(ctx context.Context) error {
 
 func (d *dockerCompose) binaryPresent() error {
 	if _, err := d.lookPath("docker"); err != nil {
-		return errDockerMissing
+		return ErrDockerMissing
 	}
 	return nil
 }

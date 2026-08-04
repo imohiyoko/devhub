@@ -4,45 +4,31 @@ package container
 // Adapter and a ProfileLister. Every test in this package builds its Runtime
 // from these, so `go test` never talks to the developer's own Docker or Colima
 // — including the containerd path, which would otherwise shell out to Colima.
+//
+// They are deliberately thin. The tests here cover capability reporting and
+// adapter selection, which only ever ask an Adapter whether it is available;
+// the operational methods are exercised against a fake command runner in each
+// adapter's own test, where the argv is the thing worth asserting on. A double
+// that recorded calls nobody inspects would be scaffolding the compiler cannot
+// flag, because Go does not report unused struct fields.
 
 import "context"
 
 // fakeCompose answers as an engine adapter without an engine.
 type fakeCompose struct {
-	states map[string]map[string]State // project -> service -> state
-	err    error
 	// unavailable is what Available reports; nil means the engine is usable.
 	unavailable error
-	calls       []ComposeSpec
-	// runtimes records the spec of every operation, so a test can assert the
-	// engine that was addressed.
-	runtimes []Spec
-	upErr    error
-	stopErr  error
 }
 
 func (f *fakeCompose) Available(context.Context) error { return f.unavailable }
 
-func (f *fakeCompose) ServiceStates(_ context.Context, rt Spec, spec ComposeSpec) (map[string]State, error) {
-	f.calls = append(f.calls, spec)
-	f.runtimes = append(f.runtimes, rt)
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.states[spec.Project], nil
+func (f *fakeCompose) ServiceStates(context.Context, Spec, ComposeSpec) (map[string]State, error) {
+	return map[string]State{}, nil
 }
 
-func (f *fakeCompose) Up(_ context.Context, rt Spec, spec ComposeSpec) error {
-	f.calls = append(f.calls, spec)
-	f.runtimes = append(f.runtimes, rt)
-	return f.upErr
-}
+func (f *fakeCompose) Up(context.Context, Spec, ComposeSpec) error { return nil }
 
-func (f *fakeCompose) Stop(_ context.Context, rt Spec, spec ComposeSpec) error {
-	f.calls = append(f.calls, spec)
-	f.runtimes = append(f.runtimes, rt)
-	return f.stopErr
-}
+func (f *fakeCompose) Stop(context.Context, Spec, ComposeSpec) error { return nil }
 
 // fakeColima answers capability probes without Colima — and, on a macOS runner
 // that happens to have it, without the real one.
