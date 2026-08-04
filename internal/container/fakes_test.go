@@ -50,7 +50,25 @@ type testDeps struct {
 	containerd *fakeCompose
 	colima     *fakeColima
 	inventory  Lister
+	admin      ProfileManager
+	control    Operator
 }
+
+// fakeAdmin and fakeOperator exist so newTestRuntime can fill every field. They
+// answer nothing useful on purpose: the seams that move a VM or a container are
+// driven directly in profile_test.go and control_test.go, where the argv is
+// what is worth asserting. Here they are only standing in for "wired".
+type fakeAdmin struct{}
+
+func (fakeAdmin) Create(context.Context, ProfileSpec) error      { return nil }
+func (fakeAdmin) Resize(context.Context, ProfileSpec) error      { return nil }
+func (fakeAdmin) CheckResize(context.Context, ProfileSpec) error { return nil }
+
+type fakeOperator struct{}
+
+func (fakeOperator) Logs(context.Context, Source, string, int) (string, error) { return "", nil }
+func (fakeOperator) Stop(context.Context, Source, string) error                { return nil }
+func (fakeOperator) Restart(context.Context, Source, string) error             { return nil }
 
 // newTestRuntime builds a Runtime whose every seam is a double. The defaults
 // stand in for a host with neither engine present, which is what an
@@ -68,9 +86,20 @@ func newTestRuntime(d testDeps) *Runtime {
 	if d.inventory == nil {
 		d.inventory = &fakeLister{}
 	}
+	if d.admin == nil {
+		d.admin = fakeAdmin{}
+	}
+	if d.control == nil {
+		d.control = fakeOperator{}
+	}
 	// Every field, because Runtime documents that all of them are required and
 	// dereferences without a nil check: a double that left one out would fail
 	// inside the method rather than at the line that wired it, which is the
-	// outcome that invariant exists to avoid.
-	return &Runtime{Docker: d.compose, Containerd: d.containerd, Colima: d.colima, Inventory: d.inventory}
+	// outcome that invariant exists to avoid. Keeping this exhaustive is the
+	// only thing that makes the claim true — Admin was added without it, and
+	// the comment went on saying "every field" for a release.
+	return &Runtime{
+		Docker: d.compose, Containerd: d.containerd, Colima: d.colima,
+		Inventory: d.inventory, Admin: d.admin, Control: d.control,
+	}
 }
