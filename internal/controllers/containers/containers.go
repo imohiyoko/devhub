@@ -10,8 +10,12 @@
 // port, becomes visible at all. The precedent is ports: a machine-wide panel
 // that env-launcher consumes rather than contains.
 //
-// Everything here is read-only. The panel's operations (logs, stop, restart)
-// are deliberately a later, separate change with its own execaudit Surface.
+// Reading the machine is what this file does, and nothing on the path a page
+// load takes changes anything. The exceptions live in profiles.go: creating and
+// resizing a Colima VM, each one a request whose whole purpose is that, and
+// neither reachable as a side effect of looking at the panel. The container
+// operations proper — logs, stop, restart — are still a later, separate change
+// with their own execaudit Surface.
 package containers
 
 import (

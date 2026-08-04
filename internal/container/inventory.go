@@ -58,9 +58,10 @@ type Source struct {
 	// always. Its containers are reported under that source instead, so they
 	// are not counted twice. Empty for a source that stands alone.
 	AliasOf string
-	// CPUs, MemoryBytes and DiskBytes describe a Colima source's VM. They are
-	// shown, never set — see ColimaProfile for why devhub does not offer to
-	// change them.
+	// CPUs, MemoryBytes and DiskBytes describe a Colima source's VM. Listing
+	// reads them and never sets them: changing a size stops and restarts the
+	// VM, so it is a request of its own (ProfileManager) and never something
+	// that falls out of looking at the machine.
 	CPUs        int
 	MemoryBytes int64
 	DiskBytes   int64

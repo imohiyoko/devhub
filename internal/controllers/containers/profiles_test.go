@@ -22,14 +22,19 @@ type fakeAdmin struct {
 	checked []container.ProfileSpec
 	targets []container.Container
 	err     error
+	// actCtxErr is the state of the context Create or Resize was handed. A
+	// cancelled one means the operation would be killed mid-flight.
+	actCtxErr error
 }
 
-func (f *fakeAdmin) Create(_ context.Context, spec container.ProfileSpec) error {
+func (f *fakeAdmin) Create(ctx context.Context, spec container.ProfileSpec) error {
+	f.actCtxErr = ctx.Err()
 	f.created = append(f.created, spec)
 	return f.err
 }
 
-func (f *fakeAdmin) Resize(_ context.Context, spec container.ProfileSpec) error {
+func (f *fakeAdmin) Resize(ctx context.Context, spec container.ProfileSpec) error {
+	f.actCtxErr = ctx.Err()
 	f.resized = append(f.resized, spec)
 	return f.err
 }
@@ -182,6 +187,7 @@ func TestRefusalsGetTheirOwnStatus(t *testing.T) {
 		{container.ErrProfileExists, http.StatusConflict},
 		{container.ErrProfileMissing, http.StatusNotFound},
 		{container.ErrDiskShrink, http.StatusBadRequest},
+		{container.ErrEngineChange, http.StatusBadRequest},
 		{container.ErrColimaMissing, http.StatusBadRequest},
 		{container.ErrColimaUnsupportedOS, http.StatusBadRequest},
 	} {
@@ -201,6 +207,35 @@ func TestRefusalsGetTheirOwnStatus(t *testing.T) {
 	a := &fakeAdmin{err: errors.New("boom")}
 	if code, _ := post(t, a, "/api/containers/profiles", map[string]any{"name": "x"}); code == http.StatusBadRequest {
 		t.Error("an unknown error was reported as a bad request")
+	}
+}
+
+// TestOperationsOutliveTheRequest. exec.CommandContext kills the process when
+// its context ends, and a request context ends the moment the browser tab
+// closes. For a listing that is correct — nobody is waiting for it. For a
+// resize it is not: the stop has already run by then, so the VM is left down
+// with neither the old size nor the new one.
+func TestOperationsOutliveTheRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		body map[string]any
+	}{
+		{"create", "/api/containers/profiles", map[string]any{"name": "x"}},
+		{"resize", "/api/containers/profiles/dev/resize", map[string]any{"cpus": float64(2), "confirm": true}},
+	} {
+		a := &fakeAdmin{}
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequest(http.MethodPost, tc.path, nil).WithContext(ctx)
+		cancel() // the tab is gone before the handler gets anywhere
+
+		c := &Controller{admin: a}
+		if err := c.HandleProfilePost(httptest.NewRecorder(), req, tc.body); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if a.actCtxErr != nil {
+			t.Errorf("%s: ran under a cancelled context (%v); colima would be killed", tc.name, a.actCtxErr)
+		}
 	}
 }
 

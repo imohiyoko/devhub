@@ -29,6 +29,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/imohiyoko/devhub/internal/platform"
@@ -67,6 +68,13 @@ var (
 	// container on it, and unlike a stop that is not something the user can
 	// undo by starting the profile again.
 	ErrDiskShrink = errors.New("ディスクの縮小はできません（VM の作り直しになり、イメージとコンテナが失われます）")
+	// ErrEngineChange refuses to let a resize become an engine swap. The engine
+	// is not a size: the containers on the VM live in the runtime's own store,
+	// so starting with the other runtime leaves them undeleted and invisible.
+	// That is the one outcome the confirmation cannot describe — the stop list
+	// names what goes down, and these do not go down, they stop existing as far
+	// as anything asking can tell.
+	ErrEngineChange = errors.New("engine の変更はできません（profile を作り直してください）")
 )
 
 // ProfileSpec is a profile devhub is being asked to create or resize. Sizes are
@@ -119,6 +127,23 @@ type colimaAdmin struct {
 	// know the name is free, resize must know the profile exists and how big it
 	// is now.
 	profiles ProfileLister
+	// locks serialises operations naming the same profile. Without it two
+	// requests — two tabs, or an agent and a browser — both pass "does this
+	// exist" before either has started anything, and both then run colima
+	// against one VM. The check is only worth what the window after it is.
+	//
+	// Per name, not one lock for everything: an operation here can run for
+	// minutes, and two different profiles have nothing to do with each other.
+	locks sync.Map // name -> *sync.Mutex
+}
+
+// lock takes the named profile's lock and returns the release. Callers validate
+// the name first, so this does not accumulate entries for junk.
+func (a *colimaAdmin) lock(name string) func() {
+	v, _ := a.locks.LoadOrStore(name, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func newColimaAdmin(profiles ProfileLister) *colimaAdmin {
@@ -135,6 +160,7 @@ func (a *colimaAdmin) Create(ctx context.Context, spec ProfileSpec) error {
 	if err := a.check(spec); err != nil {
 		return err
 	}
+	defer a.lock(spec.Name)()
 	if _, found, err := a.find(ctx, spec.Name); err != nil {
 		return err
 	} else if found {
@@ -151,6 +177,13 @@ func (a *colimaAdmin) Create(ctx context.Context, spec ProfileSpec) error {
 // that path recreates the VM, and no amount of starting it again brings the
 // images back.
 func (a *colimaAdmin) Resize(ctx context.Context, spec ProfileSpec) error {
+	// Validated before the lock so a bad name never mints one, and re-validated
+	// inside checkResize, which is the function that must not be bypassable.
+	if err := a.check(spec); err != nil {
+		return err
+	}
+	defer a.lock(spec.Name)()
+
 	current, err := a.checkResize(ctx, spec)
 	if err != nil {
 		return err
@@ -160,7 +193,14 @@ func (a *colimaAdmin) Resize(ctx context.Context, spec ProfileSpec) error {
 			return err
 		}
 	}
-	return a.start(ctx, spec)
+	if err := a.start(ctx, spec); err != nil {
+		// The stop already happened, so this is the state the user is left in:
+		// nothing running, and the new size not applied. Whatever colima said
+		// about why, that is the part they need, along with the way back.
+		return fmt.Errorf("%w\n（%s への変更に失敗しました。VM は停止しています。`colima start --profile %s` で起動を再試行できます）",
+			err, describeSpec(spec), spec.Name)
+	}
+	return nil
 }
 
 // CheckResize runs every refusal Resize would, and nothing else.
@@ -185,6 +225,21 @@ func (a *colimaAdmin) checkResize(ctx context.Context, spec ProfileSpec) (Colima
 	}
 	if spec.DiskGiB > 0 && current.DiskBytes > 0 && int64(spec.DiskGiB)*gib < current.DiskBytes {
 		return current, fmt.Errorf("%w（現在 %d GiB）", ErrDiskShrink, current.DiskBytes/gib)
+	}
+	// The panel never asks for this — its request body carries an engine only
+	// on a create — but the endpoint is reachable without the panel, and the
+	// engine reaches `colima start --runtime` from the same spec the sizes do.
+	// Refused here, with the disk shrink, because both have to land before the
+	// stop: after it, the VM is already down.
+	if spec.Engine != "" && !strings.EqualFold(spec.Engine, current.Engine) {
+		have := current.Engine
+		if have == "" {
+			// A stopped profile reports no engine (plan §6.4), so devhub cannot
+			// tell a change from a restatement. It refuses rather than guess:
+			// guessing wrong here is the swap this error exists to prevent.
+			have = "不明（停止中の profile では colima が報告しません）"
+		}
+		return current, fmt.Errorf("%w（現在 %s）", ErrEngineChange, have)
 	}
 	return current, nil
 }
@@ -297,8 +352,9 @@ func (r *Runtime) ProfileTargets(ctx context.Context, name string) ([]Container,
 	return nil, ErrProfileMissing
 }
 
-// describeSpec renders a spec the way colima's own flags read, for messages and
-// for the confirmation the panel shows.
+// describeSpec renders a spec the way colima's own flags read, for the one
+// error that has to say which change failed. The panel builds its own rendering
+// from the JSON — this is for the message, not for the screen.
 func describeSpec(spec ProfileSpec) string {
 	var bits []string
 	if spec.CPUs > 0 {
