@@ -78,11 +78,58 @@ func TestComposeAvailableChecksThePlugin(t *testing.T) {
 // about to run reports a missing plugin by itself.
 func TestComposeRunSkipsThePluginProbe(t *testing.T) {
 	runner := &fakeRunner{stdout: "[]"}
-	if _, err := testCompose(runner).ServiceStates(context.Background(), composeSpec{Project: "p"}); err != nil {
+	if _, err := testCompose(runner).ServiceStates(context.Background(), "", composeSpec{Project: "p"}); err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
 	if len(runner.calls) != 1 {
 		t.Errorf("calls = %+v, want only the ps invocation", runner.calls)
+	}
+}
+
+// TestComposeArgvCarriesTheDockerContext pins where --context goes. It is a
+// flag of `docker` itself, so it must precede the `compose` subcommand:
+// `docker compose --context …` is rejected as an unknown flag (verified
+// against Docker CLI 29.4.0). Nothing here runs `docker context use` — the
+// context is named per invocation so other terminals are unaffected (plan
+// §6.3).
+func TestComposeArgvCarriesTheDockerContext(t *testing.T) {
+	spec := composeSpec{Cwd: "~/platform", Project: "platform-local", Services: []string{"mysql", "redis"}}
+
+	runner := &fakeRunner{stdout: "[]"}
+	if _, err := testCompose(runner).ServiceStates(context.Background(), "colima-dev", spec); err != nil {
+		t.Fatalf("ServiceStates: %v", err)
+	}
+	want := []string{"--context", "colima-dev", "compose", "--project-name", "platform-local", "ps", "--format", "json", "--all"}
+	if got := runner.calls[0].args; !slices.Equal(got, want) {
+		t.Errorf("args = %v\nwant %v", got, want)
+	}
+
+	up := &fakeRunner{}
+	if err := testCompose(up).Up(context.Background(), "colima-dev", spec); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	wantUp := []string{"--context", "colima-dev", "compose", "--project-name", "platform-local", "up", "--detach", "--wait", "mysql", "redis"}
+	if got := up.calls[0].args; !slices.Equal(got, wantUp) {
+		t.Errorf("up args = %v\nwant %v", got, wantUp)
+	}
+
+	stop := &fakeRunner{}
+	if err := testCompose(stop).Stop(context.Background(), "colima-dev", spec); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if got := stop.calls[0].args; !slices.Equal(got[:2], []string{"--context", "colima-dev"}) {
+		t.Errorf("stop args = %v, want --context first", got)
+	}
+
+	// An empty context passes no flag at all, so the ambient context stays in
+	// charge and a user who switched contexts in their shell gets what they
+	// expect.
+	ambient := &fakeRunner{stdout: "[]"}
+	if _, err := testCompose(ambient).ServiceStates(context.Background(), "", spec); err != nil {
+		t.Fatalf("ServiceStates: %v", err)
+	}
+	if got := ambient.calls[0].args[0]; got != "compose" {
+		t.Errorf("args start with %q, want the bare compose subcommand", got)
 	}
 }
 
@@ -91,7 +138,7 @@ func TestComposeServiceStatesBuildsScopedArgv(t *testing.T) {
 	spec := composeSpec{Cwd: "~/platform", Files: []string{"compose.yml", "compose.override.yml"},
 		Project: "platform-local", Services: []string{"mysql"}}
 
-	states, err := testCompose(runner).ServiceStates(context.Background(), spec)
+	states, err := testCompose(runner).ServiceStates(context.Background(), "", spec)
 	if err != nil {
 		t.Fatalf("ServiceStates: %v", err)
 	}
@@ -127,7 +174,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 	adapter := &dockerCompose{runner: runner, lookPath: func(string) (string, error) {
 		return "", errors.New("exec: \"docker\": executable file not found in $PATH")
 	}}
-	_, err := adapter.ServiceStates(context.Background(), composeSpec{Project: "p"})
+	_, err := adapter.ServiceStates(context.Background(), "", composeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "docker コマンドが見つかりません") {
 		t.Errorf("missing docker: err = %v", err)
 	}
@@ -139,7 +186,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 	// "not installed" and "daemon down" need different fixes.
 	daemonDown := "failed to connect to the docker API at unix:///var/run/docker.sock; check if the daemon is running\nsecond line"
 	runner = &fakeRunner{stderr: daemonDown, err: errors.New("exit status 1")}
-	_, err = testCompose(runner).ServiceStates(context.Background(), composeSpec{Project: "p"})
+	_, err = testCompose(runner).ServiceStates(context.Background(), "", composeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "failed to connect to the docker API") {
 		t.Errorf("daemon down: err = %v, want docker's own message", err)
 	}
@@ -149,7 +196,7 @@ func TestComposeServiceStatesFailures(t *testing.T) {
 
 	// A failure with nothing on stderr still reports something actionable.
 	runner = &fakeRunner{err: errors.New("context deadline exceeded")}
-	_, err = testCompose(runner).ServiceStates(context.Background(), composeSpec{Project: "p"})
+	_, err = testCompose(runner).ServiceStates(context.Background(), "", composeSpec{Project: "p"})
 	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Errorf("silent failure: err = %v", err)
 	}

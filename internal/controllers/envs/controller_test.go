@@ -124,6 +124,9 @@ type fakeCompose struct {
 	// unavailable is the reason Available reports; nil means Docker is present.
 	unavailable error
 	calls       []composeSpec
+	// contexts records the Docker context of every operation, so a test can
+	// assert devhub addressed the engine the environment declared.
+	contexts []string
 	// ups/stops record what apply operated on as "<project>/<services>", so a
 	// test can assert both the operation and the scope it was confined to;
 	// upErr/stopErr make those operations fail.
@@ -135,21 +138,24 @@ type fakeCompose struct {
 
 func (f *fakeCompose) Available(context.Context) error { return f.unavailable }
 
-func (f *fakeCompose) ServiceStates(_ context.Context, spec composeSpec) (map[string]componentState, error) {
+func (f *fakeCompose) ServiceStates(_ context.Context, dockerContext string, spec composeSpec) (map[string]componentState, error) {
 	f.calls = append(f.calls, spec)
+	f.contexts = append(f.contexts, dockerContext)
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.states[spec.Project], nil
 }
 
-func (f *fakeCompose) Up(_ context.Context, spec composeSpec) error {
+func (f *fakeCompose) Up(_ context.Context, dockerContext string, spec composeSpec) error {
 	f.ups = append(f.ups, spec.Project+"/"+strings.Join(spec.Services, ","))
+	f.contexts = append(f.contexts, dockerContext)
 	return f.upErr
 }
 
-func (f *fakeCompose) Stop(_ context.Context, spec composeSpec) error {
+func (f *fakeCompose) Stop(_ context.Context, dockerContext string, spec composeSpec) error {
 	f.stops = append(f.stops, spec.Project+"/"+strings.Join(spec.Services, ","))
+	f.contexts = append(f.contexts, dockerContext)
 	return f.stopErr
 }
 
@@ -202,9 +208,13 @@ type testDeps struct {
 type fakeColima struct {
 	profiles []colimaProfile
 	err      error
+	// calls counts probes, so a test can assert a non-Colima environment does
+	// not pay for one.
+	calls int
 }
 
 func (f *fakeColima) Profiles(context.Context) ([]colimaProfile, error) {
+	f.calls++
 	return f.profiles, f.err
 }
 
@@ -738,6 +748,88 @@ func TestComposeStates(t *testing.T) {
 		if states[id].State != stateUnknown || !strings.Contains(states[id].Reason, "Cannot connect") {
 			t.Errorf("%s on probe failure = %+v", id, states[id])
 		}
+	}
+}
+
+// TestSwitchPlanEndpointCarriesRuntimeWarnings guards the UI/CLI split: the
+// HTTP handler used to re-derive the plan itself instead of calling
+// PlanSwitch, so the browser silently lost warnings the CLI showed (plan
+// §6.5). Both surfaces must answer with the same plan.
+func TestSwitchPlanEndpointCarriesRuntimeWarnings(t *testing.T) {
+	doc := composeDoc()
+	doc["environments"].([]any)[0].(map[string]any)["runtime"] =
+		map[string]any{"provider": "colima", "profile": "dev"}
+	c, _ := newTestController(&fakeStore{envs: doc}, testDeps{
+		colima: &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Stopped"}}},
+	})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/envs/switch/plan", nil)
+	if err := c.HandlePost(rr, req, map[string]any{"env_id": "micro", "scenario_id": "acc"}); err != nil {
+		t.Fatalf("switch plan: %v", err)
+	}
+
+	var found bool
+	for _, w := range toAnySlice(decodeJSON(t, rr)["warnings"]) {
+		if s, _ := w.(string); strings.Contains(s, "colima start -p dev") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("plan response has no stopped-profile warning: %s", rr.Body.String())
+	}
+
+	// The CLI path must agree with it.
+	plan, err := c.PlanSwitch("micro", SwitchTarget{ScenarioID: "acc"})
+	if err != nil {
+		t.Fatalf("PlanSwitch: %v", err)
+	}
+	if len(plan.Warnings) == 0 {
+		t.Error("PlanSwitch dropped the runtime warnings")
+	}
+}
+
+// TestComposeOperationsCarryTheEnvironmentContext follows the declared runtime
+// all the way to the adapter, on every path that touches containers. A context
+// that reached only some of them would silently probe one engine and start
+// containers on another.
+func TestComposeOperationsCarryTheEnvironmentContext(t *testing.T) {
+	doc := composeDoc()
+	env := doc["environments"].([]any)[0].(map[string]any)
+	env["runtime"] = map[string]any{"provider": "colima", "profile": "dev"}
+
+	apply := func(t *testing.T, running componentState, target SwitchTarget) *fakeCompose {
+		t.Helper()
+		compose := &fakeCompose{states: map[string]map[string]componentState{
+			"platform-local":   {"mysql": stateRunning, "redis": stateRunning},
+			"accounting-local": {"api": running, "worker": running},
+		}}
+		c, _ := newTestController(&fakeStore{envs: doc}, testDeps{
+			compose: compose,
+			colima:  &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Running", Engine: engineDocker}}},
+		})
+		if _, _, err := c.ApplySwitch("micro", target, ""); err != nil {
+			t.Fatalf("ApplySwitch: %v", err)
+		}
+		if len(compose.contexts) == 0 {
+			t.Fatal("no compose operation was recorded")
+		}
+		for i, got := range compose.contexts {
+			if got != "colima-dev" {
+				t.Errorf("operation %d ran in context %q, want colima-dev", i, got)
+			}
+		}
+		return compose
+	}
+
+	// Empty target: the scenario component is running, so it is probed and
+	// stopped while the shared ones are kept.
+	if stopped := apply(t, stateRunning, SwitchTarget{Components: []string{}}); len(stopped.stops) == 0 {
+		t.Error("nothing was stopped; the fixture no longer exercises the stop path")
+	}
+	// Scenario target with that component down: probed and started.
+	if started := apply(t, stateStopped, SwitchTarget{ScenarioID: "acc"}); len(started.ups) == 0 {
+		t.Error("nothing was started; the fixture no longer exercises the start path")
 	}
 }
 
