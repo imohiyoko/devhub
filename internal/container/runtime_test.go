@@ -280,8 +280,8 @@ func TestComposeForPicksTheAdapter(t *testing.T) {
 	// containerd outside Colima is rejected rather than driven with Docker.
 	// Save-time validation already refuses it; decode is lenient, so a
 	// hand-edited document can still reach here.
-	if _, err := c.ComposeFor(Spec{Provider: ProviderDocker, Engine: EngineContainerd}); !errors.Is(err, ErrContainerdUnsupported) {
-		t.Errorf("err = %v, want ErrContainerdUnsupported", err)
+	if _, err := c.ComposeFor(Spec{Provider: ProviderDocker, Engine: EngineContainerd}); !errors.Is(err, errContainerdUnsupported) {
+		t.Errorf("err = %v, want errContainerdUnsupported", err)
 	}
 }
 

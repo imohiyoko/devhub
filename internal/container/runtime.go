@@ -130,7 +130,7 @@ func (r *Runtime) ComposeFor(rt Spec) (Adapter, error) {
 		return r.Docker, nil
 	}
 	if rt.Provider != ProviderColima {
-		return nil, ErrContainerdUnsupported
+		return nil, errContainerdUnsupported
 	}
 	return r.Containerd, nil
 }
