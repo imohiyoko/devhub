@@ -73,7 +73,7 @@ function saveEnv() {
     return;
   }
 
-  const env = {
+  const edited = {
     id: id,
     name: document.getElementById('envName').value.trim(),
     repos: repos,
@@ -85,14 +85,18 @@ function saveEnv() {
     }
   };
 
-  if (!env.id) { alert('IDは必須です'); return; }
+  if (!edited.id) { alert('IDは必須です'); return; }
 
   if (currentEnvIndex >= 0) {
-    env.processes = envsData.environments[currentEnvIndex].processes || [];
-    envsData.environments[currentEnvIndex] = env;
+    // Merge onto the stored object: saveEnvsData() does a full-document
+    // replace, so fields this modal doesn't edit (processes, and newer schema
+    // fields like components/scenarios/runtime) must be carried over or an
+    // edit here would silently delete them.
+    envsData.environments[currentEnvIndex] =
+      Object.assign({}, envsData.environments[currentEnvIndex], edited);
   } else {
-    env.processes = [];
-    envsData.environments.push(env);
+    edited.processes = [];
+    envsData.environments.push(edited);
   }
 
   closeEnvModal();
