@@ -5,35 +5,47 @@
 // mirroring the backend's strict version gate.
 function isV2Document() { return envsData.version === 2; }
 
-// switchSectionHtml renders one environment's components with their observed
-// state, plus the scenarios it can be switched to. State comes from
-// /api/envs/state (switch.js), which may not have arrived yet.
-function switchSectionHtml(env) {
+// switchSectionHtml renders one environment's components, plus the scenarios it
+// can be switched to.
+//
+// The list itself comes from the stored config, not from /api/envs/state: that
+// is what gives every row an index the editor can act on, and it means the
+// components show up immediately instead of behind a "loading" placeholder.
+// State (the dot and its reason) is layered on by id once /api/envs/state
+// arrives — a component that was just added is simply not in it yet.
+function switchSectionHtml(env, eIdx) {
   const state = switchEnvState(env.id);
-  if (!state) {
-    return '<div class="empty" style="padding: 20px;">状態を読み込み中...</div>';
-  }
-  const components = state.components || [];
-  if (!components.length) {
-    return '<div class="empty" style="padding: 20px;">コンポーネントがありません</div>';
-  }
+  const observed = {};
+  ((state && state.components) || []).forEach(c => { observed[c.id] = c; });
+
   const envId = escapeHtml(env.id);
-  const rows = components.map(c => {
-    const reason = c.reason ? ` — ${escapeHtml(c.reason)}` : '';
-    const shared = c.shared ? ' <span class="component-tag">shared</span>' : '';
-    return `
+  const components = componentsOf(env);
+  const rows = components.length
+    ? components.map((c, cIdx) => {
+        const seen = observed[c.id] || {};
+        const stateName = seen.state || 'unknown';
+        const why = seen.reason || (state ? '' : '状態を読み込み中');
+        const reason = why ? ` — ${escapeHtml(why)}` : '';
+        const shared = c.lifecycle === 'shared' ? ' <span class="component-tag">shared</span>' : '';
+        const kind = c.kind === 'compose_service' ? 'compose_service' : 'host_process';
+        return `
       <div class="component-item">
-        <span class="state-dot state-${escapeHtml(c.state)}" title="${escapeHtml(c.reason || c.state)}"></span>
+        <span class="state-dot state-${escapeHtml(stateName)}" title="${escapeHtml(why || stateName)}"></span>
         <div class="component-info">
-          <div class="component-label">${escapeHtml(c.label)}${shared}</div>
-          <div class="component-meta">${escapeHtml(c.kind)}${reason}</div>
+          <div class="component-label">${escapeHtml(c.label || c.id)}${shared}</div>
+          <div class="component-meta">${escapeHtml(kind)}${reason}</div>
+        </div>
+        <div class="process-actions">
+          <button class="btn" data-action="edit-component" data-e-idx="${eIdx}" data-c-idx="${cIdx}">編集</button>
+          <button class="btn" data-action="delete-component" data-e-idx="${eIdx}" data-c-idx="${cIdx}" style="color: var(--red);">削除</button>
         </div>
       </div>`;
-  }).join('');
+      }).join('')
+    : '<div class="empty" style="padding: 20px;">コンポーネントがありません</div>';
 
   // Switching is only meaningful with somewhere to switch to; a single
   // scenario still gets the state list and the stop action.
-  const scenarios = (state.scenarios || []).map(s => {
+  const scenarios = ((state && state.scenarios) || []).map(s => {
     const name = escapeHtml(s.name || s.id);
     return `<button class="btn btn-sm" data-action="switch-scenario" data-env-id="${envId}" data-scenario-id="${escapeHtml(s.id)}" data-scenario-name="${name}">${name}</button>`;
   }).join('');
@@ -44,6 +56,9 @@ function switchSectionHtml(env) {
     <div class="switch-section">
       <div class="switch-head">コンポーネント${actions}</div>
       ${rows}
+      <div style="margin-top: 4px;">
+        <button class="btn" data-action="add-component" data-e-idx="${eIdx}">＋ コンポーネントを追加</button>
+      </div>
     </div>`;
 }
 
@@ -77,12 +92,12 @@ function render() {
         </div>
         <div class="env-body">
     `;
-    // A v2 document defines its units as components, which this UI can show
-    // and switch but not yet edit (#150) — so it offers the switcher instead
-    // of a process editor that could not save.
+    // A v2 document defines its units as components: the same modal edits
+    // them, but the card offers the scenario switcher rather than the
+    // per-process launch buttons, which have no meaning for a compose service.
     if (isV2Document()) {
       html += runtimeSectionHtml(env, eIdx);
-      html += switchSectionHtml(env);
+      html += switchSectionHtml(env, eIdx);
       html += `</div></div>`;
       return;
     }
