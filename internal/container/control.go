@@ -71,9 +71,12 @@ var (
 //
 // The lookup below is the real bound — an ID that is not in the listing is
 // refused whatever it looks like — but this runs first, so a malformed value
-// never reaches the listing either, and never appears in an error message or a
-// log line. Anything that could pass for a flag fails it by construction: hex
-// has no leading hyphen.
+// never reaches a listing, a command line, or an engine. Anything that could
+// pass for a flag fails it by construction: hex has no leading hyphen.
+//
+// A rejected value is quoted back to the caller that sent it, which is what
+// makes the 404 diagnosable. It reaches no interpreter on the way: %q escapes
+// it into the JSON body, and the panel renders errors with textContent.
 var containerIDRe = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
 
 // ValidContainerID reports whether s can name a container.
