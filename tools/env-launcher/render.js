@@ -1,4 +1,52 @@
 // --- Render ---
+
+// The stored document's schema version decides what a card can offer: v1 edits
+// processes, v2 shows components and switches scenarios. Only an exact 2 counts,
+// mirroring the backend's strict version gate.
+function isV2Document() { return envsData.version === 2; }
+
+// switchSectionHtml renders one environment's components with their observed
+// state, plus the scenarios it can be switched to. State comes from
+// /api/envs/state (switch.js), which may not have arrived yet.
+function switchSectionHtml(env) {
+  const state = switchEnvState(env.id);
+  if (!state) {
+    return '<div class="empty" style="padding: 20px;">状態を読み込み中...</div>';
+  }
+  const components = state.components || [];
+  if (!components.length) {
+    return '<div class="empty" style="padding: 20px;">コンポーネントがありません</div>';
+  }
+  const envId = escapeHtml(env.id);
+  const rows = components.map(c => {
+    const reason = c.reason ? ` — ${escapeHtml(c.reason)}` : '';
+    const shared = c.shared ? ' <span class="component-tag">shared</span>' : '';
+    return `
+      <div class="component-item">
+        <span class="state-dot state-${escapeHtml(c.state)}" title="${escapeHtml(c.reason || c.state)}"></span>
+        <div class="component-info">
+          <div class="component-label">${escapeHtml(c.label)}${shared}</div>
+          <div class="component-meta">${escapeHtml(c.kind)}${reason}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Switching is only meaningful with somewhere to switch to; a single
+  // scenario still gets the state list and the stop action.
+  const scenarios = (state.scenarios || []).map(s => {
+    const name = escapeHtml(s.name || s.id);
+    return `<button class="btn btn-sm" data-action="switch-scenario" data-env-id="${envId}" data-scenario-id="${escapeHtml(s.id)}" data-scenario-name="${name}">${name}</button>`;
+  }).join('');
+  const actions = scenarios
+    ? `<div class="switch-actions">${scenarios}<button class="btn btn-sm" data-action="switch-stop" data-env-id="${envId}">全停止</button></div>`
+    : '';
+  return `
+    <div class="switch-section">
+      <div class="switch-head">コンポーネント${actions}</div>
+      ${rows}
+    </div>`;
+}
+
 function isMaskedKey(key) {
   const lower = key.toLowerCase();
   return lower.includes('password') || lower.includes('secret') || lower.includes('token') || lower.includes('apikey') || lower.includes('api_key') || lower.includes('api-key');
@@ -28,6 +76,16 @@ function render() {
           </div>
         </div>
         <div class="env-body">
+    `;
+    // A v2 document defines its units as components, which this UI can show
+    // and switch but not yet edit (#150) — so it offers the switcher instead
+    // of a process editor that could not save.
+    if (isV2Document()) {
+      html += switchSectionHtml(env);
+      html += `</div></div>`;
+      return;
+    }
+    html += `
           <div style="margin-bottom: 12px;">
             <button class="btn" data-action="add-process" data-e-idx="${eIdx}">＋ プロセスを追加</button>
           </div>
