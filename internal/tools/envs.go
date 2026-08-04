@@ -8,7 +8,7 @@ import (
 )
 
 // envsTool adapts the env-launcher controller. Page is /env-launcher; API is
-// /api/envs and /api/envs/* (launch, launches, worktrees).
+// /api/envs and /api/envs/* (launch, launches, worktrees, state, switch).
 type envsTool struct{ ctl *envsctl.Controller }
 
 func newEnvs(ctl *envsctl.Controller) core.Tool { return envsTool{ctl: ctl} }
