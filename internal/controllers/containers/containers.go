@@ -38,13 +38,36 @@ type inventory interface {
 type Controller struct {
 	runtime inventory
 	admin   admin
+	control operator
 }
 
 // New returns a containers controller wired to the real CLIs. Nothing is probed
 // at construction — that only happens when a request arrives.
 func New() *Controller {
 	rt := container.New()
-	return &Controller{runtime: rt, admin: profileAdmin{rt}}
+	return &Controller{runtime: rt, admin: profileAdmin{rt}, control: containerOps{rt}}
+}
+
+// containerOps joins the two halves the operator interface needs, the same way
+// profileAdmin does: the operations live on Runtime.Control, the resolve — the
+// lookup that decides whether an operation may run at all — on Runtime itself,
+// because it needs the inventory as well.
+type containerOps struct{ rt *container.Runtime }
+
+func (o containerOps) Resolve(ctx context.Context, sourceID, id string) (container.ContainerTarget, error) {
+	return o.rt.ResolveContainer(ctx, sourceID, id)
+}
+
+func (o containerOps) Logs(ctx context.Context, src container.Source, id string, tail int) (string, error) {
+	return o.rt.Control.Logs(ctx, src, id, tail)
+}
+
+func (o containerOps) Stop(ctx context.Context, src container.Source, id string) error {
+	return o.rt.Control.Stop(ctx, src, id)
+}
+
+func (o containerOps) Restart(ctx context.Context, src container.Source, id string) error {
+	return o.rt.Control.Restart(ctx, src, id)
 }
 
 // profileAdmin joins the two halves the admin interface needs: the VM

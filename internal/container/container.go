@@ -85,6 +85,10 @@ type Runtime struct {
 	// reached solely by requests that exist to create or resize a profile;
 	// nothing devhub does on its own touches it (see profile.go).
 	Admin ProfileManager
+	// Control operates on one container that Inventory reported. Separate from
+	// both: unlike the adapters it is not confined to a declared project, and
+	// unlike Inventory it writes — see internal/container/control.go.
+	Control Operator
 }
 
 // New wires the real implementations. Nothing is probed here: construction is
@@ -98,5 +102,6 @@ func New() *Runtime {
 		Colima:     colima,
 		Inventory:  newCLIInventory(),
 		Admin:      newColimaAdmin(colima),
+		Control:    newCLIControl(),
 	}
 }

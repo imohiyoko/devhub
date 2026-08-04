@@ -109,6 +109,33 @@ tbody tr:last-child td { border-bottom: none; }
 .empty { color: var(--muted); font-size: 12px; padding: 18px 13px; text-align: center; }
 main { padding: 16px; overflow-y: auto; }
 
+.ops { white-space: nowrap; text-align: right; }
+.row-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  margin-left: 4px;
+  padding: 2px 7px;
+}
+.row-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--muted); }
+.row-btn:disabled { opacity: .5; cursor: default; }
+.logs-modal { width: min(900px, 92vw); }
+.logs-body {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 16px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 .src-btn {
   margin-left: 10px;
   background: none;
@@ -194,6 +221,14 @@ main { padding: 16px; overflow-y: auto; }
 <main id="main">
   <div class="empty">読み込み中...</div>
 </main>
+
+<div class="modal-overlay" id="logsOverlay">
+  <div class="modal logs-modal">
+    <div class="modal-header" id="logsTitle"></div>
+    <pre class="logs-body" id="logsBody"></pre>
+    <div class="modal-footer"><button class="btn" id="logsClose">閉じる</button></div>
+  </div>
+</div>
 
 <div class="modal-overlay" id="profileModalOverlay">
   <div class="modal">
@@ -318,6 +353,13 @@ function rowHtml(c) {
     <td><span class="mono">${escapeHtml(c.state)}</span><div class="sub">${escapeHtml(c.status)}</div></td>
     <td class="mono">${escapeHtml(c.ports) || '<span class="sub">—</span>'}</td>
     <td class="mono">${owner}</td>
+    <td class="ops">
+      <button class="row-btn" data-op="logs" data-src="${escapeHtml(c.source)}" data-id="${escapeHtml(c.id)}">logs</button>
+      ${c.running
+        ? `<button class="row-btn" data-op="stop" data-src="${escapeHtml(c.source)}" data-id="${escapeHtml(c.id)}">stop</button>
+           <button class="row-btn" data-op="restart" data-src="${escapeHtml(c.source)}" data-id="${escapeHtml(c.id)}">restart</button>`
+        : ''}
+    </td>
   </tr>`;
 }
 
@@ -351,7 +393,7 @@ function sourceHtml(src, rows) {
   }
   return `<section class="source">${head}
     <table>
-      <thead><tr><th>コンテナ</th><th>状態</th><th>ポート</th><th>compose</th></tr></thead>
+      <thead><tr><th>コンテナ</th><th>状態</th><th>ポート</th><th>compose</th><th></th></tr></thead>
       <tbody>${rows.map(rowHtml).join('')}</tbody>
     </table>
   </section>`;
@@ -532,6 +574,59 @@ main.addEventListener('click', e => {
   if (!btn) return;
   $('pfSubmit').dataset.confirmed = '';
   openProfileModal(btn.dataset.resize);
+});
+
+// Per-container operations. There is no dry run here, unlike a resize: a resize
+// takes down every container in a VM including ones nowhere on screen, while
+// this acts on the row that was clicked. stop still asks, because the row may
+// belong to a project the user is not working on — the panel exists to show
+// exactly those — and because nothing else on this page has consequences for
+// someone else's work.
+main.addEventListener('click', async e => {
+  const btn = e.target.closest('[data-op]');
+  if (!btn) return;
+  const { op, src, id } = btn.dataset;
+  const row = btn.closest('tr');
+  const label = row?.querySelector('.name')?.textContent || id;
+  const owner = row?.querySelector('td:nth-child(4)')?.textContent.trim() || '';
+
+  if (op === 'stop' && !confirm(`${label} を停止します。${owner ? `\n（${owner}）` : ''}`)) return;
+
+  const wasText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '...';
+  setStatus(`${label}: ${op}`);
+  try {
+    const res = await postJson(`/api/containers/${op}`, { source: src, id, ...(op === 'logs' ? { tail: 300 } : {}) });
+    if (op === 'logs') {
+      showLogs(res.container, res.logs);
+      setStatus('');
+      return;
+    }
+    // The server names what it acted on rather than echoing the request, so
+    // this is the container that really moved.
+    setStatus(`${res.container.name}: ${op} 完了`, 'ok');
+    await load();
+  } catch (err) {
+    setStatus(`エラー: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = wasText;
+  }
+});
+
+function showLogs(target, text) {
+  $('logsTitle').textContent = `${target.name}${target.project ? ` (${target.project})` : ''}`;
+  // textContent, not innerHTML: this is a container's own output, which is the
+  // least trustworthy string on the page.
+  $('logsBody').textContent = text || '（出力はありません）';
+  $('logsOverlay').classList.add('open');
+  $('logsBody').scrollTop = $('logsBody').scrollHeight;
+}
+
+$('logsClose').addEventListener('click', () => $('logsOverlay').classList.remove('open'));
+$('logsOverlay').addEventListener('click', e => {
+  if (e.target === $('logsOverlay')) $('logsOverlay').classList.remove('open');
 });
 
 $('refreshBtn').addEventListener('click', load);
