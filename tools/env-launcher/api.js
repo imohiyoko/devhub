@@ -13,6 +13,15 @@ async function fetchEnvs() {
   }
 }
 
+// Only one save may be in flight at a time. Every editor mutates envsData first
+// and persists after, and the re-render that would refresh the indices in the
+// DOM only happens once the save returns — so a second save starting inside
+// that window acts on positions the first has already shifted, and can delete
+// the wrong row. A rollback is just as bad: its snapshot predates the second
+// edit, so restoring it discards that edit silently. The window is only a local
+// POST, but the failure is invisible, so it is closed rather than raced.
+let envSaveInFlight = false;
+
 // saveEnvsData persists the whole document and reports whether it landed. The
 // caller needs that answer: this is a full-document replace, so an edit left in
 // envsData after a failed save is not discarded — it rides along with whatever
@@ -24,6 +33,11 @@ async function saveEnvsData() {
     alert('環境がまだ読み込まれていないため保存できません。ページを再読み込みしてください。');
     return false;
   }
+  if (envSaveInFlight) {
+    alert('前の保存がまだ完了していません。少し待ってからもう一度お試しください。');
+    return false;
+  }
+  envSaveInFlight = true;
   try {
     const res = await fetch('/api/envs', {
       method: 'POST',
@@ -37,6 +51,8 @@ async function saveEnvsData() {
   } catch(e) {
     alert('Error saving environments: ' + e.message);
     return false;
+  } finally {
+    envSaveInFlight = false;
   }
 }
 
