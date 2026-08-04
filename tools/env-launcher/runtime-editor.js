@@ -85,6 +85,9 @@ function runtimeSectionHtml(env, eIdx) {
 
 // --- editor ---
 
+// Escape・Tab の閉じ込め・フォーカス復帰・role/aria は shared/modal.js が持つ。
+const runtimeModal = DevhubModal.attach('runtimeModalOverlay', { labelledBy: 'runtimeModalTitle' });
+
 async function openRuntimeModal(index) {
   // Capabilities are fetched on load in parallel with everything else, so a
   // quick click can arrive first. Opening the picker with no options would let
@@ -120,11 +123,11 @@ async function openRuntimeModal(index) {
   // the option lists do not exist until syncRuntimeFields builds them, and
   // assigning to an empty <select> silently keeps the empty value.
   syncRuntimeFields(rt.profile || '', rt.engine || '');
-  document.getElementById('runtimeModalOverlay').classList.add('open');
+  runtimeModal.open();
 }
 
 function closeRuntimeModal() {
-  document.getElementById('runtimeModalOverlay').classList.remove('open');
+  runtimeModal.close();
 }
 
 // syncRuntimeFields rebuilds the profile/engine selects from the host's
