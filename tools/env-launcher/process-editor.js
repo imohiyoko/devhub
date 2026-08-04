@@ -92,55 +92,57 @@ function applyBulkEnv() {
   renderEnvVars();
 }
 
+// unitsOf returns the array this document edits: v2 environments define
+// components, v1 environments define processes. Everything below works on
+// whichever one it is, because a host_process component carries the process
+// fields at its own top level.
+function unitsOf(env) {
+  return isV2Document() ? componentsOf(env) : (Array.isArray(env && env.processes) ? env.processes : []);
+}
+
 async function openProcessModal(envIndex, procIndex = -1) {
   currentEnvIndex = envIndex;
   currentProcIndex = procIndex;
-  document.getElementById('processModalTitle').textContent = procIndex >= 0 ? 'プロセスの編集' : 'プロセスの追加';
+  const v2 = isV2Document();
+  const unit = v2 ? 'コンポーネント' : 'プロセス';
+  document.getElementById('processModalTitle').textContent = procIndex >= 0 ? `${unit}の編集` : `${unit}の追加`;
+  document.getElementById('procV2Fields').style.display = v2 ? '' : 'none';
   await fetchWorktrees();
 
   const env = envsData.environments[envIndex];
-  const procForBind = procIndex >= 0 ? (env.processes[procIndex] || {}) : {};
-  const binding = procForBind.binding || {};
+  const units = unitsOf(env);
+  const current = procIndex >= 0 ? (units[procIndex] || {}) : {};
+  const binding = current.binding || {};
   fillRepoSelect(document.getElementById('procBindRepo'), binding.repo_path || '', '(binding なし)', env.repos || []);
   fillBranchSelect(document.getElementById('procBindBranch'), binding.repo_path || '', binding.branch || '', '(branch を選択)');
-  document.getElementById('procPortStrategy').value = procForBind.port_strategy === 'offset' ? 'offset' : 'baton';
-  document.getElementById('procPortEnvVar').value = procForBind.port_env_var || '';
+  document.getElementById('procPortStrategy').value = current.port_strategy === 'offset' ? 'offset' : 'baton';
+  document.getElementById('procPortEnvVar').value = current.port_env_var || '';
 
-  // Populate depends_on options
+  // depends_on options: the siblings of the same kind of unit, minus self.
   const dependsSelect = document.getElementById('procDepends');
-  dependsSelect.innerHTML = (env.processes || [])
+  dependsSelect.innerHTML = units
     .filter((_, i) => i !== procIndex) // exclude self
     .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label || p.id)}</option>`)
     .join('');
 
-  if (procIndex >= 0) {
-    const proc = env.processes[procIndex];
-    document.getElementById('procId').value = proc.id || '';
-    document.getElementById('procLabel').value = proc.label || '';
-    document.getElementById('procCmd').value = proc.command || '';
-    document.getElementById('procCwd').value = proc.cwd || '';
-    document.getElementById('procPort').value = (proc.port !== undefined && proc.port !== null) ? proc.port : '';
-    document.getElementById('procDelay').value = typeof proc.delay_seconds !== 'undefined' ? proc.delay_seconds : 1;
-
-    Array.from(dependsSelect.options).forEach(opt => {
-      opt.selected = (proc.depends_on || []).includes(opt.value);
-    });
-
-    // env は順序保持のため {key,value} の配列で保存している。
-    tempEnvVars = (Array.isArray(proc.env) ? proc.env : []).map(v => ({
-      key: String((v && v.key) ?? ''),
-      value: String((v && v.value) ?? ''),
-    }));
-  } else {
-    document.getElementById('procId').value = '';
-    document.getElementById('procLabel').value = '';
-    document.getElementById('procCmd').value = '';
-    document.getElementById('procCwd').value = '';
-    document.getElementById('procPort').value = '';
-    document.getElementById('procDelay').value = 1;
-    Array.from(dependsSelect.options).forEach(opt => opt.selected = false);
-    tempEnvVars = [];
-  }
+  document.getElementById('procId').value = current.id || '';
+  document.getElementById('procLabel').value = current.label || '';
+  document.getElementById('procCmd').value = current.command || '';
+  document.getElementById('procCwd').value = current.cwd || '';
+  document.getElementById('procPort').value = (current.port !== undefined && current.port !== null) ? current.port : '';
+  document.getElementById('procDelay').value = typeof current.delay_seconds !== 'undefined' ? current.delay_seconds : 1;
+  Array.from(dependsSelect.options).forEach(opt => {
+    opt.selected = (current.depends_on || []).includes(opt.value);
+  });
+  // env は順序保持のため {key,value} の配列で保存している。
+  tempEnvVars = (Array.isArray(current.env) ? current.env : []).map(v => ({
+    key: String((v && v.key) ?? ''),
+    value: String((v && v.value) ?? ''),
+  }));
+  // Fills the kind/lifecycle/compose inputs and picks which field group is
+  // shown. For v1 that resolves to host_process, which is the only group v1
+  // has — and the v2 rows above stay hidden.
+  fillComponentFields(current);
 
   document.getElementById('bulkEnvArea').style.display = 'none';
   document.getElementById('bulkEnvText').value = '';
@@ -152,22 +154,11 @@ function closeProcessModal() {
   document.getElementById('processModalOverlay').classList.remove('open');
 }
 
-function saveProcess() {
-  const id = document.getElementById('procId').value.trim();
-  if (!id) {
-    alert("プロセスIDを入力してください。");
-    return;
-  }
-
-  const targetEnv = envsData.environments[currentEnvIndex];
-  if (currentProcIndex === -1 && targetEnv.processes && targetEnv.processes.some(p => p.id === id)) {
-    alert("このプロセスIDは既に環境内に存在します。");
-    return;
-  }
-
-  const dependsSelect = document.getElementById('procDepends');
-  const depends_on = Array.from(dependsSelect.selectedOptions).map(opt => opt.value);
-
+// readHostProcessFields validates and collects everything a host process needs.
+// It is the same field set for a v1 process and a v2 host_process component, so
+// both go through this one function rather than through two copies of the port,
+// binding and port-strategy rules. Returns null after alerting on bad input.
+function readHostProcessFields(id, targetEnv, depends_on) {
   // env は {key,value} の配列で保存し入力順を保持する（オブジェクトだと
   // Go の json.Marshal がキーをソートしてしまい順序が崩れる）。
   const envList = tempEnvVars
@@ -184,23 +175,23 @@ function saveProcess() {
       const a = Number(rangeMatch[1]), b = Number(rangeMatch[2]);
       if (!inRange(a) || !inRange(b)) {
         alert('ポート範囲は 1〜65535 で指定してください。');
-        return;
+        return null;
       }
       if (Math.abs(b - a) + 1 > 1000) {
         alert('ポート範囲が広すぎます（最大 1000 ポート）。');
-        return;
+        return null;
       }
       port = `${Math.min(a, b)}-${Math.max(a, b)}`;
     } else if (/^\d+$/.test(portVal)) {
       const n = Number(portVal);
       if (!inRange(n)) {
         alert('ポートは 1〜65535 で入力してください。');
-        return;
+        return null;
       }
       port = n;
     } else {
       alert('ポートは 3000 または 3000-3010 の形式で入力してください。');
-      return;
+      return null;
     }
   }
 
@@ -208,12 +199,12 @@ function saveProcess() {
   const bindBranch = document.getElementById('procBindBranch').value.trim();
   if (Boolean(bindRepo) !== Boolean(bindBranch)) {
     alert('Worktree binding は repo と branch の両方を指定してください（両方空なら binding なし）。');
-    return;
+    return null;
   }
   const envRepos = (targetEnv && targetEnv.repos) || [];
   if (envRepos.length && bindRepo && !envRepos.map(expandHome).includes(expandHome(bindRepo))) {
     alert('この binding の Repository は環境の許可スコープ外です。環境設定の「許可する Repository」に追加してください。');
-    return;
+    return null;
   }
 
   const strategy = document.getElementById('procPortStrategy').value;
@@ -221,11 +212,11 @@ function saveProcess() {
   if (strategy === 'offset') {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(portEnvVar)) {
       alert('offset 戦略には採番先の env 変数名（例: PORT）が必要です。');
-      return;
+      return null;
     }
     if (port === undefined) {
       alert('offset 戦略には base ポートが必要です。');
-      return;
+      return null;
     }
   }
 
@@ -245,24 +236,71 @@ function saveProcess() {
     proc.port_env_var = portEnvVar;
   }
 
-  if (!proc.id) { alert('IDは必須です'); return; }
+  return proc;
+}
 
-  const env = envsData.environments[currentEnvIndex];
-  if (!env.processes) env.processes = [];
-
-  if (currentProcIndex >= 0) {
-    env.processes[currentProcIndex] = proc;
-  } else {
-    env.processes.push(proc);
+// saveProcess writes back whichever unit the document defines: a v1 process or
+// a v2 component. The two never mix — a v2 document carrying a `processes` key
+// is rejected outright by validateComponents.
+async function saveProcess() {
+  const v2 = isV2Document();
+  const unit = v2 ? 'コンポーネント' : 'プロセス';
+  const id = document.getElementById('procId').value.trim();
+  if (!id) {
+    alert(`${unit}IDを入力してください。`);
+    return;
   }
 
-  closeProcessModal();
-  saveEnvsData();
+  // Snapshot the indices: the save is awaited, and the modal stays open on
+  // failure, so nothing should depend on the globals still pointing here.
+  const envIndex = currentEnvIndex;
+  const at = currentProcIndex;
+  const targetEnv = envsData.environments[envIndex];
+  // Also catches renaming a unit onto a sibling's id — a duplicate the server
+  // would reject only after the whole document had been assembled.
+  if (unitsOf(targetEnv).some((p, i) => p.id === id && i !== at)) {
+    alert(`この${unit}IDは既に環境内に存在します。`);
+    return;
+  }
+
+  const depends_on = Array.from(document.getElementById('procDepends').selectedOptions).map(opt => opt.value);
+  const kind = v2 ? document.getElementById('procKind').value : 'host_process';
+
+  let item;
+  if (kind === 'compose_service') {
+    const compose = readComposeFields();
+    if (!compose) return;
+    // A compose_service has no process view (no command, cwd or port), so none
+    // of the host fields are read — a kind switch cannot leave one behind.
+    item = {
+      id: id,
+      label: document.getElementById('procLabel').value.trim(),
+      depends_on: depends_on,
+      compose: compose,
+    };
+  } else {
+    item = readHostProcessFields(id, targetEnv, depends_on);
+    if (!item) return;
+  }
+  if (v2) {
+    item.kind = kind;
+    item.lifecycle = document.getElementById('procLifecycle').value;
+  }
+
+  const listKey = v2 ? 'components' : 'processes';
+  const saved = await saveEnvEdit(envIndex, e => {
+    if (!Array.isArray(e[listKey])) e[listKey] = [];
+    if (at >= 0) e[listKey][at] = item;
+    else e[listKey].push(item);
+  });
+  // Only close once the save landed: saveEnvEdit has already put the
+  // environment back, so closing on failure would discard the user's input too.
+  if (saved) closeProcessModal();
 }
 
 function deleteProcess(envIndex, procIndex) {
-  if (confirm('このプロセスを削除しますか？')) {
-    envsData.environments[envIndex].processes.splice(procIndex, 1);
-    saveEnvsData();
-  }
+  if (!confirm('このプロセスを削除しますか？')) return;
+  saveEnvEdit(envIndex, e => {
+    if (Array.isArray(e.processes)) e.processes.splice(procIndex, 1);
+  });
 }

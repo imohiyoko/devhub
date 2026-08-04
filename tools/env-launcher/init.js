@@ -11,6 +11,11 @@ document.getElementById('app').addEventListener('click', e => {
   else if (action === 'launch-process') launchProcess(btn.dataset.envId, btn.dataset.procId);
   else if (action === 'edit-process') openProcessModal(Number(btn.dataset.eIdx), Number(btn.dataset.pIdx));
   else if (action === 'delete-process') deleteProcess(Number(btn.dataset.eIdx), Number(btn.dataset.pIdx));
+  // v2 components reuse the process modal — a host_process component is a
+  // process plus kind/lifecycle — so the same opener serves both.
+  else if (action === 'add-component') openProcessModal(Number(btn.dataset.eIdx), -1);
+  else if (action === 'edit-component') openProcessModal(Number(btn.dataset.eIdx), Number(btn.dataset.cIdx));
+  else if (action === 'delete-component') deleteComponent(Number(btn.dataset.eIdx), Number(btn.dataset.cIdx));
   else if (action === 'switch-scenario') switchToScenario(btn.dataset.envId, btn.dataset.scenarioId, btn.dataset.scenarioName);
   else if (action === 'switch-stop') stopScenarioComponents(btn.dataset.envId);
   else if (action === 'edit-runtime') openRuntimeModal(Number(btn.dataset.eIdx));
