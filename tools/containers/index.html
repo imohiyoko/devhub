@@ -117,7 +117,7 @@ main { padding: 16px; overflow-y: auto; }
   <div class="divider"></div>
   <h1>containers</h1>
   <div class="spacer"></div>
-  <input class="search" id="search" type="text" autocomplete="off" placeholder="name / image / project">
+  <input class="search" id="search" type="text" autocomplete="off" placeholder="name / image / project / port">
   <label class="toggle"><input type="checkbox" id="showStopped" checked> 停止済みも表示</label>
   <button class="btn" id="refreshBtn">再読込</button>
   <div class="status" id="status"></div>
@@ -221,6 +221,15 @@ function sourceHtml(src, rows) {
       <span class="source-count">${rows.length}</span>
     </div>`;
 
+  // A source that turned out to be a second route to another one keeps its
+  // section — it disappearing would read as a bug — but says where its rows
+  // went instead of showing an empty list.
+  if (src.alias_of) {
+    const target = sources.find(s => s.id === src.alias_of);
+    return `<section class="source">${head}
+      <div class="source-reason">${escapeHtml(target ? target.label : src.alias_of)} と同じ engine を指しています。コンテナはそちらに表示されます。</div>
+    </section>`;
+  }
   if (!src.available) {
     return `<section class="source">${head}
       <div class="source-reason">${reasonHtml(src.reason)}</div>
