@@ -249,7 +249,18 @@ func collapseAliases(sources []Source, found [][]Container) {
 		if len(found[i]) == 0 {
 			continue
 		}
-		if owner, dup := seen[found[i][0].ID]; dup {
+		// Any overlap, not just the first row. The listings run concurrently,
+		// and `ps` prints newest first, so a container created between the two
+		// calls shifts one list's head — matching on that alone would drop the
+		// collapse and put every container on screen twice.
+		owner := -1
+		for _, c := range found[i] {
+			if o, dup := seen[c.ID]; dup {
+				owner = o
+				break
+			}
+		}
+		if owner >= 0 {
 			sources[i].AliasOf = sources[owner].ID
 			found[i] = nil
 			continue

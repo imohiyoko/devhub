@@ -344,3 +344,29 @@ func TestDistinctDaemonsAreNotCollapsed(t *testing.T) {
 		}
 	}
 }
+
+// TestCollapseSurvivesAListingThatMovedUnderIt: the two listings are
+// concurrent and `ps` prints newest first, so a container created between them
+// shifts one list's head. Matching only the first row would miss the overlap
+// and show the whole machine twice.
+func TestCollapseSurvivesAListingThatMovedUnderIt(t *testing.T) {
+	shared := []Container{{ID: "old1"}, {ID: "old2"}}
+	r := newTestRuntime(testDeps{
+		colima: &fakeColima{profiles: []ColimaProfile{{Name: "default", Status: "Running", Engine: EngineDocker}}},
+	})
+	r.Inventory = &fakeLister{bySource: map[string][]Container{
+		// The ambient listing landed a moment later and picked up a new row.
+		ProviderDocker:   append([]Container{{ID: "brandnew"}}, shared...),
+		"colima:default": shared,
+	}}
+
+	sources, all := r.Containers(context.Background())
+	for _, s := range sources {
+		if s.ID == ProviderDocker && s.AliasOf == "" {
+			t.Error("the ambient source was not collapsed; its first row differed but the rest overlap")
+		}
+	}
+	if len(all) != 2 {
+		t.Errorf("got %d containers, want 2", len(all))
+	}
+}
