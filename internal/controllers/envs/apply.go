@@ -45,10 +45,13 @@ func (c *Controller) PlanSwitch(envID string, target SwitchTarget) (SwitchPlan, 
 // claims. They ride on the plan so the confirmation screen and `devhub env
 // switch` show them before anything is started, which is the point: devhub
 // will not start or reconfigure a profile on the user's behalf.
+// The judgement itself is the container package's; what belongs here is only
+// that an environment's execution base is env.Runtime, and that a plan must not
+// hang waiting for the probe.
 func (c *Controller) runtimeWarnings(env environment) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), container.ProbeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), container.CapabilityProbeTimeout)
 	defer cancel()
-	return c.RuntimeWarnings(ctx, env)
+	return c.runtime.Warnings(ctx, env.Runtime)
 }
 
 // ApplySwitch switches envID to target and returns the plan it acted on with
@@ -109,7 +112,7 @@ func (c *Controller) applyStops(env environment, plan SwitchPlan, byID map[strin
 		var err error
 		if comp.Kind == kindComposeService {
 			if err = adapterErr; err == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), container.ComposeUpTimeout)
+				ctx, cancel := context.WithTimeout(context.Background(), container.ComposeOpTimeout)
 				err = adapter.Stop(ctx, env.Runtime, comp.Compose)
 				cancel()
 			}
@@ -170,7 +173,7 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 		switch {
 		case comp.Kind == kindComposeService:
 			if err = adapterErr; err == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), container.ComposeUpTimeout)
+				ctx, cancel := context.WithTimeout(context.Background(), container.ComposeOpTimeout)
 				err = adapter.Up(ctx, env.Runtime, comp.Compose)
 				cancel()
 			}

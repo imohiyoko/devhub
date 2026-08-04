@@ -115,7 +115,7 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 		}
 		httpx.WriteJSON(w, http.StatusOK, data)
 	case "/api/envs/runtimes":
-		ctx, cancel := context.WithTimeout(r.Context(), container.ProbeTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), container.CapabilityProbeTimeout)
 		defer cancel()
 		httpx.WriteJSON(w, http.StatusOK, runtimeProvidersJSON(c.runtime.Providers(ctx)))
 	default:

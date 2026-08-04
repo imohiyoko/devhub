@@ -22,7 +22,7 @@ func providerByID(providers []Provider, id string) Provider {
 
 func TestRuntimeProvidersReportsWhyEachIsUnusable(t *testing.T) {
 	c := newTestRuntime(testDeps{
-		compose: &fakeCompose{unavailable: errDockerMissing},
+		compose: &fakeCompose{unavailable: ErrDockerMissing},
 		colima:  &fakeColima{err: ErrColimaUnsupportedOS},
 	})
 
@@ -37,7 +37,7 @@ func TestRuntimeProvidersReportsWhyEachIsUnusable(t *testing.T) {
 	}
 
 	docker := providerByID(providers, ProviderDocker)
-	if docker.Available || docker.Reason != errDockerMissing.Error() {
+	if docker.Available || docker.Reason != ErrDockerMissing.Error() {
 		t.Errorf("docker = %+v, want unavailable with the missing-binary reason", docker)
 	}
 
