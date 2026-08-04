@@ -35,10 +35,14 @@ import (
 	"github.com/imohiyoko/devhub/internal/platform"
 )
 
-// profileOpTimeout bounds one create or resize. It is long because a first
-// start downloads a VM image and boots it, and the operation is synchronous for
-// the same reason `compose up --wait` is: the exit status is the only thing
-// that tells the caller the VM actually came up.
+// profileOpTimeout bounds one colima invocation, not one request: a resize runs
+// stop and then start, so it can take up to twice this. Per command rather than
+// per operation because the budget is about how long a single colima call may
+// hang, and a stop that is still going is not evidence the start will be.
+//
+// It is long because a first start downloads a VM image and boots it, and the
+// operation is synchronous for the same reason `compose up --wait` is: the exit
+// status is the only thing that tells the caller the VM actually came up.
 const profileOpTimeout = 10 * time.Minute
 
 // profileNameRe is the accepted profile name. It lives here because this
@@ -137,8 +141,14 @@ type colimaAdmin struct {
 	locks sync.Map // name -> *sync.Mutex
 }
 
-// lock takes the named profile's lock and returns the release. Callers validate
-// the name first, so this does not accumulate entries for junk.
+// lock takes the named profile's lock and returns the release.
+//
+// The map keeps an entry per name it has seen. Callers validate the name first,
+// so nothing that could not be a profile gets one — but a well-formed name that
+// turns out not to exist still does, because the lock has to be held across the
+// lookup that discovers that. Moving the check earlier would close the window
+// the lock exists for. Entries are a few bytes each behind the API token, which
+// is a better trade than the race.
 func (a *colimaAdmin) lock(name string) func() {
 	v, _ := a.locks.LoadOrStore(name, &sync.Mutex{})
 	mu := v.(*sync.Mutex)
@@ -223,8 +233,18 @@ func (a *colimaAdmin) checkResize(ctx context.Context, spec ProfileSpec) (Colima
 	if !found {
 		return ColimaProfile{}, ErrProfileMissing
 	}
-	if spec.DiskGiB > 0 && current.DiskBytes > 0 && int64(spec.DiskGiB)*gib < current.DiskBytes {
-		return current, fmt.Errorf("%w（現在 %d GiB）", ErrDiskShrink, current.DiskBytes/gib)
+	if spec.DiskGiB > 0 {
+		// Refused when the current size is unknown, the same way the engine is
+		// below. Colima does report a stopped profile's disk today, so this is
+		// a narrow case — but it is the wrong one to leave open by default:
+		// among everything refused here, only a disk shrink cannot be undone by
+		// starting the profile again, because it recreates the VM.
+		if current.DiskBytes == 0 {
+			return current, fmt.Errorf("%w（現在のディスクサイズを判定できません）", ErrDiskShrink)
+		}
+		if int64(spec.DiskGiB)*gib < current.DiskBytes {
+			return current, fmt.Errorf("%w（現在 %d GiB）", ErrDiskShrink, current.DiskBytes/gib)
+		}
 	}
 	// The panel never asks for this — its request body carries an engine only
 	// on a create — but the endpoint is reachable without the panel, and the
@@ -246,6 +266,26 @@ func (a *colimaAdmin) checkResize(ctx context.Context, spec ProfileSpec) (Colima
 
 const gib = 1 << 30
 
+// Upper bounds on a requested size. These are not colima's limits — devhub does
+// not know what the host has — and they are not trying to be: they are the
+// values no machine could satisfy, and what matters is where the refusal lands.
+//
+// A resize that colima rejects has already had its stop run, so the VM is down
+// by the time the answer arrives. A number that was never going to work must
+// therefore be turned away before anything moves. This does not make every
+// colima refusal land early — asking a 16 GiB Mac for 64 GiB still fails at
+// colima — which is why Resize's error says how to bring the VM back. It closes
+// the case where devhub could have known without asking.
+//
+// maxDiskGiB also keeps DiskGiB*gib inside int64: past roughly 8.6e9 the
+// product wraps negative and the shrink check refuses for a reason that is not
+// the true one.
+const (
+	maxCPUs      = 1024
+	maxMemoryGiB = 4096
+	maxDiskGiB   = 65536
+)
+
 // check validates what devhub can validate before spawning anything: the name
 // (which becomes an argv element) and the engine (which must be one devhub has
 // an adapter for, so a profile is never created that devhub then cannot drive).
@@ -263,6 +303,10 @@ func (a *colimaAdmin) check(spec ProfileSpec) error {
 	}
 	if spec.CPUs < 0 || spec.MemoryGiB < 0 || spec.DiskGiB < 0 {
 		return errors.New("CPU・メモリ・ディスクは 0 以上で指定してください")
+	}
+	if spec.CPUs > maxCPUs || spec.MemoryGiB > maxMemoryGiB || spec.DiskGiB > maxDiskGiB {
+		return fmt.Errorf("サイズが大きすぎます（CPU %d 以下、メモリ %d GiB 以下、ディスク %d GiB 以下）",
+			maxCPUs, maxMemoryGiB, maxDiskGiB)
 	}
 	if _, err := a.lookPath("colima"); err != nil {
 		return ErrColimaMissing
