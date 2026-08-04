@@ -1,4 +1,7 @@
 // --- Env Modal ---
+// Escape・Tab の閉じ込め・フォーカス復帰・role/aria は shared/modal.js が持つ。
+const envModal = DevhubModal.attach('envModalOverlay', { labelledBy: 'envModalTitle' });
+
 const envWtEnabled = document.getElementById('envWtEnabled');
 envWtEnabled.addEventListener('change', () => {
   document.getElementById('envWtFields').style.display = envWtEnabled.checked ? 'block' : 'none';
@@ -44,11 +47,11 @@ async function openEnvModal(index = -1) {
   fillRepoSelect(document.getElementById('envWtRepo'), wt.repo_path || '', '(repo を選択)', allowed);
   fillBranchSelect(document.getElementById('envWtBranch'), wt.repo_path || '', wt.branch || '', '(branch を選択)');
   envWtEnabled.dispatchEvent(new Event('change'));
-  document.getElementById('envModalOverlay').classList.add('open');
+  envModal.open();
 }
 
 function closeEnvModal() {
-  document.getElementById('envModalOverlay').classList.remove('open');
+  envModal.close();
 }
 
 async function saveEnv() {
