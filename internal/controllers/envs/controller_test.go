@@ -143,13 +143,21 @@ type spawnLog struct {
 	mu   sync.Mutex
 	cmds []*exec.Cmd
 	ch   chan *exec.Cmd
+	// failOn makes record report a failure for commands whose argv contains
+	// this substring — how a test simulates a terminal that will not start.
+	// Set it before triggering the launch.
+	failOn string
 }
 
-func (l *spawnLog) record(cmd *exec.Cmd) {
+func (l *spawnLog) record(cmd *exec.Cmd) error {
 	l.mu.Lock()
 	l.cmds = append(l.cmds, cmd)
 	l.mu.Unlock()
 	l.ch <- cmd
+	if l.failOn != "" && strings.Contains(spawnedCommandLine(cmd), l.failOn) {
+		return errors.New("terminal did not start")
+	}
+	return nil
 }
 
 func (l *spawnLog) all() []*exec.Cmd {
@@ -382,6 +390,60 @@ func TestStartEnvironmentV2HostComponents(t *testing.T) {
 }
 
 // --- StopEnvironment / EnvStatuses (the CLI read/stop surface) ---
+
+// TestStartEnvironmentReportsSpawnFailure pins the behavior change of plan
+// §6.7: a terminal that will not start used to be discarded, and is now
+// reported. The rest of the environment still launches — a partial launch is
+// reported, not truncated.
+func TestStartEnvironmentReportsSpawnFailure(t *testing.T) {
+	store := &fakeStore{envs: testEnvsDoc()}
+	c, spawned := newTestController(store, testDeps{})
+	spawned.failOn = "run-db"
+
+	_, err := c.StartEnvironment("dev")
+	if err == nil {
+		t.Fatal("a terminal that did not start must be reported")
+	}
+	if !strings.Contains(err.Error(), "'db'") {
+		t.Errorf("err = %v, want the failing process named", err)
+	}
+	if strings.Contains(err.Error(), "'api'") {
+		t.Errorf("err = %v, want only the failing process named", err)
+	}
+	// The dependent process was still attempted: one failure does not abort
+	// the launch. Checking which commands ran (not just how many) is what
+	// separates "db failed, api still launched" from "db was retried twice".
+	cmds := spawned.all()
+	if len(cmds) != 2 {
+		t.Fatalf("spawned %d commands, want both attempted", len(cmds))
+	}
+	launched := make([]string, 0, len(cmds))
+	for _, cmd := range cmds {
+		launched = append(launched, spawnedCommandLine(cmd))
+	}
+	if !strings.Contains(launched[0], "run-db") || !strings.Contains(launched[1], "run-api") {
+		t.Errorf("launched %v, want db attempted then api launched", launched)
+	}
+	// The launch record is written as before, so the UI still lists the launch.
+	if len(store.launches) != 1 {
+		t.Errorf("launches = %d, want the record kept", len(store.launches))
+	}
+}
+
+// TestLaunchEnvironmentAsyncCannotReport documents the limit of §6.7: the HTTP
+// launch path answers before the terminals open, so its failures still go
+// nowhere. Only the inline paths report.
+func TestLaunchEnvironmentAsyncCannotReport(t *testing.T) {
+	c, spawned := newTestController(&fakeStore{envs: testEnvsDoc()}, testDeps{})
+	spawned.failOn = "run-db"
+
+	if err := c.launchEnvironment("dev"); err != nil {
+		t.Errorf("the async path cannot report spawn failures, got %v", err)
+	}
+	for range 2 { // drain the goroutine's spawns before the test ends
+		<-spawned.ch
+	}
+}
 
 func TestStopEnvironmentKillsAvoidsAndReportsErrors(t *testing.T) {
 	store := &fakeStore{
@@ -868,6 +930,15 @@ func TestHandlePostLaunchSingleProcess(t *testing.T) {
 	err := c.HandlePost(httptest.NewRecorder(), req, map[string]any{"env_id": "dev", "process_id": "nope"})
 	if err == nil || !strings.Contains(err.Error(), "Process 'nope' not found") {
 		t.Errorf("unknown process err = %v", err)
+	}
+
+	// This path runs inline, so a terminal that will not start is reported to
+	// the caller instead of vanishing (plan §6.7).
+	c, spawned = newTestController(&fakeStore{envs: testEnvsDoc()}, testDeps{ports: ports})
+	spawned.failOn = "run-api"
+	err = c.HandlePost(httptest.NewRecorder(), req, map[string]any{"env_id": "dev", "process_id": "api"})
+	if err == nil || !strings.Contains(err.Error(), "'api'") {
+		t.Errorf("spawn failure err = %v, want the process named", err)
 	}
 }
 
