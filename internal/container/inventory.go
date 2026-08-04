@@ -255,6 +255,9 @@ func collapseAliases(sources []Source, found [][]Container) {
 		// collapse and put every container on screen twice.
 		owner := -1
 		for _, c := range found[i] {
+			if c.ID == "" {
+				continue // parsePS rejects these; never match on one anyway
+			}
 			if o, dup := seen[c.ID]; dup {
 				owner = o
 				break
@@ -266,7 +269,9 @@ func collapseAliases(sources []Source, found [][]Container) {
 			continue
 		}
 		for _, c := range found[i] {
-			seen[c.ID] = i
+			if c.ID != "" {
+				seen[c.ID] = i
+			}
 		}
 	}
 }
@@ -309,6 +314,12 @@ func colimaSource(p Profile) Source {
 		CPUs: p.CPUs, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes,
 	}
 	switch {
+	// Checked before the status: if devhub knows it cannot drive this engine,
+	// "start the VM" is wrong advice, because starting it changes nothing. A
+	// stopped profile usually reports no engine at all, so this mostly matters
+	// for a broken one — and for whatever colima reports next.
+	case p.Engine != "" && !p.Supported:
+		src.Reason = p.Reason
 	case !strings.EqualFold(p.Status, "Running"):
 		src.Reason = fmt.Sprintf("profile '%s' は %s です。`colima start -p %s` で起動してください。", p.Name, p.Status, p.Name)
 	case !p.Supported:
@@ -368,11 +379,18 @@ func parsePS(out, source string) ([]Container, error) {
 
 	out2 := make([]Container, 0, len(entries))
 	for _, e := range entries {
-		// The loudness rule from psEntry's comment. Valid JSON whose fields are
-		// all empty means the keys are not the ones assumed here, and reporting
-		// an empty list would read as "this host has no containers".
-		if e.ID == "" && e.Names == "" {
-			return nil, fmt.Errorf("ps の出力に想定した項目がありません（ID/Names）。docker/nerdctl の出力形式が変わった可能性があります")
+		// The loudness rule from psEntry's comment, keyed on the one field that
+		// is always there. Names is genuinely optional — real output has rows
+		// without it — but every container has an ID, so an empty one means the
+		// keys are not the ones assumed here.
+		//
+		// Requiring it matters beyond the error message: collapseAliases treats
+		// equal IDs as the same daemon, so a schema change that renamed only ID
+		// would give every row the same empty one, and every source after the
+		// first would be folded away as a duplicate. Rows would vanish silently,
+		// which is worse than the empty list this rule was written to prevent.
+		if e.ID == "" {
+			return nil, fmt.Errorf("ps の出力に想定した項目がありません（ID）。docker/nerdctl の出力形式が変わった可能性があります")
 		}
 		labels := parseLabels(e.Labels)
 		out2 = append(out2, Container{
