@@ -165,6 +165,30 @@ func TestDecodeV2Environment(t *testing.T) {
 	}
 }
 
+func TestDecodeRuntime(t *testing.T) {
+	// No runtime block: the environment keeps using whatever Docker context
+	// the user's shell resolves to, which is what devhub did before runtimes
+	// existed.
+	if got := decodeRuntime(map[string]any{}); got != (runtimeSpec{Provider: providerDocker}) {
+		t.Errorf("absent runtime = %+v, want the docker provider", got)
+	}
+
+	full := decodeRuntime(map[string]any{"runtime": map[string]any{
+		"provider": "colima", "profile": "development", "engine": "containerd"}})
+	if full != (runtimeSpec{Provider: providerColima, Profile: "development", Engine: engineContainerd}) {
+		t.Errorf("runtime = %+v", full)
+	}
+
+	// A v1 document has no runtime block, and one pasted into a hand-edited v1
+	// document must not be reported as an execution base the v1 path honours.
+	v1 := decodeEnvironment(map[string]any{
+		"id": "legacy", "runtime": map[string]any{"provider": "colima"},
+	}, 1)
+	if v1.Runtime != (runtimeSpec{Provider: providerDocker}) {
+		t.Errorf("v1 runtime = %+v, want the default", v1.Runtime)
+	}
+}
+
 func TestDocVersion(t *testing.T) {
 	cases := []struct {
 		doc  map[string]any

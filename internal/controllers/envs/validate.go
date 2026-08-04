@@ -164,10 +164,9 @@ func validateComponents(env map[string]any, eid string, repoScope map[string]boo
 	if _, present := env["processes"]; present {
 		return fmt.Errorf("Environment '%s' must not have processes in a version 2 config (use components)", eid)
 	}
-	if rt, present := env["runtime"]; present && rt != nil {
-		if _, ok := rt.(map[string]any); !ok {
-			return fmt.Errorf("Environment '%s' runtime must be an object", eid)
-		}
+	provider, err := validateRuntime(env, eid)
+	if err != nil {
+		return err
 	}
 	if raw, present := env["components"]; present && raw != nil {
 		if _, ok := raw.([]any); !ok {
@@ -203,6 +202,12 @@ func validateComponents(env map[string]any, eid string, repoScope map[string]boo
 		case kindComposeService:
 			if err := validateCompose(cm, cid, eid); err != nil {
 				return err
+			}
+			// A host-only runtime has nothing to run containers with, so
+			// saying both is a contradiction rather than a preference devhub
+			// could quietly resolve.
+			if provider == providerHost {
+				return fmt.Errorf("Component '%s' is a compose_service but environment '%s' runtime provider is 'host'", cid, eid)
 			}
 		default:
 			return fmt.Errorf("Component '%s' kind must be 'host_process' or 'compose_service' in environment '%s'", cid, eid)
@@ -253,6 +258,58 @@ func validateCompose(cm map[string]any, cid, eid string) error {
 		return fmt.Errorf("Component '%s' compose files must be an array of strings in environment '%s'", cid, eid)
 	}
 	return nil
+}
+
+// validateRuntime checks the optional runtime block and returns the provider
+// the environment declares (providerDocker when it says nothing). Fields that
+// do not apply to the chosen provider are rejected rather than ignored: a
+// profile silently dropped because the provider is not colima would leave the
+// user believing devhub talks to a VM it never touches.
+func validateRuntime(env map[string]any, eid string) (string, error) {
+	raw, present := env["runtime"]
+	if !present || raw == nil {
+		return providerDocker, nil
+	}
+	rt, ok := raw.(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("Environment '%s' runtime must be an object", eid)
+	}
+	provider := providerDocker
+	if v, present := rt["provider"]; present && v != nil {
+		s, _ := v.(string)
+		switch s {
+		case providerHost, providerDocker, providerColima:
+			provider = s
+		default:
+			return "", fmt.Errorf("Environment '%s' runtime provider must be 'host', 'docker' or 'colima'", eid)
+		}
+	}
+
+	if v, present := rt["profile"]; present && v != nil {
+		s, _ := v.(string)
+		if provider != providerColima {
+			return "", fmt.Errorf("Environment '%s' runtime profile is only valid for the colima provider", eid)
+		}
+		if !envIDRe.MatchString(s) {
+			return "", fmt.Errorf("Environment '%s' runtime profile must be alphanumeric/_/-", eid)
+		}
+	}
+
+	if v, present := rt["engine"]; present && v != nil {
+		s, _ := v.(string)
+		if provider == providerHost {
+			return "", fmt.Errorf("Environment '%s' runtime engine is only valid for a container provider", eid)
+		}
+		if s != engineDocker && s != engineContainerd {
+			return "", fmt.Errorf("Environment '%s' runtime engine must be 'docker' or 'containerd'", eid)
+		}
+		// Only a Colima profile can run something other than Docker: the
+		// docker provider is the local Docker context by definition.
+		if provider != providerColima && s != engineDocker {
+			return "", fmt.Errorf("Environment '%s' runtime engine '%s' needs the colima provider", eid, s)
+		}
+	}
+	return provider, nil
 }
 
 // validateComponentDeps rejects unknown/circular dependencies between

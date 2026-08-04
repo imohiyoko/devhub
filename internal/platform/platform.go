@@ -32,6 +32,9 @@ func SystemName() string {
 // IsWindows reports whether the current OS is Windows.
 func IsWindows() bool { return runtime.GOOS == "windows" }
 
+// IsDarwin reports whether the current OS is macOS.
+func IsDarwin() bool { return runtime.GOOS == "darwin" }
+
 // Home returns the user's home directory.
 func Home() string {
 	if h, err := os.UserHomeDir(); err == nil {

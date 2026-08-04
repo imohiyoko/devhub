@@ -66,9 +66,11 @@ type Controller struct {
 	ports     portsService
 	workspace workspaceService
 
-	// compose reads and operates on compose_service components. Per-instance
-	// like the seams below so tests answer without Docker installed.
+	// compose reads and operates on compose_service components; colima reports
+	// the profiles this host offers. Per-instance like the seams below so
+	// tests answer without Docker or Colima installed.
 	compose composeAdapter
+	colima  colimaProvider
 
 	// spawn starts a prepared command and reports whether it started; settle is
 	// the pause after baton kills before processes start. Both are per-instance
@@ -84,6 +86,7 @@ func New(store launchStore, git gitService, ports portsService, workspace worksp
 	return &Controller{
 		store: store, git: git, ports: ports, workspace: workspace,
 		compose: newDockerCompose(),
+		colima:  newColimaCLI(),
 		spawn:   func(cmd *exec.Cmd) error { return cmd.Start() },
 		settle:  500 * time.Millisecond,
 	}
@@ -112,6 +115,10 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, data)
+	case "/api/envs/runtimes":
+		ctx, cancel := context.WithTimeout(r.Context(), colimaProbeTimeout)
+		defer cancel()
+		httpx.WriteJSON(w, http.StatusOK, runtimeProvidersJSON(c.RuntimeProviders(ctx)))
 	default:
 		return httpx.Errorf(http.StatusNotFound, "not found")
 	}
@@ -248,6 +255,14 @@ func (c *Controller) environmentStates() (map[string]any, error) {
 		}
 		envs = append(envs, map[string]any{
 			"id": env.ID, "name": env.Name, "components": components, "scenarios": scenarios,
+			// The declared execution base, so the environment card can show it
+			// next to what /api/envs/runtimes says this host can actually
+			// offer (plan §10).
+			"runtime": map[string]any{
+				"provider": env.Runtime.Provider,
+				"profile":  env.Runtime.Profile,
+				"engine":   env.Runtime.Engine,
+			},
 		})
 	}
 	return map[string]any{"environments": envs}, nil
