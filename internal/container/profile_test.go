@@ -295,6 +295,63 @@ func (s *startRecorder) started() int {
 	return s.starts
 }
 
+// TestResizeRefusesADiskChangeItCannotJudge. Colima does report a stopped
+// profile's disk, so this is narrow — but among everything refused here only a
+// shrink is unrecoverable, and a guard that opens when the current value is
+// missing is open in the wrong direction. The engine check already refuses on
+// "cannot tell"; this matches it.
+func TestResizeRefusesADiskChangeItCannotJudge(t *testing.T) {
+	runner := &fakeRunner{}
+	lister := &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Running"}}} // DiskBytes unset
+
+	err := testAdmin(runner, lister).Resize(context.Background(), ProfileSpec{Name: "dev", DiskGiB: 400})
+	if !errors.Is(err, ErrDiskShrink) {
+		t.Fatalf("err = %v, want ErrDiskShrink", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("ran %v; the VM was already down by the time this was known", runner.calls)
+	}
+	// Sizes that are not the disk are unaffected — an unknown disk is only a
+	// reason to refuse a disk change.
+	if err := testAdmin(&fakeRunner{}, lister).Resize(
+		context.Background(), ProfileSpec{Name: "dev", CPUs: 2}); err != nil {
+		t.Errorf("CPU-only resize refused: %v", err)
+	}
+}
+
+// TestSizesTooLargeAreRefusedBeforeStopping. A resize colima rejects has already
+// had its stop run, so a number that could never have worked has to be turned
+// away first. This does not catch every rejection colima would make — devhub
+// does not know the host — only the ones it could know without asking.
+func TestSizesTooLargeAreRefusedBeforeStopping(t *testing.T) {
+	for _, spec := range []ProfileSpec{
+		{Name: "dev", CPUs: 100000000},
+		{Name: "dev", MemoryGiB: 1 << 40},
+		{Name: "dev", DiskGiB: 1 << 40},
+		// Past ~8.6e9 GiB the byte count overflows int64 and goes negative, so
+		// the shrink check would refuse it for a reason that is not the truth.
+		{Name: "dev", DiskGiB: 9_000_000_000},
+	} {
+		runner := &fakeRunner{}
+		lister := &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Running", DiskBytes: 100 * gib}}}
+
+		err := testAdmin(runner, lister).Resize(context.Background(), spec)
+		if err == nil {
+			t.Errorf("%+v: accepted", spec)
+		}
+		if errors.Is(err, ErrDiskShrink) {
+			t.Errorf("%+v: refused as a shrink (%v), which is not why", spec, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Errorf("%+v: ran %v before refusing", spec, runner.calls)
+		}
+		// Create has nothing to stop, but the same numbers are still nonsense.
+		if err := testAdmin(&fakeRunner{}, noProfiles()).Create(context.Background(), spec); err == nil {
+			t.Errorf("%+v: create accepted", spec)
+		}
+	}
+}
+
 func TestResizeRefusesAMissingProfile(t *testing.T) {
 	runner := &fakeRunner{}
 	err := testAdmin(runner, noProfiles()).Resize(context.Background(), ProfileSpec{Name: "ghost", CPUs: 4})

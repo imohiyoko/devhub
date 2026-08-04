@@ -295,8 +295,9 @@ function sourceMeta(src) {
   const bits = [];
   if (src.engine) bits.push(src.engine);
   if (src.context) bits.push(`context: ${src.context}`);
-  // Reported, never set: colima applies these only at `colima start`, so
-  // changing one means restarting the VM — and shrinking the disk recreates it.
+  // Read from colima, not changed by anything on this path: sizes apply only at
+  // `colima start`, so changing one stops and restarts the VM. That is what the
+  // resize button asks for explicitly, and why rendering never does it.
   if (src.cpus) bits.push(`${src.cpus} CPU`);
   if (src.memory_bytes) bits.push(`mem ${gib(src.memory_bytes)}`);
   if (src.disk_bytes) bits.push(`disk ${gib(src.disk_bytes)}`);
@@ -378,6 +379,7 @@ function render() {
 // か」をサーバに聞いてから確認する — 落ちるコンテナは、いま見ている環境とは無関
 // 係の profile を共有した別環境のものかもしれない。
 let resizeTarget = '';   // '' なら作成、profile 名ならサイズ変更
+let inFlight = false;    // VM を動かしている最中。閉じても止まらないので閉じさせない
 
 function openProfileModal(profile) {
   resizeTarget = profile || '';
@@ -387,8 +389,22 @@ function openProfileModal(profile) {
   $('pfSubmit').textContent = profile ? '確認' : '作成';
   $('pfName').value = profile || '';
   $('pfName').disabled = !!profile;
-  $('pfEngine').value = profile ? (src?.engine === 'containerd' ? 'containerd' : '') : '';
-  $('pfEngine').disabled = !!profile;   // engine は VM の作り直しになるので変えない
+  // engine は VM の作り直しになるので resize では変えない。停止中の profile は
+  // runtime を報告しないので、素の select だと containerd の VM が
+  // 「docker（既定）」と表示される — 破壊的操作の直前に出す画面で、それは言って
+  // いいことではない。分かるものはそのまま、分からないものは分からないと出す。
+  const eng = $('pfEngine');
+  eng.querySelectorAll('option[data-transient]').forEach(o => o.remove());
+  if (profile) {
+    const o = document.createElement('option');
+    o.dataset.transient = '1';
+    o.textContent = src?.engine || '不明（停止中の profile では colima が報告しません）';
+    eng.appendChild(o);
+    eng.selectedIndex = eng.options.length - 1;
+  } else {
+    eng.value = '';
+  }
+  eng.disabled = !!profile;
   $('pfCpus').value = src?.cpus || '';
   $('pfMemory').value = src?.memory_bytes ? Math.round(src.memory_bytes / 1073741824) : '';
   $('pfDisk').value = src?.disk_bytes ? Math.round(src.disk_bytes / 1073741824) : '';
@@ -401,6 +417,7 @@ function openProfileModal(profile) {
 }
 
 function closeProfileModal() {
+  if (inFlight) return;
   $('profileModalOverlay').classList.remove('open');
   resizeTarget = '';
 }
@@ -433,6 +450,11 @@ async function submitProfile() {
   const confirmed = btn.dataset.confirmed === '1';
 
   btn.disabled = true;
+  // Closing the modal would not stop anything — the operation deliberately
+  // outlives the request — so offering the exit during it would promise a
+  // cancellation that does not exist.
+  if (confirmed || !resizeTarget) inFlight = true;
+  $('pfCancel').disabled = inFlight;
   btn.textContent = resizeTarget ? (confirmed ? '再起動中...' : '確認中...') : '作成中...';
   setStatus(resizeTarget ? 'profile を操作中...' : 'profile を作成中...');
   try {
@@ -445,6 +467,7 @@ async function submitProfile() {
       setStatus('確認待ち');
       return;
     }
+    inFlight = false;   // the operation is over; the modal may close again
     closeProfileModal();
     setStatus('完了', 'ok');
     await load();
@@ -456,7 +479,9 @@ async function submitProfile() {
     $('profileWarn').innerHTML = `<div class="warn">${escapeHtml(e.message)}</div>`;
     setStatus(`エラー: ${e.message}`, 'error');
   } finally {
+    inFlight = false;
     btn.disabled = false;
+    $('pfCancel').disabled = false;
     if (btn.dataset.confirmed !== '1') btn.textContent = resizeTarget ? '確認' : '作成';
   }
 }

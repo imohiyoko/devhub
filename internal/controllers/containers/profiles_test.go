@@ -102,6 +102,9 @@ func TestBadRequestsNeverReachTheAdmin(t *testing.T) {
 		{"flag-like name", "/api/containers/profiles", map[string]any{"name": "--rm"}},
 		{"space in name", "/api/containers/profiles", map[string]any{"name": "my profile"}},
 		{"path traversal in the URL", "/api/containers/profiles/..%2f..%2fetc/resize", map[string]any{"confirm": true}},
+		// The route is a prefix, so this arrives here too — and without a
+		// separator check it reads as a resize of "dev".
+		{"no separator after the prefix", "/api/containers/profilesdev/resize", map[string]any{"confirm": true}},
 		// A fractional CPU count is refused rather than truncated: turning a
 		// request for 1.5 into 1 answers a question nobody asked.
 		{"fractional cpus", "/api/containers/profiles", map[string]any{"name": "ok", "cpus": 1.5}},

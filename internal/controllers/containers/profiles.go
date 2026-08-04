@@ -39,7 +39,15 @@ type admin interface {
 // shape.
 func (c *Controller) HandleProfilePost(w http.ResponseWriter, r *http.Request, data map[string]any) error {
 	const prefix = "/api/containers/profiles"
-	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, prefix), "/")
+	rest := strings.TrimPrefix(r.URL.Path, prefix)
+	// The route is registered as a prefix, so /api/containers/profilesdev also
+	// lands here and would otherwise resize "dev". Only a real separator
+	// continues this route; anything else is a different URL that happens to
+	// begin with the same letters.
+	if rest != "" && !strings.HasPrefix(rest, "/") {
+		return httpx.Errorf(http.StatusNotFound, "not found")
+	}
+	rest = strings.Trim(rest, "/")
 
 	switch {
 	case rest == "":
