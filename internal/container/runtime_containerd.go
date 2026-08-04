@@ -61,10 +61,10 @@ func (n *nerdctlCompose) ServiceStates(ctx context.Context, rt Spec, spec Compos
 // Up starts the component's services. Unlike the Docker adapter this cannot
 // wait for them to become healthy: `nerdctl compose up` has no --wait, so a
 // successful return means "the containers were created", not "the services are
-// ready". Dependent components may therefore start earlier than they would
-// under Docker — planSwitch's ordering still holds, but the readiness
-// guarantee behind it does not. The user is told so by Warnings rather
-// than left to discover it from a flaky start.
+// ready". A caller that starts components in dependency order still gets that
+// order, but not the readiness guarantee behind it: a dependent may start
+// before what it depends on is actually serving. The user is told so by
+// Warnings rather than left to discover it from a flaky start.
 func (n *nerdctlCompose) Up(ctx context.Context, rt Spec, spec ComposeSpec) error {
 	_, err := n.run(ctx, rt, spec, append([]string{"up", "--detach"}, spec.Services...)...)
 	return err

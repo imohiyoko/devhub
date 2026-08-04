@@ -36,8 +36,8 @@ var ErrDockerMissing = errors.New("docker コマンドが見つかりません")
 
 // Adapter is what devhub does with a Compose implementation: read the
 // state of a project's services, and start or stop the services a component
-// declares. One implementation per container engine; the Controller holds them
-// as interfaces so tests answer without Docker or Colima.
+// declares. One implementation per container engine; Runtime holds them as
+// interfaces so tests answer without Docker or Colima.
 type Adapter interface {
 	// Available reports why the adapter cannot run at all, or nil. It is the
 	// "is this engine usable" half of the runtimes API, so it checks what
