@@ -62,6 +62,54 @@ function switchSectionHtml(env, eIdx) {
     </div>`;
 }
 
+// scenarioSectionHtml lists the scenarios a v2 environment can switch between
+// and which components each one turns on. Shared components are left out of the
+// member list: they belong to every scenario implicitly, so naming them would
+// make the scenarios look different from each other in a way they are not.
+function scenarioSectionHtml(env, eIdx) {
+  const scenarios = scenariosOf(env);
+  const components = componentsOf(env);
+  const labelById = {};
+  components.forEach(c => { labelById[c.id] = c.label || c.id; });
+
+  const rows = scenarios.length
+    ? scenarios.map((s, sIdx) => {
+        const members = (s.components || []).map(id => labelById[id] || id);
+        // An empty scenario is legal and meaningful: switching to it stops the
+        // other scenarios' components and leaves only the shared ones running.
+        const memberText = members.length ? members.join(', ') : 'shared のみ';
+        return `
+      <div class="component-item">
+        <div class="component-info">
+          <div class="component-label">${escapeHtml(s.name || s.id)}</div>
+          <div class="component-meta">${escapeHtml(memberText)}</div>
+        </div>
+        <div class="process-actions">
+          <button class="btn" data-action="edit-scenario" data-e-idx="${eIdx}" data-s-idx="${sIdx}">編集</button>
+          <button class="btn" data-action="delete-scenario" data-e-idx="${eIdx}" data-s-idx="${sIdx}" style="color: var(--red);">削除</button>
+        </div>
+      </div>`;
+      }).join('')
+    : '<div class="empty" style="padding: 20px;">シナリオがありません</div>';
+
+  // A scenario-lifecycle component in no scenario is never started by any
+  // switch. That is easy to produce by adding a component and stopping there,
+  // and invisible everywhere else, so the card says it outright.
+  const assigned = new Set();
+  scenarios.forEach(s => (s.components || []).forEach(id => assigned.add(id)));
+  const orphans = components.filter(c => c.lifecycle !== 'shared' && !assigned.has(c.id)).map(c => c.label || c.id);
+  const orphanNote = orphans.length
+    ? `<div class="runtime-note">${escapeHtml(orphans.join(', '))} はどのシナリオにも属していないため、切替では起動されません。</div>`
+    : '';
+
+  return `
+    <div class="switch-section">
+      <div class="switch-head">シナリオ<div class="switch-actions"><button class="btn btn-sm" data-action="add-scenario" data-e-idx="${eIdx}">＋ シナリオを追加</button></div></div>
+      ${rows}
+      ${orphanNote}
+    </div>`;
+}
+
 function isMaskedKey(key) {
   const lower = key.toLowerCase();
   return lower.includes('password') || lower.includes('secret') || lower.includes('token') || lower.includes('apikey') || lower.includes('api_key') || lower.includes('api-key');
@@ -98,6 +146,7 @@ function render() {
     if (isV2Document()) {
       html += runtimeSectionHtml(env, eIdx);
       html += switchSectionHtml(env, eIdx);
+      html += scenarioSectionHtml(env, eIdx);
       html += `</div></div>`;
       return;
     }
