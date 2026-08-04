@@ -1,17 +1,6 @@
 package container
 
 // The self-bounding invariant, pinned across all three seam implementations.
-//
-// Adapter and ProfileLister both document that an implementation applies its
-// own deadline, because Providers and Warnings apply none: there is no outer
-// net any more. Prose alone would not hold that — deleting a WithTimeout from
-// an adapter changes no argv and breaks no other assertion, so nothing would
-// fail. This does.
-//
-// It also fixes the docker/nerdctl parity. The two constants live in
-// runtime_docker.go and are used from runtime_containerd.go, a cross-file
-// coupling with nothing else to show for it; here a `stop` that quietly picked
-// up the 10s read budget, or a `ps` that picked up the 5m one, is a failure.
 
 import (
 	"context"
@@ -19,6 +8,19 @@ import (
 	"time"
 )
 
+// TestSeamsBoundTheirOwnCalls checks that every method reaching a CLI applies
+// its own deadline, and the right one.
+//
+// Adapter and ProfileLister both document that an implementation bounds
+// itself, because Providers and Warnings bound nothing: there is no outer net
+// any more. Prose alone would not hold that — deleting a WithTimeout from an
+// adapter changes no argv and breaks no other assertion, so nothing would
+// fail. This does.
+//
+// It also pins the docker/nerdctl parity. The two compose constants live in
+// runtime_docker.go and are used from runtime_containerd.go, a cross-file
+// coupling with nothing else to show for it; here a `stop` that quietly picked
+// up the 10s read budget, or a `ps` that picked up the 5m one, is a failure.
 func TestSeamsBoundTheirOwnCalls(t *testing.T) {
 	spec := ComposeSpec{Project: "platform-local", Services: []string{"mysql"}}
 
