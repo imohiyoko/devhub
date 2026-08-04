@@ -1,6 +1,7 @@
 package tools
 
 import (
+	containersctl "github.com/imohiyoko/devhub/internal/controllers/containers"
 	databasectl "github.com/imohiyoko/devhub/internal/controllers/database"
 	envsctl "github.com/imohiyoko/devhub/internal/controllers/envs"
 	gitctl "github.com/imohiyoko/devhub/internal/controllers/git"
@@ -49,6 +50,7 @@ func Registry(store *storage.Store) *core.Registry {
 	database := databasectl.New(store)
 	envs := envsctl.New(store, git, ports, workspace)
 	settings := settingsctl.New(store, core.Namespace(deps.Store, "tool"))
+	containers := containersctl.New()
 
 	return core.NewRegistry(
 		newGit(git),
@@ -59,6 +61,7 @@ func Registry(store *storage.Store) *core.Registry {
 		newSettings(settings),
 		newDiffKun(),
 		newDiagram(),
+		newContainers(containers),
 		// ← new tools: add one constructor here. Nothing else in core/server changes.
 	)
 }

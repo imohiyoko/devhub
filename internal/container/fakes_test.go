@@ -49,6 +49,7 @@ type testDeps struct {
 	compose    *fakeCompose
 	containerd *fakeCompose
 	colima     *fakeColima
+	inventory  Lister
 }
 
 // newTestRuntime builds a Runtime whose every seam is a double. The defaults
@@ -64,5 +65,12 @@ func newTestRuntime(d testDeps) *Runtime {
 	if d.colima == nil {
 		d.colima = &fakeColima{err: ErrColimaMissing}
 	}
-	return &Runtime{Docker: d.compose, Containerd: d.containerd, Colima: d.colima}
+	if d.inventory == nil {
+		d.inventory = &fakeLister{}
+	}
+	// Every field, because Runtime documents that all of them are required and
+	// dereferences without a nil check: a double that left one out would fail
+	// inside the method rather than at the line that wired it, which is the
+	// outcome that invariant exists to avoid.
+	return &Runtime{Docker: d.compose, Containerd: d.containerd, Colima: d.colima, Inventory: d.inventory}
 }
