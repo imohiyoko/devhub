@@ -108,6 +108,73 @@ tbody tr:last-child td { border-bottom: none; }
 .stray { color: var(--muted); font-style: italic; }
 .empty { color: var(--muted); font-size: 12px; padding: 18px 13px; text-align: center; }
 main { padding: 16px; overflow-y: auto; }
+
+.src-btn {
+  margin-left: 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.src-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 50;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--panel, #161b22);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 460px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+}
+.modal-header { padding: 13px 16px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.modal-body { padding: 14px 16px; overflow-y: auto; }
+.modal-footer {
+  padding: 11px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.form-row { display: flex; gap: 10px; margin-bottom: 11px; }
+.form-group { flex: 1; }
+.form-group label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+.form-control {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.form-control:focus { border-color: var(--accent); outline: none; }
+.hint { color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 9px; }
+.warn {
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 11px;
+}
+.stop-list { margin: 8px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
 </style>
 </head>
 <body>
@@ -119,6 +186,7 @@ main { padding: 16px; overflow-y: auto; }
   <div class="spacer"></div>
   <input class="search" id="search" type="text" autocomplete="off" placeholder="name / image / project / port">
   <label class="toggle"><input type="checkbox" id="showStopped" checked> 停止済みも表示</label>
+  <button class="btn" id="newProfileBtn">＋ profile</button>
   <button class="btn" id="refreshBtn">再読込</button>
   <div class="status" id="status"></div>
 </header>
@@ -126,6 +194,38 @@ main { padding: 16px; overflow-y: auto; }
 <main id="main">
   <div class="empty">読み込み中...</div>
 </main>
+
+<div class="modal-overlay" id="profileModalOverlay">
+  <div class="modal">
+    <div class="modal-header" id="profileModalTitle">Colima profile を作成</div>
+    <div class="modal-body">
+      <div id="profileWarn"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>名前</label>
+          <input type="text" id="pfName" class="form-control" placeholder="big" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label>engine</label>
+          <select id="pfEngine" class="form-control">
+            <option value="">docker（既定）</option>
+            <option value="containerd">containerd</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>CPU</label><input type="number" id="pfCpus" class="form-control" min="0" placeholder="colima の既定"></div>
+        <div class="form-group"><label>メモリ (GiB)</label><input type="number" id="pfMemory" class="form-control" min="0" placeholder="colima の既定"></div>
+        <div class="form-group"><label>ディスク (GiB)</label><input type="number" id="pfDisk" class="form-control" min="0" placeholder="colima の既定"></div>
+      </div>
+      <div class="hint" id="profileHint"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="pfCancel">キャンセル</button>
+      <button class="btn" id="pfSubmit">作成</button>
+    </div>
+  </div>
+</div>
 
 <script>
 let sources = [];
@@ -195,8 +295,9 @@ function sourceMeta(src) {
   const bits = [];
   if (src.engine) bits.push(src.engine);
   if (src.context) bits.push(`context: ${src.context}`);
-  // Reported, never set: colima applies these only at `colima start`, so
-  // changing one means restarting the VM — and shrinking the disk recreates it.
+  // Read from colima, not changed by anything on this path: sizes apply only at
+  // `colima start`, so changing one stops and restarts the VM. That is what the
+  // resize button asks for explicitly, and why rendering never does it.
   if (src.cpus) bits.push(`${src.cpus} CPU`);
   if (src.memory_bytes) bits.push(`mem ${gib(src.memory_bytes)}`);
   if (src.disk_bytes) bits.push(`disk ${gib(src.disk_bytes)}`);
@@ -224,6 +325,7 @@ function sourceHtml(src, rows) {
   const head = `<div class="source-head">
       <span class="source-name">${escapeHtml(src.label)}</span>
       <span class="source-meta">${escapeHtml(sourceMeta(src))}</span>
+      ${src.profile ? `<button class="src-btn" data-resize="${escapeHtml(src.profile)}">サイズ変更</button>` : ''}
       <span class="source-count">${rows.length}</span>
     </div>`;
 
@@ -269,6 +371,168 @@ function render() {
     .map(src => sourceHtml(src, shown.filter(c => c.source === src.id)))
     .join('');
 }
+
+// --- Colima profile の作成とサイズ変更 -------------------------------------
+//
+// devhub が VM を動かす唯一の経路。切り替えや一覧の副作用としては絶対に起きず、
+// ここを押したときだけ走る。サイズ変更は停止と起動を伴うので、先に「何が止まる
+// か」をサーバに聞いてから確認する — 落ちるコンテナは、いま見ている環境とは無関
+// 係の profile を共有した別環境のものかもしれない。
+let resizeTarget = '';   // '' なら作成、profile 名ならサイズ変更
+let inFlight = false;    // VM を動かしている最中。閉じても止まらないので閉じさせない
+
+function openProfileModal(profile) {
+  resizeTarget = profile || '';
+  const src = profile ? sources.find(s => s.profile === profile) : null;
+  $('profileModalTitle').textContent = profile
+    ? `Colima profile「${profile}」のサイズ変更` : 'Colima profile を作成';
+  $('pfSubmit').textContent = profile ? '確認' : '作成';
+  $('pfName').value = profile || '';
+  $('pfName').disabled = !!profile;
+  // engine は VM の作り直しになるので resize では変えない。停止中の profile は
+  // runtime を報告しないので、素の select だと containerd の VM が
+  // 「docker（既定）」と表示される — 破壊的操作の直前に出す画面で、それは言って
+  // いいことではない。分かるものはそのまま、分からないものは分からないと出す。
+  const eng = $('pfEngine');
+  eng.querySelectorAll('option[data-transient]').forEach(o => o.remove());
+  if (profile) {
+    const o = document.createElement('option');
+    o.dataset.transient = '1';
+    o.textContent = src?.engine || '不明（停止中の profile では colima が報告しません）';
+    eng.appendChild(o);
+    eng.selectedIndex = eng.options.length - 1;
+  } else {
+    eng.value = '';
+  }
+  eng.disabled = !!profile;
+  $('pfCpus').value = src?.cpus || '';
+  $('pfMemory').value = src?.memory_bytes ? Math.round(src.memory_bytes / 1073741824) : '';
+  $('pfDisk').value = src?.disk_bytes ? Math.round(src.disk_bytes / 1073741824) : '';
+  $('profileWarn').innerHTML = '';
+  $('profileHint').textContent = profile
+    ? 'colima はサイズを起動時にしか読まないので、VM の停止と再起動になります。ディスクの縮小はできません（VM の作り直しになるため）。'
+    : '空欄は colima の既定値のままにします。';
+  $('profileModalOverlay').classList.add('open');
+  if (!profile) $('pfName').focus();
+}
+
+function closeProfileModal() {
+  if (inFlight) return;
+  $('profileModalOverlay').classList.remove('open');
+  resizeTarget = '';
+}
+
+function profileBody(confirm) {
+  // Number, not parseInt: parseInt('2.5') is 2, and granting 2 CPUs to someone
+  // who asked for 2.5 answers a question they did not ask. The server refuses a
+  // fractional size and says so — but only if it is the one that sees the 2.5.
+  const num = id => {
+    const raw = $(id).value.trim();
+    if (!raw) return undefined;
+    const v = Number(raw);
+    return Number.isFinite(v) ? v : raw;   // pass junk through; the server names it
+  };
+  const body = { cpus: num('pfCpus'), memory_gib: num('pfMemory'), disk_gib: num('pfDisk') };
+  if (!resizeTarget) {
+    body.name = $('pfName').value.trim();
+    if ($('pfEngine').value) body.engine = $('pfEngine').value;
+  }
+  if (confirm) body.confirm = true;
+  return body;
+}
+
+async function submitProfile() {
+  const btn = $('pfSubmit');
+  const url = resizeTarget
+    ? `/api/containers/profiles/${encodeURIComponent(resizeTarget)}/resize`
+    : '/api/containers/profiles';
+  // The confirmation is only skipped once the user has seen the stop list.
+  const confirmed = btn.dataset.confirmed === '1';
+
+  btn.disabled = true;
+  // Closing the modal would not stop anything — the operation deliberately
+  // outlives the request — so offering the exit during it would promise a
+  // cancellation that does not exist.
+  if (confirmed || !resizeTarget) inFlight = true;
+  $('pfCancel').disabled = inFlight;
+  btn.textContent = resizeTarget ? (confirmed ? '再起動中...' : '確認中...') : '作成中...';
+  setStatus(resizeTarget ? 'profile を操作中...' : 'profile を作成中...');
+  try {
+    const res = await postJson(url, profileBody(confirmed));
+    if (res.confirm_required) {
+      renderStopWarning(res.stops || []);
+      btn.dataset.confirmed = '1';
+      btn.textContent = '実行する';
+      btn.disabled = false;
+      setStatus('確認待ち');
+      return;
+    }
+    inFlight = false;   // the operation is over; the modal may close again
+    closeProfileModal();
+    setStatus('完了', 'ok');
+    await load();
+  } catch (e) {
+    // The error replaces the stop list, so the confirmation has to go with it:
+    // otherwise the next click runs armed with nothing on screen describing
+    // what it will take down.
+    disarmConfirm();
+    $('profileWarn').innerHTML = `<div class="warn">${escapeHtml(e.message)}</div>`;
+    setStatus(`エラー: ${e.message}`, 'error');
+  } finally {
+    inFlight = false;
+    btn.disabled = false;
+    $('pfCancel').disabled = false;
+    if (btn.dataset.confirmed !== '1') btn.textContent = resizeTarget ? '確認' : '作成';
+  }
+}
+
+// renderStopWarning names what the restart will take down. The project column
+// is the point: a container from a project the user was not thinking about is
+// exactly the one they need to see before saying yes.
+function renderStopWarning(stops) {
+  if (!stops.length) {
+    $('profileWarn').innerHTML =
+      '<div class="warn">この profile では現在コンテナは動いていません。VM の再起動のみ行われます。</div>';
+    return;
+  }
+  const items = stops.map(s =>
+    `<li>${escapeHtml(s.name)}${s.project ? ` <span class="sub">(${escapeHtml(s.project)})</span>` : ''}</li>`).join('');
+  $('profileWarn').innerHTML =
+    `<div class="warn">この ${stops.length} 件のコンテナが停止します。別の環境が同じ profile を使っている場合、そちらのコンテナも含まれます。
+      <ul class="stop-list">${items}</ul></div>`;
+}
+
+$('newProfileBtn').addEventListener('click', () => {
+  $('pfSubmit').dataset.confirmed = '';
+  openProfileModal('');
+});
+$('pfCancel').addEventListener('click', closeProfileModal);
+$('pfSubmit').addEventListener('click', submitProfile);
+$('profileModalOverlay').addEventListener('click', e => {
+  if (e.target === $('profileModalOverlay')) closeProfileModal();
+});
+// Editing any field disarms the confirmation. Otherwise a user could confirm
+// one size, change the numbers, and have the next click execute a resize they
+// were never shown — the stop list on screen would describe a different
+// operation than the one that ran.
+['pfCpus', 'pfMemory', 'pfDisk', 'pfName', 'pfEngine'].forEach(id => {
+  $(id).addEventListener('input', disarmConfirm);
+  $(id).addEventListener('change', disarmConfirm);
+});
+
+function disarmConfirm() {
+  const btn = $('pfSubmit');
+  if (btn.dataset.confirmed !== '1') return;
+  btn.dataset.confirmed = '';
+  btn.textContent = resizeTarget ? '確認' : '作成';
+  $('profileWarn').innerHTML = '';
+}
+main.addEventListener('click', e => {
+  const btn = e.target.closest('[data-resize]');
+  if (!btn) return;
+  $('pfSubmit').dataset.confirmed = '';
+  openProfileModal(btn.dataset.resize);
+});
 
 $('refreshBtn').addEventListener('click', load);
 searchEl.addEventListener('input', render);

@@ -291,8 +291,11 @@ func validateRuntime(env map[string]any, eid string) (string, error) {
 		if provider != container.ProviderColima {
 			return "", fmt.Errorf("Environment '%s' runtime profile is only valid for the colima provider", eid)
 		}
-		if !envIDRe.MatchString(s) {
-			return "", fmt.Errorf("Environment '%s' runtime profile must be alphanumeric/_/-", eid)
+		// The container package owns what a profile may be called: it is the
+		// one that hands the name to colima, and it rejects values that could
+		// pass for a flag.
+		if !container.ValidProfileName(s) {
+			return "", fmt.Errorf("Environment '%s' runtime profile must be alphanumeric/_/- and start with a letter, digit or _", eid)
 		}
 	}
 

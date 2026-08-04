@@ -10,8 +10,12 @@
 // port, becomes visible at all. The precedent is ports: a machine-wide panel
 // that env-launcher consumes rather than contains.
 //
-// Everything here is read-only. The panel's operations (logs, stop, restart)
-// are deliberately a later, separate change with its own execaudit Surface.
+// Reading the machine is what this file does, and nothing on the path a page
+// load takes changes anything. The exceptions live in profiles.go: creating and
+// resizing a Colima VM, each one a request whose whole purpose is that, and
+// neither reachable as a side effect of looking at the panel. The container
+// operations proper — logs, stop, restart — are still a later, separate change
+// with their own execaudit Surface.
 package containers
 
 import (
@@ -30,12 +34,40 @@ type inventory interface {
 	Containers(ctx context.Context) ([]container.Source, []container.Container)
 }
 
-// Controller serves the container inventory.
-type Controller struct{ runtime inventory }
+// Controller serves the container inventory and the profile operations.
+type Controller struct {
+	runtime inventory
+	admin   admin
+}
 
 // New returns a containers controller wired to the real CLIs. Nothing is probed
 // at construction — that only happens when a request arrives.
-func New() *Controller { return &Controller{runtime: container.New()} }
+func New() *Controller {
+	rt := container.New()
+	return &Controller{runtime: rt, admin: profileAdmin{rt}}
+}
+
+// profileAdmin joins the two halves the admin interface needs: the VM
+// operations live on Runtime.Admin, the "what would this stop" read on Runtime
+// itself. Kept here rather than widening either of those, so the container
+// package does not grow a type that exists only for this controller's shape.
+type profileAdmin struct{ rt *container.Runtime }
+
+func (p profileAdmin) Create(ctx context.Context, spec container.ProfileSpec) error {
+	return p.rt.Admin.Create(ctx, spec)
+}
+
+func (p profileAdmin) Resize(ctx context.Context, spec container.ProfileSpec) error {
+	return p.rt.Admin.Resize(ctx, spec)
+}
+
+func (p profileAdmin) CheckResize(ctx context.Context, spec container.ProfileSpec) error {
+	return p.rt.Admin.CheckResize(ctx, spec)
+}
+
+func (p profileAdmin) ProfileTargets(ctx context.Context, name string) ([]container.Container, error) {
+	return p.rt.ProfileTargets(ctx, name)
+}
 
 // HandleGet serves GET /api/containers. The request's context is passed
 // through, so a user who closes the tab stops the listings; the deadline itself
