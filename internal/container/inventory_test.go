@@ -279,3 +279,68 @@ func TestParsePSKeepsNamelessContainers(t *testing.T) {
 		t.Errorf("display name = %q, want the ID to stand in", got[0].DisplayName())
 	}
 }
+
+// TestAmbientDockerIsCollapsedIntoTheProfileItPointsAt is the case the
+// daemon-less verification could not reach: `colima start` makes the profile's
+// context current, and a DOCKER_HOST aimed at the profile's socket does the
+// same and outlives `colima stop`. Either way the ambient source and the
+// profile are one daemon, and every container would otherwise be listed twice.
+//
+// The detection is by container ID rather than context name on purpose. With
+// DOCKER_HOST set, `docker context show` reports "default" while the socket is
+// the profile's — name comparison would miss exactly the configuration this
+// machine is in.
+func TestAmbientDockerIsCollapsedIntoTheProfileItPointsAt(t *testing.T) {
+	same := []Container{{ID: "dead", Name: "one"}, {ID: "beef", Name: "two"}}
+	r := newTestRuntime(testDeps{
+		colima: &fakeColima{profiles: []ColimaProfile{{Name: "default", Status: "Running", Engine: EngineDocker}}},
+	})
+	r.Inventory = &fakeLister{bySource: map[string][]Container{
+		ProviderDocker:   same,
+		"colima:default": same,
+	}}
+
+	sources, all := r.Containers(context.Background())
+
+	if len(all) != 2 {
+		t.Errorf("got %d containers, want 2 — the same daemon was listed twice", len(all))
+	}
+	byID := map[string]Source{}
+	for _, s := range sources {
+		byID[s.ID] = s
+	}
+	if got := byID[ProviderDocker].AliasOf; got != "colima:default" {
+		t.Errorf("ambient AliasOf = %q, want colima:default", got)
+	}
+	if byID["colima:default"].AliasOf != "" {
+		t.Error("the profile was folded into the ambient source; it is the more specific of the two and should keep the rows")
+	}
+	// The rows stay attributed to the profile, which can say which VM they are on.
+	for _, c := range all {
+		if c.Source == ProviderDocker {
+			t.Errorf("container %s still attributed to the folded source", c.ID)
+		}
+	}
+}
+
+// TestDistinctDaemonsAreNotCollapsed: Docker Desktop alongside Colima is two
+// real engines, and folding them would hide half the machine.
+func TestDistinctDaemonsAreNotCollapsed(t *testing.T) {
+	r := newTestRuntime(testDeps{
+		colima: &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Running", Engine: EngineDocker}}},
+	})
+	r.Inventory = &fakeLister{bySource: map[string][]Container{
+		ProviderDocker: {{ID: "aaa", Name: "desktop-one"}},
+		"colima:dev":   {{ID: "bbb", Name: "vm-one"}},
+	}}
+
+	sources, all := r.Containers(context.Background())
+	if len(all) != 2 {
+		t.Fatalf("got %d containers, want both", len(all))
+	}
+	for _, s := range sources {
+		if s.AliasOf != "" {
+			t.Errorf("%s was folded into %s; the two daemons are unrelated", s.ID, s.AliasOf)
+		}
+	}
+}

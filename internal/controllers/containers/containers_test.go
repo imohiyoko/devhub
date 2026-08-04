@@ -132,3 +132,22 @@ func TestEmptyPayloadUsesArrays(t *testing.T) {
 		}
 	}
 }
+
+// TestAliasReachesThePanel: the folded source keeps its entry and names where
+// its rows went, so a section that suddenly held nothing cannot be mistaken for
+// a broken listing.
+func TestAliasReachesThePanel(t *testing.T) {
+	out := get(t, fakeInventory{sources: []container.Source{
+		{ID: "docker", Label: "Docker", Available: true, AliasOf: "colima:default"},
+		{ID: "colima:default", Label: "Colima: default", Available: true},
+	}})
+	srcs, _ := out["sources"].([]any)
+	folded, _ := srcs[0].(map[string]any)
+	if folded["alias_of"] != "colima:default" {
+		t.Errorf("alias_of = %v", folded["alias_of"])
+	}
+	kept, _ := srcs[1].(map[string]any)
+	if kept["alias_of"] != "" {
+		t.Errorf("the kept source reported alias_of = %v", kept["alias_of"])
+	}
+}

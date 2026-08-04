@@ -60,6 +60,7 @@ func inventoryJSON(sources []container.Source, list []container.Container) map[s
 			"id": s.ID, "label": s.Label, "context": s.Context,
 			"profile": s.Profile, "engine": s.Engine,
 			"available": s.Available, "reason": s.Reason,
+			"alias_of": s.AliasOf,
 		}
 		// Only Colima sources have a VM behind them, and only a VM has a size.
 		// Absent keys rather than zeroes: "6 CPUs" and "unknown" must not look

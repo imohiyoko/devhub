@@ -53,6 +53,11 @@ type Source struct {
 	// says why, in the CLI's own words where there is one.
 	Available bool
 	Reason    string
+	// AliasOf names the source this one turned out to be a second route to —
+	// the ambient Docker context resolving to a Colima profile's VM, almost
+	// always. Its containers are reported under that source instead, so they
+	// are not counted twice. Empty for a source that stands alone.
+	AliasOf string
 	// CPUs, MemoryBytes and DiskBytes describe a Colima source's VM. They are
 	// shown, never set — see ColimaProfile for why devhub does not offer to
 	// change them.
@@ -193,12 +198,66 @@ func (r *Runtime) Containers(ctx context.Context) ([]Source, []Container) {
 		}(i)
 	}
 	wg.Wait()
+	collapseAliases(sources, found)
 
 	var all []Container
 	for _, list := range found {
 		all = append(all, list...)
 	}
 	return sources, all
+}
+
+// collapseAliases folds sources that turned out to be the same daemon reached
+// two ways.
+//
+// They routinely are. `colima start` creates a docker context for the profile
+// and makes it current, so the ambient context — the one `docker ps` uses with
+// no --context — is that same VM. A DOCKER_HOST pointing at the profile's
+// socket does it too, and that one survives `colima stop`, which removes the
+// context. Left alone, every container would be listed twice: once under
+// Docker, once under the profile. For a panel whose whole claim is an accurate
+// answer to "what is on this machine", twelve containers shown as twenty-four
+// is wrong in the same way as showing none.
+//
+// The test is the container IDs, not the context name. Name comparison is what
+// suggests itself and it does not hold: with DOCKER_HOST set, `docker context
+// show` reports "default" while the ambient socket is the profile's. Two
+// sources that returned a container with the same ID are the same daemon,
+// whatever route each took to it.
+//
+// The profile keeps the rows, because it is the more specific answer — it can
+// say which VM, and how big. The ambient source is marked as pointing there
+// rather than dropped: "Docker and this profile are the same thing right now"
+// is worth seeing, and a source that silently vanished would look like a bug.
+func collapseAliases(sources []Source, found [][]Container) {
+	seen := map[string]int{} // container ID -> index of the source that keeps it
+	// Colima sources go first so they win the rows; the ambient source is the
+	// one that gets folded.
+	order := make([]int, 0, len(sources))
+	for i, s := range sources {
+		if s.ID != ProviderDocker {
+			order = append(order, i)
+		}
+	}
+	for i, s := range sources {
+		if s.ID == ProviderDocker {
+			order = append(order, i)
+		}
+	}
+
+	for _, i := range order {
+		if len(found[i]) == 0 {
+			continue
+		}
+		if owner, dup := seen[found[i][0].ID]; dup {
+			sources[i].AliasOf = sources[owner].ID
+			found[i] = nil
+			continue
+		}
+		for _, c := range found[i] {
+			seen[c.ID] = i
+		}
+	}
 }
 
 // inventorySources derives what to list from the capability report, so the
