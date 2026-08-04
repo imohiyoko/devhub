@@ -101,13 +101,45 @@ func TestLogTailIsClamped(t *testing.T) {
 // come back empty, and "no logs" is a different statement from "logs on the
 // other stream".
 func TestLogsCarryStderr(t *testing.T) {
-	runner := &fakeRunner{stdout: "", stderr: "panic: boom"}
-	out, err := testControl(runner).Logs(context.Background(), dockerSrc(), realID, 10)
-	if err != nil {
-		t.Fatalf("Logs: %v", err)
+	for _, tc := range []struct{ stdout, stderr string }{
+		{"", "panic: boom"},               // stderr only
+		{"listening on :8080", "warn: x"}, // both, and neither may be dropped
+	} {
+		runner := &fakeRunner{stdout: tc.stdout, stderr: tc.stderr}
+		out, err := testControl(runner).Logs(context.Background(), dockerSrc(), realID, 10)
+		if err != nil {
+			t.Fatalf("Logs: %v", err)
+		}
+		if tc.stdout != "" && !strings.Contains(out, tc.stdout) {
+			t.Errorf("logs = %q, missing stdout", out)
+		}
+		if !strings.Contains(out, tc.stderr) {
+			t.Errorf("logs = %q, missing stderr", out)
+		}
 	}
-	if !strings.Contains(out, "panic: boom") {
-		t.Errorf("logs = %q, want the stderr stream", out)
+}
+
+// TestControlSurfacesTheCLIsWords. "No such container" and "permission denied"
+// are things devhub cannot say better than the engine did, and a caller
+// deciding what to do next needs the specific one.
+func TestControlSurfacesTheCLIsWords(t *testing.T) {
+	runner := &fakeRunner{err: errors.New("exit status 1"), stderr: "Error: No such container: abc"}
+	c := testControl(runner)
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"stop", func() error { return c.Stop(context.Background(), dockerSrc(), realID) }},
+		{"restart", func() error { return c.Restart(context.Background(), dockerSrc(), realID) }},
+		{"logs", func() error {
+			_, err := c.Logs(context.Background(), dockerSrc(), realID, 10)
+			return err
+		}},
+	} {
+		err := tc.call()
+		if err == nil || !strings.Contains(err.Error(), "No such container") {
+			t.Errorf("%s: err = %v, want the CLI's own stderr", tc.name, err)
+		}
 	}
 }
 
@@ -159,22 +191,98 @@ func TestResolveRefusesWhatItCannotSee(t *testing.T) {
 }
 
 // TestResolveFollowsAnAlias. The ambient Docker context and a Colima profile
-// are often the same daemon, and the listing reports the containers under the
-// profile. An operation naming the alias would otherwise look for them in a
-// source that, by construction, lists none.
+// are usually the same daemon, so the listing reports each container once,
+// under the profile. An operation naming the ambient source has to end up
+// there — otherwise the most common arrangement on a Mac is the one that does
+// not work.
+//
+// Both sources must list the same container for collapseAliases to see the
+// overlap and mark the alias at all; an earlier version of this test put the
+// container under one source only, so no alias was ever created and the path
+// it claimed to cover ran zero times.
 func TestResolveFollowsAnAlias(t *testing.T) {
-	r := newTestRuntime(testDeps{compose: &fakeCompose{}})
-	r.Inventory = &fakeLister{bySource: map[string][]Container{
-		"colima:dev": {{ID: realID, Name: "db"}},
-	}}
-	// Stand in for what Containers() would report: an alias and its target.
-	r.Colima = &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Running", Engine: EngineDocker}}}
+	r := aliasedRuntime()
 
-	got, err := r.ResolveContainer(context.Background(), "colima:dev", realID)
+	sources, _ := r.Containers(context.Background())
+	ambient, _ := findSource(sources, ProviderDocker)
+	if ambient.AliasOf == "" {
+		t.Fatalf("no alias was created, so this test would prove nothing: %+v", sources)
+	}
+
+	// Named by the alias, answered by the source that owns the rows.
+	got, err := r.ResolveContainer(context.Background(), ProviderDocker, realID)
 	if err != nil {
 		t.Fatalf("ResolveContainer: %v", err)
 	}
 	if got.Source.ID != "colima:dev" || got.Container.Name != "db" {
-		t.Errorf("resolved %+v under %s", got.Container, got.Source.ID)
+		t.Errorf("resolved %+v under %q, want the owning source", got.Container, got.Source.ID)
+	}
+}
+
+// aliasedRuntime is the common Mac arrangement: one Colima profile, and an
+// ambient Docker context pointing at that same VM, so both listings return the
+// same container.
+func aliasedRuntime() *Runtime {
+	r := newTestRuntime(testDeps{
+		compose: &fakeCompose{},
+		colima:  &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Running", Engine: EngineDocker}}},
+	})
+	same := []Container{{ID: realID, Name: "db"}}
+	r.Inventory = &fakeLister{bySource: map[string][]Container{
+		ProviderDocker: same,
+		"colima:dev":   same,
+	}}
+	return r
+}
+
+// TestResolveRefusesAnUnlistableSource: a source whose listing failed is
+// reported with its reason rather than as "no such container", because those
+// two call for different things from the user.
+func TestResolveRefusesAnUnlistableSource(t *testing.T) {
+	r := newTestRuntime(testDeps{compose: &fakeCompose{}})
+	r.Inventory = &fakeLister{err: map[string]error{
+		ProviderDocker: errors.New("Cannot connect to the Docker daemon"),
+	}}
+
+	_, err := r.ResolveContainer(context.Background(), ProviderDocker, realID)
+	if !errors.Is(err, ErrSourceMissing) {
+		t.Fatalf("err = %v, want ErrSourceMissing", err)
+	}
+	// The engine's own words survive: "start Docker" and "that container is
+	// gone" are not the same instruction.
+	if !strings.Contains(err.Error(), "Cannot connect") {
+		t.Errorf("err = %q, want the CLI's reason", err)
+	}
+}
+
+// TestResolveAcceptsEitherIDForm. `docker ps` prints twelve hex digits and
+// `--no-trunc` prints sixty-four; an agent holding the long form is naming the
+// same container the panel shows.
+func TestResolveAcceptsEitherIDForm(t *testing.T) {
+	full := realID + strings.Repeat("0", 64-len(realID))
+	r := newTestRuntime(testDeps{compose: &fakeCompose{}})
+	r.Inventory = &fakeLister{bySource: map[string][]Container{
+		ProviderDocker: {{ID: full, Name: "db"}},
+	}}
+
+	for _, id := range []string{full, realID, strings.ToUpper(realID)} {
+		got, err := r.ResolveContainer(context.Background(), ProviderDocker, id)
+		if err != nil {
+			t.Errorf("%s: %v", id, err)
+			continue
+		}
+		// Whatever was asked, the argv gets the ID the engine reported.
+		if got.Container.ID != full {
+			t.Errorf("%s: resolved to %q, want the listed ID", id, got.Container.ID)
+		}
+	}
+
+	// An ambiguous prefix is refused rather than resolved to whichever was
+	// listed first.
+	r.Inventory = &fakeLister{bySource: map[string][]Container{
+		ProviderDocker: {{ID: full, Name: "db"}, {ID: realID + "ffffffffffff", Name: "cache"}},
+	}}
+	if _, err := r.ResolveContainer(context.Background(), ProviderDocker, realID); !errors.Is(err, ErrContainerMissing) {
+		t.Errorf("err = %v, want a refusal for an ambiguous prefix", err)
 	}
 }
