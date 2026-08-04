@@ -16,6 +16,9 @@ document.getElementById('app').addEventListener('click', e => {
   else if (action === 'add-component') openProcessModal(Number(btn.dataset.eIdx), -1);
   else if (action === 'edit-component') openProcessModal(Number(btn.dataset.eIdx), Number(btn.dataset.cIdx));
   else if (action === 'delete-component') deleteComponent(Number(btn.dataset.eIdx), Number(btn.dataset.cIdx));
+  else if (action === 'add-scenario') openScenarioModal(Number(btn.dataset.eIdx), -1);
+  else if (action === 'edit-scenario') openScenarioModal(Number(btn.dataset.eIdx), Number(btn.dataset.sIdx));
+  else if (action === 'delete-scenario') deleteScenario(Number(btn.dataset.eIdx), Number(btn.dataset.sIdx));
   else if (action === 'switch-scenario') switchToScenario(btn.dataset.envId, btn.dataset.scenarioId, btn.dataset.scenarioName);
   else if (action === 'switch-stop') stopScenarioComponents(btn.dataset.envId);
   else if (action === 'edit-runtime') openRuntimeModal(Number(btn.dataset.eIdx));

@@ -207,6 +207,34 @@
   </div>
 </div>
 
+<!-- Scenario Modal (v2 only) -->
+<div class="modal-overlay" id="scenarioModalOverlay">
+  <div class="modal">
+    <div class="modal-header" id="scenarioModalTitle">シナリオの編集</div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="scenarioId">ID</label>
+        <input type="text" id="scenarioId" class="form-control" placeholder="accounting">
+      </div>
+      <div class="form-group">
+        <label for="scenarioName">表示名</label>
+        <input type="text" id="scenarioName" class="form-control" placeholder="会計">
+      </div>
+      <div class="form-group">
+        <label for="scenarioComponents">所属コンポーネント <span style="font-size: 11px; color: var(--muted);">※ Ctrl/⌘ + クリックで複数選択</span></label>
+        <select id="scenarioComponents" class="form-control" multiple style="height: 120px;"></select>
+        <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+          このシナリオへ切り替えたときに起動するコンポーネントです。lifecycle が <code>shared</code> のものは全シナリオに暗黙で所属するため、ここには出ません。
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeScenarioModal()">キャンセル</button>
+      <button class="btn btn-success" onclick="saveScenario()">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- Switch Confirmation Modal -->
 <div class="modal-overlay" id="switchModalOverlay">
   <div class="modal">
@@ -257,6 +285,7 @@
 <!-- Before render.js, which reads a v2 environment's components through
      componentsOf() to draw the card. -->
 <script src="/tools/env-launcher/component-editor.js"></script>
+<script src="/tools/env-launcher/scenario-editor.js"></script>
 <script src="/tools/env-launcher/render.js"></script>
 <script src="/tools/env-launcher/env-editor.js"></script>
 <script src="/tools/env-launcher/process-editor.js"></script>
