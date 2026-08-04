@@ -17,9 +17,9 @@ import (
 	"time"
 )
 
-// ProbeTimeout bounds the whole capability report. The runtimes
+// CapabilityProbeTimeout bounds the whole capability report. The runtimes
 // endpoint is on the UI's load path, so it must fail rather than hang.
-const ProbeTimeout = 10 * time.Second
+const CapabilityProbeTimeout = 10 * time.Second
 
 // Profile is one Colima profile as the UI sees it.
 type Profile struct {

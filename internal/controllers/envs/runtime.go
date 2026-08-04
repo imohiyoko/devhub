@@ -2,12 +2,9 @@ package envs
 
 // The env-launcher side of the runtime story. The capability model and every
 // container CLI call live in internal/container; what is left here is the part
-// that is specific to this tool — rendering that model for its own API, and
-// asking for warnings about the execution base one environment declares.
+// that is specific to this tool — rendering that model for its own API.
 
 import (
-	"context"
-
 	"github.com/imohiyoko/devhub/internal/container"
 )
 
@@ -36,11 +33,4 @@ func runtimeProvidersJSON(providers []container.Provider) map[string]any {
 		})
 	}
 	return map[string]any{"providers": out}
-}
-
-// RuntimeWarnings reports what the user should know before devhub drives this
-// environment's containers. The judgement is the container package's; what
-// belongs here is only that an environment's execution base is env.Runtime.
-func (c *Controller) RuntimeWarnings(ctx context.Context, env environment) []string {
-	return c.runtime.Warnings(ctx, env.Runtime)
 }
