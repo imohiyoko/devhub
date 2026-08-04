@@ -101,15 +101,17 @@ func (c *Controller) applySwitch(data map[string]any) (map[string]any, error) {
 // adapter, a host process by killing the listeners that made it look running
 // in the first place.
 func (c *Controller) applyStops(env environment, plan SwitchPlan, byID map[string]component, ports map[string][]int, live map[int]int) []ApplyResult {
-	dockerContext := dockerContextFor(env.Runtime)
+	adapter, adapterErr := c.composeFor(env.Runtime)
 	results := make([]ApplyResult, 0, len(plan.Stop))
 	for _, step := range plan.Stop {
 		comp := byID[step.ID]
 		var err error
 		if comp.Kind == kindComposeService {
-			ctx, cancel := context.WithTimeout(context.Background(), composeUpTimeout)
-			err = c.compose.Stop(ctx, dockerContext, comp.Compose)
-			cancel()
+			if err = adapterErr; err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), composeUpTimeout)
+				err = adapter.Stop(ctx, env.Runtime, comp.Compose)
+				cancel()
+			}
 		} else {
 			err = c.stopHostComponent(ports[comp.ID], live)
 		}
@@ -159,16 +161,18 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 		cwds, assigned, hostErr = c.prepareHostStarts(env, procs)
 	}
 
-	dockerContext := dockerContextFor(env.Runtime)
+	adapter, adapterErr := c.composeFor(env.Runtime)
 	results := make([]ApplyResult, 0, len(plan.Start))
 	for i, step := range plan.Start {
 		comp := byID[step.ID]
 		var err error
 		switch {
 		case comp.Kind == kindComposeService:
-			ctx, cancel := context.WithTimeout(context.Background(), composeUpTimeout)
-			err = c.compose.Up(ctx, dockerContext, comp.Compose)
-			cancel()
+			if err = adapterErr; err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), composeUpTimeout)
+				err = adapter.Up(ctx, env.Runtime, comp.Compose)
+				cancel()
+			}
 		case hostErr != nil:
 			err = hostErr
 		default:

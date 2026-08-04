@@ -181,9 +181,23 @@ func TestRuntimeWarnings(t *testing.T) {
 	// never applied: switching a profile's engine would affect its existing
 	// images and containers (plan §6.4).
 	mismatch := &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Running", Engine: engineContainerd}}}
-	got := warn(mismatch, colimaEnv("dev", engineDocker))
-	contains(t, got, "engine を切り替えません")
-	contains(t, got, "対応するアダプタがありません")
+	contains(t, warn(mismatch, colimaEnv("dev", engineDocker)), "engine を切り替えません")
+
+	// An engine with no adapter at all is a different warning from a mismatch.
+	incus := &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Running", Engine: "incus"}}}
+	contains(t, warn(incus, colimaEnv("dev", "")), "対応するアダプタがありません")
+
+	// containerd is drivable but cannot report readiness, so an environment
+	// that asks for it is told before the switch rather than after a dependent
+	// component fails to connect.
+	ctr := &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Running", Engine: engineContainerd}}}
+	got := warn(ctr, colimaEnv("dev", engineContainerd))
+	contains(t, got, "--wait")
+	for _, w := range got {
+		if strings.Contains(w, "engine を切り替えません") {
+			t.Errorf("matching engines reported as a mismatch: %v", got)
+		}
+	}
 
 	// A stopped profile reports no engine, so there is nothing to disagree
 	// with — the "start it" warning is the whole story.
