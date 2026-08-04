@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
-	"regexp"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,11 +16,6 @@ import (
 	portsctl "github.com/imohiyoko/devhub/internal/controllers/ports"
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/pathutil"
-)
-
-var (
-	envIDRe  = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-	envVarRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 // launchStore is the persistence the env-launcher needs. It is the one rich
@@ -239,120 +232,13 @@ func (c *Controller) findEnv(envID string) (environment, error) {
 	if err != nil {
 		return environment{}, err
 	}
+	version := docVersion(data)
 	for _, e := range toAnySlice(data["environments"]) {
 		if m, ok := e.(map[string]any); ok && pStr(m, "id") == envID {
-			return decodeEnvironment(m), nil
+			return decodeEnvironment(m, version), nil
 		}
 	}
 	return environment{}, fmt.Errorf("Environment '%s' not found", envID)
-}
-
-// validateEnvs mirrors the save-time validation in handle_post('/api/envs').
-func validateEnvs(data map[string]any) error {
-	envIDs := map[string]bool{}
-	for _, envAny := range toAnySlice(data["environments"]) {
-		env, _ := envAny.(map[string]any)
-		eid := pStr(env, "id")
-		if eid == "" || !envIDRe.MatchString(eid) {
-			return errors.New("invalid environment id")
-		}
-		if envIDs[eid] {
-			return fmt.Errorf("Duplicate environment ID '%s'", eid)
-		}
-		envIDs[eid] = true
-
-		// repos/ips declare the environment's allowed scope. When repos is
-		// non-empty, every worktree repo (env-level and per-process binding)
-		// must be one of them — selecting outside the declared set is rejected
-		// so a process can't accidentally point at an unrelated repository.
-		allowedRepos, err := scopeList(env, "repos", eid)
-		if err != nil {
-			return err
-		}
-		if _, err := scopeList(env, "ips", eid); err != nil {
-			return err
-		}
-		var repoScope map[string]bool
-		if len(allowedRepos) > 0 {
-			repoScope = make(map[string]bool, len(allowedRepos))
-			for _, r := range allowedRepos {
-				repoScope[pathutil.ExpandUser(r)] = true
-			}
-			if rp := pStr(pMap(env, "worktree"), "repo_path"); rp != "" && !repoScope[pathutil.ExpandUser(rp)] {
-				return fmt.Errorf("Environment '%s' worktree repo_path '%s' is not in the environment's repos", eid, rp)
-			}
-		}
-
-		procIDs := map[string]bool{}
-		procs := processes(env)
-		for _, proc := range procs {
-			pid, ok := proc["id"].(string)
-			if !ok || pid == "" {
-				return fmt.Errorf("Process ID is required and must be a string in environment '%s'", eid)
-			}
-			if procIDs[pid] {
-				return fmt.Errorf("Duplicate process ID '%s' in environment '%s'", pid, eid)
-			}
-			procIDs[pid] = true
-
-			if _, err := parsePortSpec(proc["port"]); err != nil {
-				return fmt.Errorf("Process '%s' port must be a port (3000) or range (3000-3010) within 1-65535 in environment '%s'", pid, eid)
-			}
-
-			if binding, present := proc["binding"]; present && binding != nil {
-				bm, ok := binding.(map[string]any)
-				if !ok {
-					return fmt.Errorf("Process '%s' binding must be an object in environment '%s'", pid, eid)
-				}
-				brepo, okR := bindingStr(bm, "repo_path")
-				bbranch, okB := bindingStr(bm, "branch")
-				if !okR || !okB {
-					return fmt.Errorf("Process '%s' binding repo_path/branch must be strings in environment '%s'", pid, eid)
-				}
-				if (brepo != "") != (bbranch != "") {
-					return fmt.Errorf("Process '%s' binding needs both repo_path and branch in environment '%s'", pid, eid)
-				}
-				if repoScope != nil && brepo != "" && !repoScope[pathutil.ExpandUser(brepo)] {
-					return fmt.Errorf("Process '%s' binding repo_path '%s' is not in environment '%s' repos", pid, brepo, eid)
-				}
-			}
-
-			if strategy, present := proc["port_strategy"]; present && strategy != nil {
-				s, _ := strategy.(string)
-				if s != "baton" && s != "offset" {
-					return fmt.Errorf("Process '%s' port_strategy must be 'baton' or 'offset' in environment '%s'", pid, eid)
-				}
-				if s == "offset" {
-					envVar := pStr(proc, "port_env_var")
-					if envVar == "" || !envVarRe.MatchString(envVar) {
-						return fmt.Errorf("Process '%s' offset strategy needs a valid port_env_var (e.g. PORT) in environment '%s'", pid, eid)
-					}
-					if ports, _ := parsePortSpec(proc["port"]); len(ports) == 0 {
-						return fmt.Errorf("Process '%s' offset strategy needs a base port in environment '%s'", pid, eid)
-					}
-				}
-			}
-		}
-
-		if err := validateDeps(procs, eid); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validateDeps checks for unknown/circular dependencies with env-scoped messages.
-// It shares the dependency-sort core with topoSort (planner.go) so the two can't
-// drift; only the error wording differs (scoped to the environment id here).
-func validateDeps(procs []map[string]any, eid string) error {
-	_, unknownDep, badProc, cyclic := topoOrder(decodeProcesses(procs))
-	if unknownDep != "" {
-		return fmt.Errorf("Dependency '%s' for process '%s' not found in environment '%s'", unknownDep, badProc, eid)
-	}
-	if cyclic {
-		return fmt.Errorf("Circular dependency detected in environment '%s'", eid)
-	}
-	return nil
 }
 
 // --- small helpers shared across the package ---
@@ -373,10 +259,13 @@ func pMap(m map[string]any, key string) map[string]any {
 	return v
 }
 
-func processes(envDef map[string]any) []map[string]any {
+func processes(envDef map[string]any) []map[string]any { return objSlice(envDef["processes"]) }
+
+// objSlice returns the object entries of a JSON array value, skipping others.
+func objSlice(v any) []map[string]any {
 	var out []map[string]any
-	for _, p := range toAnySlice(envDef["processes"]) {
-		if m, ok := p.(map[string]any); ok {
+	for _, item := range toAnySlice(v) {
+		if m, ok := item.(map[string]any); ok {
 			out = append(out, m)
 		}
 	}
@@ -388,32 +277,6 @@ func toAnySlice(v any) []any {
 	return s
 }
 
-// scopeList validates that env[key], if present, is an array of strings and
-// returns its trimmed, non-empty entries. A present non-array (or a non-string
-// element) is an error, so a malformed scope can't silently disable the
-// repo-scope constraint.
-func scopeList(env map[string]any, key, eid string) ([]string, error) {
-	v, present := env[key]
-	if !present || v == nil {
-		return nil, nil
-	}
-	arr, ok := v.([]any)
-	if !ok {
-		return nil, fmt.Errorf("Environment '%s' %s must be an array of strings", eid, key)
-	}
-	out := make([]string, 0, len(arr))
-	for _, item := range arr {
-		s, ok := item.(string)
-		if !ok {
-			return nil, fmt.Errorf("Environment '%s' %s must be an array of strings", eid, key)
-		}
-		if s = strings.TrimSpace(s); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out, nil
-}
-
 func toStringSlice(v any) []string {
 	var out []string
 	for _, item := range toAnySlice(v) {
@@ -422,16 +285,6 @@ func toStringSlice(v any) []string {
 		}
 	}
 	return out
-}
-
-// bindingStr returns (value, isStringOrAbsent). A present non-string fails the check.
-func bindingStr(m map[string]any, key string) (string, bool) {
-	v, present := m[key]
-	if !present || v == nil {
-		return "", true
-	}
-	s, ok := v.(string)
-	return s, ok
 }
 
 func toIntVal(v any) int {

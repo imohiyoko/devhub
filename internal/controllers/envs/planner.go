@@ -149,32 +149,56 @@ func batonKillTargets(procs []process, live map[int]int) []BatonKill {
 	return targets
 }
 
-// topoOrder runs Kahn's algorithm over the processes' DependsOn edges and
+// depNode is the (id, depends_on) view the dependency sort runs over —
+// processes and components share the algorithm through it.
+type depNode struct {
+	id   string
+	deps []string
+}
+
+func procNodes(procs []process) []depNode {
+	nodes := make([]depNode, 0, len(procs))
+	for _, p := range procs {
+		nodes = append(nodes, depNode{id: p.ID, deps: p.DependsOn})
+	}
+	return nodes
+}
+
+func componentNodes(comps []component) []depNode {
+	nodes := make([]depNode, 0, len(comps))
+	for _, c := range comps {
+		nodes = append(nodes, depNode{id: c.ID, deps: c.DependsOn})
+	}
+	return nodes
+}
+
+// topoOrder runs Kahn's algorithm over the nodes' dependency edges and
 // returns them in dependency order. The returned order is valid only when both
 // unknownDep and cyclic are zero/false. On an unknown dependency it reports the
-// missing dep and the process that referenced it; on a cycle it sets cyclic.
-// Callers (validateDeps, topoSort) format their own error messages so they can
-// scope them to an environment id without duplicating the algorithm.
-func topoOrder(procs []process) (order []string, unknownDep, badProc string, cyclic bool) {
+// missing dep and the node that referenced it; on a cycle it sets cyclic.
+// Callers (validateDeps, validateComponentDeps, topoSort) format their own
+// error messages so they can scope them to an environment id and a node noun
+// without duplicating the algorithm.
+func topoOrder(nodes []depNode) (order []string, unknownDep, badNode string, cyclic bool) {
 	inDegree := map[string]int{}
 	adj := map[string][]string{}
-	for _, p := range procs {
-		inDegree[p.ID] = 0
-		adj[p.ID] = nil
+	for _, n := range nodes {
+		inDegree[n.id] = 0
+		adj[n.id] = nil
 	}
-	for _, p := range procs {
-		for _, dep := range p.DependsOn {
+	for _, n := range nodes {
+		for _, dep := range n.deps {
 			if _, ok := adj[dep]; !ok {
-				return nil, dep, p.ID, false
+				return nil, dep, n.id, false
 			}
-			adj[dep] = append(adj[dep], p.ID)
-			inDegree[p.ID]++
+			adj[dep] = append(adj[dep], n.id)
+			inDegree[n.id]++
 		}
 	}
 	var queue []string
-	for _, p := range procs { // iterate procs (stable order) to mirror dict insertion order
-		if inDegree[p.ID] == 0 {
-			queue = append(queue, p.ID)
+	for _, n := range nodes { // iterate nodes (stable order) to mirror dict insertion order
+		if inDegree[n.id] == 0 {
+			queue = append(queue, n.id)
 		}
 	}
 	for len(queue) > 0 {
@@ -188,7 +212,7 @@ func topoOrder(procs []process) (order []string, unknownDep, badProc string, cyc
 			}
 		}
 	}
-	if len(order) != len(procs) {
+	if len(order) != len(nodes) {
 		return nil, "", "", true
 	}
 	return order, "", "", false
@@ -196,7 +220,7 @@ func topoOrder(procs []process) (order []string, unknownDep, badProc string, cyc
 
 // topoSort returns process ids in dependency order, or an error on a cycle / unknown dep.
 func topoSort(procs []process) ([]string, error) {
-	order, unknownDep, badProc, cyclic := topoOrder(procs)
+	order, unknownDep, badProc, cyclic := topoOrder(procNodes(procs))
 	if unknownDep != "" {
 		return nil, fmt.Errorf("Dependency '%s' for process '%s' not found in environment", unknownDep, badProc)
 	}

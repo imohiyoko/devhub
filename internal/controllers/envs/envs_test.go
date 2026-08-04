@@ -269,3 +269,164 @@ func TestValidateEnvs(t *testing.T) {
 		t.Error("non-array repos should error")
 	}
 }
+
+func TestValidateDocVersion(t *testing.T) {
+	for _, doc := range []map[string]any{
+		{}, // absent = v1
+		{"version": float64(1), "environments": []any{}}, // explicit v1
+		{"version": float64(2), "environments": []any{}}, // v2
+	} {
+		if err := validateEnvs(doc); err != nil {
+			t.Errorf("validateEnvs(%v) errored: %v", doc, err)
+		}
+	}
+	// A fractional version must be rejected, not truncated into a supported one.
+	for _, v := range []any{float64(3), float64(1.5), float64(2.5), "2", true} {
+		if err := validateEnvs(map[string]any{"version": v}); err == nil {
+			t.Errorf("version %v should be rejected", v)
+		}
+	}
+}
+
+// v2Env wraps one v2 environment into a full document for validateEnvs.
+func v2Doc(env map[string]any) map[string]any {
+	return map[string]any{"version": float64(2), "environments": []any{env}}
+}
+
+// TestValidateEnvsV2AcceptsPlanExample feeds the design doc's own §8 example
+// (trimmed) through save-time validation: the shape the plan promises must be
+// accepted verbatim.
+func TestValidateEnvsV2AcceptsPlanExample(t *testing.T) {
+	doc := v2Doc(map[string]any{
+		"id": "microservices-local", "name": "マイクロサービス検証環境",
+		"runtime": map[string]any{"provider": "colima", "profile": "development", "engine": "docker"},
+		"components": []any{
+			map[string]any{"id": "mysql", "label": "MySQL", "kind": "compose_service", "lifecycle": "shared",
+				"compose": map[string]any{"cwd": "~/projects/platform", "files": []any{"compose.yml"},
+					"project": "platform-local", "services": []any{"mysql"}},
+				"depends_on": []any{}},
+			map[string]any{"id": "accounting-api", "kind": "compose_service",
+				"compose": map[string]any{"cwd": "~/projects/accounting", "files": []any{"compose.yml"},
+					"project": "accounting-local", "services": []any{"api"}},
+				"depends_on": []any{"mysql"}},
+			map[string]any{"id": "billing-api", "kind": "compose_service",
+				"compose": map[string]any{"cwd": "~/projects/billing", "files": []any{"compose.yml"},
+					"project": "billing-local", "services": []any{"api"}},
+				"depends_on": []any{"mysql"}},
+		},
+		"scenarios": []any{
+			map[string]any{"id": "accounting", "name": "会計", "components": []any{"accounting-api"}},
+			map[string]any{"id": "billing", "name": "請求", "components": []any{"billing-api"}},
+		},
+	})
+	if err := validateEnvs(doc); err != nil {
+		t.Errorf("plan §8 example rejected: %v", err)
+	}
+}
+
+func TestValidateEnvsV2(t *testing.T) {
+	compose := func(project string) map[string]any {
+		return map[string]any{"cwd": "~/p", "project": project, "services": []any{"svc"}}
+	}
+	valid := v2Doc(map[string]any{
+		"id": "micro",
+		"components": []any{
+			map[string]any{"id": "db", "kind": "compose_service", "lifecycle": "shared", "compose": compose("p-local")},
+			map[string]any{"id": "api", "command": "run", "port": float64(3000), "depends_on": []any{"db"}},
+		},
+		"scenarios": []any{map[string]any{"id": "main", "components": []any{"api"}}},
+	})
+	if err := validateEnvs(valid); err != nil {
+		t.Fatalf("valid v2 errored: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		env  map[string]any
+		want string
+	}{
+		{"v2 env with processes", map[string]any{"id": "e", "processes": []any{}},
+			"must not have processes"},
+		{"non-object runtime", map[string]any{"id": "e", "runtime": "colima"},
+			"runtime must be an object"},
+		{"non-array components", map[string]any{"id": "e", "components": "nope"},
+			"components must be an array"},
+		{"non-object component", map[string]any{"id": "e", "components": []any{"nope"}},
+			"components must be objects"},
+		{"missing component id", map[string]any{"id": "e", "components": []any{map[string]any{"kind": "host_process"}}},
+			"Component ID is required"},
+		{"duplicate component id", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a"}, map[string]any{"id": "a"}}},
+			"Duplicate component ID"},
+		{"bad kind", map[string]any{"id": "e", "components": []any{map[string]any{"id": "a", "kind": "vm"}}},
+			"kind must be"},
+		{"bad lifecycle", map[string]any{"id": "e", "components": []any{map[string]any{"id": "a", "lifecycle": "forever"}}},
+			"lifecycle must be"},
+		{"compose without payload", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a", "kind": "compose_service"}}},
+			"needs a compose object"},
+		{"compose without cwd", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a", "kind": "compose_service", "compose": map[string]any{"project": "p", "services": []any{"s"}}}}},
+			"needs a cwd"},
+		{"compose without project", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a", "kind": "compose_service", "compose": map[string]any{"cwd": "~/p", "services": []any{"s"}}}}},
+			"needs a project"},
+		{"compose without services", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a", "kind": "compose_service", "compose": map[string]any{"cwd": "~/p", "project": "p"}}}},
+			"at least one service"},
+		{"host component with bad port", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a", "port": "abc"}}},
+			"port must be"},
+		{"host offset without env var", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a", "port": float64(3000), "port_strategy": "offset"}}},
+			"port_env_var"},
+		{"shared depending on scenario component", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "shared1", "lifecycle": "shared", "command": "run", "depends_on": []any{"scoped1"}},
+			map[string]any{"id": "scoped1", "command": "run"}}},
+			"Shared component 'shared1' cannot depend on scenario component 'scoped1'"},
+		{"unknown dependency", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a", "depends_on": []any{"ghost"}}}},
+			"Dependency 'ghost' for component 'a' not found"},
+		// A malformed depends_on must be rejected, not silently decoded into
+		// fewer edges than the author wrote.
+		{"scalar depends_on", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "db"}, map[string]any{"id": "a", "depends_on": "db"}}},
+			"depends_on must be an array of component ids"},
+		{"depends_on with a non-string entry", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "db"}, map[string]any{"id": "a", "depends_on": []any{"db", float64(42)}}}},
+			"depends_on must be an array of component ids"},
+		{"dependency cycle", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "a", "depends_on": []any{"b"}},
+			map[string]any{"id": "b", "depends_on": []any{"a"}}}},
+			"Circular dependency"},
+		{"non-array scenarios", map[string]any{"id": "e", "scenarios": "nope"},
+			"scenarios must be an array"},
+		{"missing scenario id", map[string]any{"id": "e", "scenarios": []any{map[string]any{"name": "x"}}},
+			"Scenario ID is required"},
+		{"duplicate scenario id", map[string]any{"id": "e", "scenarios": []any{
+			map[string]any{"id": "s"}, map[string]any{"id": "s"}}},
+			"Duplicate scenario ID"},
+		{"scenario referencing unknown component", map[string]any{"id": "e", "scenarios": []any{
+			map[string]any{"id": "s", "components": []any{"ghost"}}}},
+			"references unknown component 'ghost'"},
+		{"scenario with non-string component ref", map[string]any{"id": "e", "scenarios": []any{
+			map[string]any{"id": "s", "components": []any{float64(1)}}}},
+			"array of component ids"},
+	}
+	for _, c := range cases {
+		err := validateEnvs(v2Doc(c.env))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want containing %q", c.name, err, c.want)
+		}
+	}
+
+	// Listing a shared component in a scenario is redundant but allowed.
+	sharedListed := v2Doc(map[string]any{
+		"id":         "e",
+		"components": []any{map[string]any{"id": "db", "kind": "compose_service", "lifecycle": "shared", "compose": compose("p")}},
+		"scenarios":  []any{map[string]any{"id": "s", "components": []any{"db"}}},
+	})
+	if err := validateEnvs(sharedListed); err != nil {
+		t.Errorf("shared component listed in scenario should be allowed: %v", err)
+	}
+}
