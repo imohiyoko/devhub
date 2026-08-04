@@ -31,15 +31,20 @@ type componentStatus struct {
 // componentStates observes every component of env. A host_process's state is
 // approximated by port LISTEN (plan §5): a component whose identifying ports
 // have a listener counts as running, one with identifying ports but no
-// listener as stopped, and one with no port to look for as unknown. Kinds
-// without a state adapter (compose_service, until the Docker adapter lands)
-// are unknown too. Unknown components are never stopped automatically.
-func componentStates(env environment, launches []any, live map[int]int) map[string]componentStatus {
+// listener as stopped, and one with no port to look for as unknown. States for
+// kinds this pure function cannot observe are passed in through adapted (the
+// Compose adapter fills in compose_service); a kind with no adapter at all is
+// unknown. Unknown components are never stopped automatically.
+func componentStates(env environment, launches []any, live map[int]int, adapted map[string]componentStatus) map[string]componentStatus {
 	ports := portsByProcess(env, launches)
 	out := make(map[string]componentStatus, len(env.Components))
 	for _, comp := range env.Components {
 		if comp.Kind != kindHostProcess {
-			out[comp.ID] = componentStatus{stateUnknown, fmt.Sprintf("kind '%s' の状態取得は未対応です", comp.Kind)}
+			status, ok := adapted[comp.ID]
+			if !ok {
+				status = componentStatus{stateUnknown, fmt.Sprintf("kind '%s' の状態取得は未対応です", comp.Kind)}
+			}
+			out[comp.ID] = status
 			continue
 		}
 		observable := ports[comp.ID]
