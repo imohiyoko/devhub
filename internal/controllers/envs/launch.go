@@ -172,8 +172,8 @@ func (c *Controller) startEnvironment(envID string, async bool) ([]BatonKill, er
 	if err != nil {
 		return killed, err
 	}
-	c.runSpawns(steps, async)
-	return killed, nil
+	// The async (HTTP) path returns no failures — see runSpawns.
+	return killed, spawnErr(c.runSpawns(steps, async))
 }
 
 func tokenHex(n int) string {
