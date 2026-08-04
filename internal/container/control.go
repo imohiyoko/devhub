@@ -16,9 +16,13 @@ package container
 // file asks for a listing before it acts: an operation may only name a
 // container the source is reporting right now. A caller cannot hand devhub an
 // arbitrary string and have it reach a command line, cannot reach a source
-// devhub does not know, and cannot act on something the panel never showed. The
-// cost is one `ps` per operation, which is the same trade profile.go makes when
-// it looks a VM up before touching it.
+// devhub does not know, and cannot act on something the panel never showed.
+//
+// The cost is one sweep of the machine per operation — the same listing the
+// panel itself does, `colima list` plus a `ps` per source, run concurrently.
+// That is the trade profile.go makes when it looks a VM up before touching it,
+// and it is why control endpoints appear in the container-runtime and
+// containers-list Surfaces as well as their own.
 //
 // Deliberately absent: anything that removes. No `rm`, no `prune`, no
 // `system prune` — those destroy state that cannot be recovered by pressing the
@@ -181,36 +185,78 @@ type ContainerTarget struct {
 // not run. It is the bound this file's Surface rests on: past here, the ID in
 // the argv is one the engine itself just reported.
 //
-// The listing is deliberately not cached. A container that exited a second ago
-// is one the user should be told about rather than have devhub act on a stale
-// row — and the panel's own view is a page load old by definition.
+// One sweep, and the answer comes out of it. Containers already lists every
+// source concurrently, folds a source that failed into its own Available and
+// Reason, and collapses aliases so each container appears once under the source
+// that owns it. Listing the target again would pay a second time for a result
+// no more current than the one already in hand.
+//
+// Nothing here is cached. A container that exited a second ago is one the user
+// should be told about rather than have devhub act on a stale row — and the
+// panel's own view is a page load old by definition.
 func (r *Runtime) ResolveContainer(ctx context.Context, sourceID, id string) (ContainerTarget, error) {
 	if !ValidContainerID(id) {
 		return ContainerTarget{}, fmt.Errorf("%w: %q", ErrContainerMissing, id)
 	}
-	sources, _ := r.Containers(ctx)
-	for _, src := range sources {
-		if src.ID != sourceID {
+	sources, all := r.Containers(ctx)
+
+	src, ok := findSource(sources, sourceID)
+	if !ok {
+		return ContainerTarget{}, ErrSourceMissing
+	}
+	// An alias's rows were folded onto the source it aliases, so that is where
+	// they are. A bounded walk rather than recursion: nothing builds a cycle
+	// today, and a lookup that spins because something started to is worse than
+	// one that stops and reports.
+	for hops := 0; src.AliasOf != "" && hops <= len(sources); hops++ {
+		next, ok := findSource(sources, src.AliasOf)
+		if !ok {
+			break
+		}
+		src = next
+	}
+	if !src.Available {
+		return ContainerTarget{}, fmt.Errorf("%w: %s", ErrSourceMissing, src.Reason)
+	}
+
+	var match *Container
+	for i := range all {
+		c := &all[i]
+		if c.Source != src.ID || !sameContainerID(c.ID, id) {
 			continue
 		}
-		if !src.Available {
-			return ContainerTarget{}, fmt.Errorf("%w: %s", ErrSourceMissing, src.Reason)
+		// An ambiguous prefix is refused rather than resolved to whichever came
+		// first. The point of resolving is that the operation acts on the
+		// container the caller meant, and here devhub cannot tell which.
+		if match != nil {
+			return ContainerTarget{}, fmt.Errorf("%w: %q は複数のコンテナに一致します", ErrContainerMissing, id)
 		}
-		// An alias reports its containers under the source it aliases, so an
-		// operation naming it would look them up somewhere they are not listed.
-		if src.AliasOf != "" {
-			return r.ResolveContainer(ctx, src.AliasOf, id)
-		}
-		found, err := r.Inventory.List(ctx, src)
-		if err != nil {
-			return ContainerTarget{}, err
-		}
-		for _, c := range found {
-			if strings.EqualFold(c.ID, id) {
-				return ContainerTarget{Source: src, Container: c}, nil
-			}
-		}
+		match = c
+	}
+	if match == nil {
 		return ContainerTarget{}, ErrContainerMissing
 	}
-	return ContainerTarget{}, ErrSourceMissing
+	return ContainerTarget{Source: src, Container: *match}, nil
+}
+
+func findSource(sources []Source, id string) (Source, bool) {
+	for _, s := range sources {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return Source{}, false
+}
+
+// sameContainerID reports whether two IDs name one container. `docker ps`
+// prints twelve hex digits and `--no-trunc` prints sixty-four, so which form a
+// caller holds depends on where they read it; the short one is a prefix of the
+// long one. Comparing for equality alone would mean the panel is the only
+// client that can drive this API, which is the opposite of the point.
+func sameContainerID(listed, asked string) bool {
+	a, b := strings.ToLower(listed), strings.ToLower(asked)
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	return a != "" && strings.HasPrefix(b, a)
 }
