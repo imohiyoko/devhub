@@ -11,6 +11,7 @@ package envs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -47,6 +48,12 @@ type RuntimeProvider struct {
 	ID        string
 	Label     string
 	Available bool
+	// Supported is false when this OS can never offer the provider, as opposed
+	// to Available, which is about right now. The distinction is what the UI
+	// needs to tell "install Colima and it will work" from "you are on Linux"
+	// — the first is worth showing with its reason, the second is noise and is
+	// hidden entirely (plan §10).
+	Supported bool
 	// Reason explains an unavailable provider. It is empty when Available.
 	Reason string
 	// Engines are the container engines this provider can run. Empty for the
@@ -58,9 +65,9 @@ type RuntimeProvider struct {
 // RuntimeProviders reports the execution bases available on this host. It is
 // read-only: it looks for CLIs and lists Colima profiles, and starts nothing.
 func (c *Controller) RuntimeProviders(ctx context.Context) []RuntimeProvider {
-	host := RuntimeProvider{ID: providerHost, Label: "ホスト", Available: true, Engines: []string{}}
+	host := RuntimeProvider{ID: providerHost, Label: "ホスト", Available: true, Supported: true, Engines: []string{}}
 
-	docker := RuntimeProvider{ID: providerDocker, Label: "Docker", Available: true, Engines: []string{engineDocker}}
+	docker := RuntimeProvider{ID: providerDocker, Label: "Docker", Available: true, Supported: true, Engines: []string{engineDocker}}
 	if err := c.compose.Available(ctx); err != nil {
 		docker.Available, docker.Reason = false, err.Error()
 	}
@@ -68,10 +75,13 @@ func (c *Controller) RuntimeProviders(ctx context.Context) []RuntimeProvider {
 	// Colima advertises the engines devhub can drive on it, not every engine
 	// Colima itself can host: an option the user could pick and devhub could
 	// not act on is worse than one that is absent with a reason.
-	colima := RuntimeProvider{ID: providerColima, Label: "Colima", Engines: drivableEngines()}
+	colima := RuntimeProvider{ID: providerColima, Label: "Colima", Supported: true, Engines: drivableEngines()}
 	profiles, err := c.colima.Profiles(ctx)
 	if err != nil {
 		colima.Reason = err.Error()
+		// The one failure that is about the machine rather than its setup: no
+		// amount of installing makes Colima available on Linux or Windows.
+		colima.Supported = !errors.Is(err, errColimaUnsupportedOS)
 	} else {
 		colima.Available = true
 		for _, p := range profiles {
@@ -202,7 +212,8 @@ func runtimeProvidersJSON(providers []RuntimeProvider) map[string]any {
 			engines = append(engines, e)
 		}
 		out = append(out, map[string]any{
-			"id": p.ID, "label": p.Label, "available": p.Available, "reason": p.Reason,
+			"id": p.ID, "label": p.Label, "available": p.Available,
+			"supported": p.Supported, "reason": p.Reason,
 			"engines": engines, "profiles": profiles,
 		})
 	}
