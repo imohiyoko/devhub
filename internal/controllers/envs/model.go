@@ -28,6 +28,20 @@ const (
 	defaultScenarioName = "デフォルト"
 )
 
+// Runtime providers and container engines (plan §5). A provider is where
+// commands run; an engine is what runs containers inside a provider.
+const (
+	providerHost     = "host"
+	providerDocker   = "docker"
+	providerColima   = "colima"
+	engineDocker     = "docker"
+	engineContainerd = "containerd"
+
+	// defaultColimaProfile is the profile colima itself uses when none is
+	// given (`colima start` without -p).
+	defaultColimaProfile = "default"
+)
+
 // environment is one entry of the envs document's environments array.
 //
 // Components/Scenarios and Processes are two views of the same definition,
@@ -40,9 +54,39 @@ type environment struct {
 	ID         string
 	Name       string
 	Worktree   worktree
+	Runtime    runtimeSpec
 	Processes  []process
 	Components []component
 	Scenarios  []scenario
+}
+
+// runtimeSpec is the execution base a v2 environment declares for its
+// container components. Profile and Engine are meaningful for the colima
+// provider only.
+//
+// The zero-ish default is provider "docker": a document that says nothing
+// keeps using whatever Docker context the user's shell resolves to, which is
+// what devhub did before runtimes existed.
+type runtimeSpec struct {
+	Provider string // providerHost | providerDocker | providerColima
+	Profile  string // colima profile name
+	Engine   string // engineDocker | engineContainerd; "" means "whatever the profile runs"
+}
+
+// decodeRuntime reads the optional runtime block. Like the rest of decoding it
+// is lenient — validateRuntime is the gate that rejects unknown providers at
+// save time.
+func decodeRuntime(m map[string]any) runtimeSpec {
+	rt := pMap(m, "runtime")
+	spec := runtimeSpec{
+		Provider: pStr(rt, "provider"),
+		Profile:  pStr(rt, "profile"),
+		Engine:   pStr(rt, "engine"),
+	}
+	if spec.Provider == "" {
+		spec.Provider = providerDocker
+	}
+	return spec
 }
 
 // component is the switchable unit of start/stop/status: a host process (the
@@ -154,7 +198,12 @@ func decodeEnvironment(m map[string]any, version int) environment {
 	wt := pMap(m, "worktree")
 	enabled, _ := wt["enabled"].(bool)
 	env.Worktree = worktree{Enabled: enabled, RepoPath: pStr(wt, "repo_path"), Branch: pStr(wt, "branch")}
+	// v1 has no runtime block, and reading one out of a hand-edited v1
+	// document would report an execution base that nothing in the v1 path
+	// honours. It carries the default instead.
+	env.Runtime = runtimeSpec{Provider: providerDocker}
 	if version >= 2 {
+		env.Runtime = decodeRuntime(m)
 		for _, cm := range objSlice(m["components"]) {
 			env.Components = append(env.Components, decodeComponent(cm))
 		}

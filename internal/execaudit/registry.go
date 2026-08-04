@@ -72,15 +72,6 @@ var Registry = []Surface{
 		Gate:     "Not reachable over HTTP; runs in-process at boot only.",
 	},
 	{
-		ID:       "envs-compose",
-		Binaries: []string{"docker"},
-		Kind:     Fixed,
-		Trigger:  "GET /api/envs/state and POST /api/envs/switch/plan (read: `ps`); POST /api/envs/switch/apply (write: `up`/`stop`)",
-		Input:    "Fixed argv per operation: `compose --project-name <project> [--file <f>…]` followed by `ps --format json --all`, `up --detach --wait <services>` or `stop <services>`. project/files/cwd/services come from the saved env definition, not from the request, and no command string is accepted from the caller.",
-		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Writing env definitions goes through POST /api/envs (same gates).",
-		Notes:    "Every invocation is scoped to the definition's compose project name and to the services that definition declares, which is how devhub bounds itself to the containers the environment owns: it can start and stop those, and nothing else. The global Docker context is never changed (plan §6.3); a context/profile will be passed per command when Colima support lands. All calls funnel through execRunner in internal/controllers/envs/command.go.",
-	},
-	{
 		ID:       "envs-open-terminal",
 		Binaries: []string{"settings.terminal.<os>.emulator: ghostty|wt|gnome-terminal|xterm", "osascript (Terminal.app/iTerm)"},
 		Kind:     Dynamic,
@@ -106,6 +97,15 @@ var Registry = []Surface{
 		Input:    "Emulator runs the env definition's `command` (from the store, not the request) with env exports. Same command source as envs-run-shell.",
 		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api).",
 		Notes:    "Both the emulator (user config) and the command (saved def) are user-controlled; see envs-run-shell for why launch-by-id is the trust model.",
+	},
+	{
+		ID:       "envs-runtime",
+		Binaries: []string{"docker", "colima"},
+		Kind:     Fixed,
+		Trigger:  "docker: GET /api/envs/state and POST /api/envs/switch/plan (read: `ps`); POST /api/envs/switch/apply (write: `up`/`stop`); GET /api/envs/runtimes (read: `compose version`). colima: GET /api/envs/runtimes (read: `list`).",
+		Input:    "Fixed argv per operation. docker: `compose --project-name <project> [--file <f>…]` followed by `ps --format json --all`, `up --detach --wait <services>` or `stop <services>`; project/files/cwd/services come from the saved env definition, not from the request. The capability probe is a bare `compose version --short`. colima: `list --json`, which takes no input at all. No command string is accepted from the caller on any path.",
+		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Writing env definitions goes through POST /api/envs (same gates).",
+		Notes:    "Every docker invocation that touches containers is scoped to the definition's compose project name and to the services that definition declares, which is how devhub bounds itself to the containers the environment owns: it can start and stop those, and nothing else. The global Docker context is never changed (plan §6.3) and no --context flag is passed yet, so compose runs against the ambient context; per-command context selection arrives with Colima support. The colima surface is read-only — devhub lists profiles and never starts, stops or reconfigures a VM. All calls funnel through execRunner in internal/controllers/envs/command.go, which is why one Surface covers every runtime adapter.",
 	},
 	{
 		ID:       "git",

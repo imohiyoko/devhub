@@ -121,7 +121,9 @@ func (f *fakePorts) KillPortProcess(port, pid int) error {
 type fakeCompose struct {
 	states map[string]map[string]componentState // project -> service -> state
 	err    error
-	calls  []composeSpec
+	// unavailable is the reason Available reports; nil means Docker is present.
+	unavailable error
+	calls       []composeSpec
 	// ups/stops record what apply operated on as "<project>/<services>", so a
 	// test can assert both the operation and the scope it was confined to;
 	// upErr/stopErr make those operations fail.
@@ -130,6 +132,8 @@ type fakeCompose struct {
 	upErr   error
 	stopErr error
 }
+
+func (f *fakeCompose) Available(context.Context) error { return f.unavailable }
 
 func (f *fakeCompose) ServiceStates(_ context.Context, spec composeSpec) (map[string]componentState, error) {
 	f.calls = append(f.calls, spec)
@@ -190,6 +194,18 @@ type testDeps struct {
 	ports   *fakePorts
 	ws      *fakeWorkspace
 	compose *fakeCompose
+	colima  *fakeColima
+}
+
+// fakeColima answers capability probes without Colima — and, on a CI runner
+// that happens to have it, without the real one.
+type fakeColima struct {
+	profiles []colimaProfile
+	err      error
+}
+
+func (f *fakeColima) Profiles(context.Context) ([]colimaProfile, error) {
+	return f.profiles, f.err
 }
 
 // newTestController wires a controller to the fakes, captures spawns in the
@@ -207,11 +223,15 @@ func newTestController(store *fakeStore, d testDeps) (*Controller, *spawnLog) {
 	if d.compose == nil {
 		d.compose = &fakeCompose{}
 	}
+	if d.colima == nil {
+		d.colima = &fakeColima{err: errColimaMissing}
+	}
 	c := New(store, d.git, d.ports, d.ws)
 	log := &spawnLog{ch: make(chan *exec.Cmd, 16)}
 	c.spawn = log.record
 	c.settle = 0
 	c.compose = d.compose
+	c.colima = d.colima
 	return c, log
 }
 
@@ -637,6 +657,11 @@ func TestHandleGetState(t *testing.T) {
 	db := toAnySlice(env["components"])[0].(map[string]any)
 	if db["shared"] != true || pStr(db, "label") != "DB" || pStr(db, "kind") != kindHostProcess {
 		t.Errorf("component metadata = %v", db)
+	}
+	// The declared execution base travels with the state so the environment
+	// card can show it; a document that declares none reports the default.
+	if got := pStr(pMap(env, "runtime"), "provider"); got != providerDocker {
+		t.Errorf("runtime provider = %q, want %q", got, providerDocker)
 	}
 
 	// A v1 document reports through its generated components and default
