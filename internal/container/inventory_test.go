@@ -205,7 +205,16 @@ func (f *fakeLister) List(_ context.Context, src Source) ([]Container, error) {
 	if err := f.err[src.ID]; err != nil {
 		return nil, err
 	}
-	return f.bySource[src.ID], nil
+	// Stamped with the source, because the real Lister does: parsePS sets it on
+	// every row. A fixture that left it empty would let a consumer that groups
+	// by Source pass here and find nothing in production.
+	out := slices.Clone(f.bySource[src.ID])
+	for i := range out {
+		if out[i].Source == "" {
+			out[i].Source = src.ID
+		}
+	}
+	return out, nil
 }
 
 // askedSources is the recorded list, safe to read after Containers returns.
