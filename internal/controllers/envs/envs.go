@@ -66,9 +66,9 @@ type Controller struct {
 	ports     portsService
 	workspace workspaceService
 
-	// compose reports the state of compose_service components. Per-instance
+	// compose reads and operates on compose_service components. Per-instance
 	// like the seams below so tests answer without Docker installed.
-	compose composeStater
+	compose composeAdapter
 
 	// spawn starts a prepared command and reports whether it started; settle is
 	// the pause after baton kills before processes start. Both are per-instance
@@ -149,6 +149,12 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, plan)
+	case "/api/envs/switch/apply":
+		results, err := c.applySwitch(data)
+		if err != nil {
+			return err
+		}
+		httpx.WriteJSON(w, http.StatusOK, results)
 	case "/api/envs/launches/remove":
 		launchID := pStr(data, "launch_id")
 		if launchID == "" {
@@ -260,39 +266,58 @@ func (c *Controller) environmentStates() (map[string]any, error) {
 // for a target scenario (or an explicit component selection), computed without
 // touching anything. Applying a plan is a separate call.
 func (c *Controller) switchPlan(data map[string]any) (map[string]any, error) {
+	envID, req, err := parseSwitchRequest(data)
+	if err != nil {
+		return nil, err
+	}
+	env, states, err := c.observeEnv(envID)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := planSwitch(env, req, states)
+	if err != nil {
+		return nil, err
+	}
+	return switchPlanJSON(plan), nil
+}
+
+// parseSwitchRequest reads the target of a plan/apply request: an environment
+// and exactly one of a scenario or an explicit component selection.
+func parseSwitchRequest(data map[string]any) (string, switchRequest, error) {
 	envID := pStr(data, "env_id")
 	if envID == "" {
-		return nil, httpx.Errorf(http.StatusBadRequest, "env_id is required")
+		return "", switchRequest{}, httpx.Errorf(http.StatusBadRequest, "env_id is required")
 	}
 	req := switchRequest{ScenarioID: pStr(data, "scenario_id")}
 	selection, selected := data["components"]
 	if selected {
 		ids, ok := stringList(selection)
 		if !ok {
-			return nil, httpx.Errorf(http.StatusBadRequest, "components must be an array of component ids")
+			return "", switchRequest{}, httpx.Errorf(http.StatusBadRequest, "components must be an array of component ids")
 		}
 		req.Components = ids
 	}
 	// An empty components array is a valid target (the shared components
 	// alone), so the request is read by key presence, not by emptiness.
-	byScenario := req.ScenarioID != ""
-	if byScenario == selected {
-		return nil, httpx.Errorf(http.StatusBadRequest, "specify exactly one of scenario_id or components")
+	if byScenario := req.ScenarioID != ""; byScenario == selected {
+		return "", switchRequest{}, httpx.Errorf(http.StatusBadRequest, "specify exactly one of scenario_id or components")
 	}
+	return envID, req, nil
+}
+
+// observeEnv decodes an environment and collects the state its switch planning
+// runs on: the port scan, the launch registry and the compose probes.
+func (c *Controller) observeEnv(envID string) (environment, map[string]componentStatus, error) {
 	env, err := c.findEnv(envID)
 	if err != nil {
-		return nil, err
+		return environment{}, nil, err
 	}
 	launchDoc, err := c.store.LoadLaunches()
 	if err != nil {
-		return nil, err
+		return environment{}, nil, err
 	}
 	states := componentStates(env, toAnySlice(launchDoc["launches"]), c.livePortIndex(), c.composeStates(env))
-	plan, err := planSwitch(env, req, states)
-	if err != nil {
-		return nil, err
-	}
-	return switchPlanJSON(plan), nil
+	return env, states, nil
 }
 
 // composeStates probes the compose projects of env's compose_service
@@ -360,6 +385,9 @@ func switchPlanJSON(plan SwitchPlan) map[string]any {
 		"keep":        steps(plan.Keep),
 		"start":       steps(plan.Start),
 		"warnings":    warnings,
+		// Echoed back on apply so a plan approved against one state is not
+		// applied to another.
+		"fingerprint": plan.Fingerprint,
 	}
 }
 

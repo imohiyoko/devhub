@@ -22,10 +22,18 @@ import (
 // not hang when the daemon is slow to answer or is coming up.
 const composeProbeTimeout = 10 * time.Second
 
-// composeStater reports the state of a compose project's services. The
+// composeUpTimeout bounds one `docker compose up`. It is generous because a
+// first run may pull images; the operation is synchronous by design, since its
+// exit status is what tells the caller the services actually came up.
+const composeUpTimeout = 5 * time.Minute
+
+// composeAdapter is what devhub does with Docker Compose: read the state of a
+// project's services, and start or stop the services a component declares. The
 // Controller holds it as an interface so tests answer without Docker.
-type composeStater interface {
+type composeAdapter interface {
 	ServiceStates(ctx context.Context, spec composeSpec) (map[string]componentState, error)
+	Up(ctx context.Context, spec composeSpec) error
+	Stop(ctx context.Context, spec composeSpec) error
 }
 
 // dockerCompose talks to the local Docker via the `docker compose` CLI.
@@ -47,20 +55,47 @@ func newDockerCompose() *dockerCompose {
 // "docker is missing" and "the daemon is unreachable" are different problems
 // with different fixes, and only Docker can tell them apart reliably.
 func (d *dockerCompose) ServiceStates(ctx context.Context, spec composeSpec) (map[string]componentState, error) {
+	stdout, err := d.run(ctx, spec, "ps", "--format", "json", "--all")
+	if err != nil {
+		return nil, err
+	}
+	return parseComposePS(stdout)
+}
+
+// Up starts the component's services and waits for them to be up. Unlike a
+// host process handed to a terminal, this reports whether the start actually
+// succeeded — that is what `--wait` buys, and why apply can tell the user
+// which components really came up.
+func (d *dockerCompose) Up(ctx context.Context, spec composeSpec) error {
+	_, err := d.run(ctx, spec, append([]string{"up", "--detach", "--wait"}, spec.Services...)...)
+	return err
+}
+
+// Stop stops the component's services, leaving the rest of the project (and
+// any other project) alone.
+func (d *dockerCompose) Stop(ctx context.Context, spec composeSpec) error {
+	_, err := d.run(ctx, spec, append([]string{"stop"}, spec.Services...)...)
+	return err
+}
+
+// run executes one `docker compose` subcommand for spec's project. Building
+// the scoping flags in one place is what guarantees every operation devhub
+// performs — read or write — is confined to the declared project.
+func (d *dockerCompose) run(ctx context.Context, spec composeSpec, sub ...string) (string, error) {
 	if _, err := d.lookPath("docker"); err != nil {
-		return nil, errors.New("docker コマンドが見つかりません")
+		return "", errors.New("docker コマンドが見つかりません")
 	}
 	args := []string{"compose", "--project-name", spec.Project}
 	for _, file := range spec.Files {
 		args = append(args, "--file", pathutil.ExpandUser(file))
 	}
-	args = append(args, "ps", "--format", "json", "--all")
+	args = append(args, sub...)
 
 	stdout, stderr, err := d.runner.Run(ctx, pathutil.ExpandUser(spec.Cwd), "docker", args...)
 	if err != nil {
-		return nil, composeError(stderr, err)
+		return stdout, composeError(stderr, err)
 	}
-	return parseComposePS(stdout)
+	return stdout, nil
 }
 
 // composeError turns a failed invocation into the reason a user sees: Docker's
