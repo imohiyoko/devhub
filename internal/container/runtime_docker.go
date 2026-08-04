@@ -48,6 +48,10 @@ type Adapter interface {
 	// Available reports why the adapter cannot run at all, or nil. It is the
 	// "is this engine usable" half of the runtimes API, so it checks what
 	// every other method needs.
+	//
+	// Implementations must bound themselves: Providers sets no deadline of its
+	// own, so an implementation that blocks on an unbounded context hangs the
+	// runtimes endpoint outright. There is no outer net to catch it.
 	Available(ctx context.Context) error
 	// The operational methods take the environment's runtime and derive what
 	// they need from it — a Docker context, a Colima profile. It is a
@@ -55,6 +59,10 @@ type Adapter interface {
 	// engine globally (plan §6.3): making every call site name the runtime is
 	// what keeps `docker context use` unnecessary, and what stops one
 	// environment's profile leaking into another's commands.
+	//
+	// These bound themselves too, and callers pass a plain background context:
+	// the method knows which subcommand it is about to run and therefore which
+	// budget applies, and no two callers can disagree about it.
 	ServiceStates(ctx context.Context, rt Spec, spec ComposeSpec) (map[string]State, error)
 	Up(ctx context.Context, rt Spec, spec ComposeSpec) error
 	Stop(ctx context.Context, rt Spec, spec ComposeSpec) error

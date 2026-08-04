@@ -12,6 +12,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -288,13 +289,20 @@ func TestComposeForPicksTheAdapter(t *testing.T) {
 // living in fakes_test.go: only this test needs a probe that consumes a
 // deadline, and only this test needs a Colima that consults the context.
 
-// blockingProbe is an engine whose availability probe takes the whole
-// deadline — a daemon that has just started, or a VM still booting.
-type blockingProbe struct{}
+// blockingProbe is an engine whose availability probe does not return until
+// something else happens — a daemon that has just started, or a VM still
+// booting. It unblocks as soon as the Colima probe has run, so the concurrent
+// implementation finishes at once; only the sequential one, where nothing else
+// can run first, pays the full deadline.
+type blockingProbe struct{ colimaRan <-chan struct{} }
 
-func (blockingProbe) Available(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
+func (b blockingProbe) Available(ctx context.Context) error {
+	select {
+	case <-b.colimaRan:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (blockingProbe) ServiceStates(context.Context, Spec, ComposeSpec) (map[string]State, error) {
@@ -308,9 +316,16 @@ func (blockingProbe) Stop(context.Context, Spec, ComposeSpec) error { return nil
 // consults the context, which fakeColima does not, because that is what the
 // real colimaCLI does once past its darwin and lookPath checks: the answer
 // comes from `colima list`, and an expired context fails it.
-type readyColima struct{ profiles []ColimaProfile }
+type readyColima struct {
+	profiles []ColimaProfile
+	// ran is closed on the first probe, which is what lets the docker double
+	// stop waiting. Single-use, so a Once keeps a second call from panicking.
+	ran  chan struct{}
+	once sync.Once
+}
 
-func (c readyColima) Profiles(ctx context.Context) ([]ColimaProfile, error) {
+func (c *readyColima) Profiles(ctx context.Context) ([]ColimaProfile, error) {
+	c.once.Do(func() { close(c.ran) })
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -329,10 +344,14 @@ func (c readyColima) Profiles(ctx context.Context) ([]ColimaProfile, error) {
 // answer instantly when nothing is slow. It takes a probe that actually
 // blocks, which is why the double is here.
 func TestProvidersProbesDoNotStarveEachOther(t *testing.T) {
+	lister := &readyColima{
+		profiles: []ColimaProfile{{Name: "default", Status: "Running", Engine: "docker"}},
+		ran:      make(chan struct{}),
+	}
 	r := &Runtime{
-		Docker:     blockingProbe{},
+		Docker:     blockingProbe{colimaRan: lister.ran},
 		Containerd: &fakeCompose{},
-		Colima:     readyColima{profiles: []ColimaProfile{{Name: "default", Status: "Running", Engine: "docker"}}},
+		Colima:     lister,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
