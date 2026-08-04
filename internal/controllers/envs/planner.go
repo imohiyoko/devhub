@@ -295,25 +295,31 @@ func processEnv(vars []envVar, extraEnv map[string]string) map[string]string {
 	return env
 }
 
-// stopTargetPorts computes the deduplicated, sorted candidate ports for
-// stopping env: the declared port specs of the environment's processes plus
-// the ports its launch records pin down (assigned_port when the launch got an
-// offset port, the recorded spec otherwise — the same precedence the launch
-// list uses for its live badge). Launch records matter beyond the definition:
-// an offset launch listens on a port the definition alone cannot name, and a
-// record keeps a since-edited definition stoppable. Invalid specs are skipped
-// so stopping degrades gracefully on old or hand-edited records.
-func stopTargetPorts(env environment, launches []any) []int {
-	seen := map[int]bool{}
-	addSpec := func(spec any) {
-		if ports, err := parsePortSpec(spec); err == nil {
-			for _, p := range ports {
-				seen[p] = true
+// portsByProcess maps process id -> the ports that identify that process:
+// its declared port spec plus the ports its launch records pin down
+// (assigned_port when the launch got an offset port, the recorded spec
+// otherwise — the same precedence the launch list uses for its live badge).
+// Launch records matter beyond the definition: an offset launch listens on a
+// port the definition alone cannot name, and a record keeps a since-edited
+// definition stoppable, so ids that exist only in records are kept too.
+// Invalid specs are skipped, so stopping and status degrade gracefully on old
+// or hand-edited records.
+func portsByProcess(env environment, launches []any) map[string][]int {
+	seen := map[string]map[int]bool{}
+	addSpec := func(id string, spec any) {
+		ports, err := parsePortSpec(spec)
+		if err != nil {
+			return
+		}
+		for _, p := range ports {
+			if seen[id] == nil {
+				seen[id] = map[int]bool{}
 			}
+			seen[id][p] = true
 		}
 	}
 	for _, p := range env.Processes {
-		addSpec(p.Port)
+		addSpec(p.ID, p.Port)
 	}
 	for _, recAny := range launches {
 		rec, ok := recAny.(map[string]any)
@@ -325,11 +331,33 @@ func stopTargetPorts(env environment, launches []any) []int {
 			if !ok {
 				continue
 			}
+			id := pStr(proc, "id")
 			if ap := toIntVal(proc["assigned_port"]); ap != 0 {
-				seen[ap] = true
+				addSpec(id, ap)
 				continue
 			}
-			addSpec(proc["port"])
+			addSpec(id, proc["port"])
+		}
+	}
+	out := make(map[string][]int, len(seen))
+	for id, ports := range seen {
+		list := make([]int, 0, len(ports))
+		for p := range ports {
+			list = append(list, p)
+		}
+		sort.Ints(list)
+		out[id] = list
+	}
+	return out
+}
+
+// stopTargetPorts computes the deduplicated, sorted candidate ports for
+// stopping env: the union of every process's identifying ports.
+func stopTargetPorts(env environment, launches []any) []int {
+	seen := map[int]bool{}
+	for _, ports := range portsByProcess(env, launches) {
+		for _, p := range ports {
+			seen[p] = true
 		}
 	}
 	out := make([]int, 0, len(seen))
