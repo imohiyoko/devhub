@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>containers — devhub</title>
+<script src="/shared/rebuild-reload.js"></script>
+<script src="/shared/dom.js"></script>
+<script src="/shared/net.js"></script>
+<link rel="stylesheet" href="/shared/theme.css">
+<link rel="stylesheet" href="/shared/ui/shell.css">
+<link rel="stylesheet" href="/shared/ui/components.css">
+<style>
+
+/* app shell + header chrome: shared/ui/shell.css */
+.search {
+  width: 260px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  padding: 6px 9px;
+  outline: none;
+}
+.search:focus { border-color: var(--accent); }
+.search::placeholder { color: var(--muted); }
+.status {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  min-width: 120px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status.ok { color: var(--green); }
+.status.error { color: var(--red); }
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.toggle input { cursor: pointer; }
+
+.source {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0 0 14px;
+  overflow: hidden;
+}
+.source-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 13px;
+  background: rgba(22, 27, 34, 0.72);
+  border-bottom: 1px solid var(--border);
+}
+.source-name { font-weight: 600; font-size: 13px; }
+.source-meta {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+}
+.source-count { color: var(--muted); font-size: 11px; margin-left: auto; }
+/* An unavailable source is shown, not hidden: its containers still exist, and
+   the reason is the part the user can act on. */
+.source-reason {
+  padding: 11px 13px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.source-reason code {
+  font-family: "SF Mono", ui-monospace, monospace;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  text-align: left;
+  padding: 7px 13px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th { color: var(--muted); font-weight: 600; font-size: 11px; }
+tbody tr:last-child td { border-bottom: none; }
+.mono { font-family: "SF Mono", ui-monospace, monospace; }
+.dot { margin-right: 6px; }
+.dot.on { color: var(--green); }
+.dot.off { color: var(--muted); }
+.name { font-weight: 600; }
+.name.unnamed { font-weight: 400; color: var(--muted); }
+.sub { color: var(--muted); font-size: 11px; }
+.stray { color: var(--muted); font-style: italic; }
+.empty { color: var(--muted); font-size: 12px; padding: 18px 13px; text-align: center; }
+main { padding: 16px; overflow-y: auto; }
+</style>
+</head>
+<body>
+
+<header>
+  <a href="/" class="hub-link">← Hub</a>
+  <div class="divider"></div>
+  <h1>containers</h1>
+  <div class="spacer"></div>
+  <input class="search" id="search" type="text" autocomplete="off" placeholder="name / image / project">
+  <label class="toggle"><input type="checkbox" id="showStopped" checked> 停止済みも表示</label>
+  <button class="btn" id="refreshBtn">再読込</button>
+  <div class="status" id="status"></div>
+</header>
+
+<main id="main">
+  <div class="empty">読み込み中...</div>
+</main>
+
+<script>
+let sources = [];
+let containers = [];
+
+const main = $('main');
+const statusEl = $('status');
+const searchEl = $('search');
+const showStoppedEl = $('showStopped');
+
+function setStatus(text, type = '') {
+  statusEl.textContent = text;
+  statusEl.className = `status ${type}`.trim();
+}
+
+// gib renders a byte count the way colima itself talks about VM size. Values
+// come from `colima list --json`, which reports bytes.
+function gib(bytes) {
+  return `${Math.round((bytes / 1073741824) * 10) / 10} GiB`;
+}
+
+async function load() {
+  setStatus('読込中...');
+  try {
+    const data = await apiJson('/api/containers');
+    sources = data.sources || [];
+    containers = data.containers || [];
+    const live = containers.filter(c => c.running).length;
+    setStatus(`${live} running / ${containers.length}`, 'ok');
+  } catch (e) {
+    sources = [];
+    containers = [];
+    setStatus(`エラー: ${e.message}`, 'error');
+  }
+  render();
+}
+
+// visible applies the two filters the header offers. The stopped filter is a
+// view, never a fetch: the server always returns everything, so toggling it
+// cannot miss a container that appeared or vanished between requests.
+function visible() {
+  const q = searchEl.value.trim().toLowerCase();
+  return containers.filter(c => {
+    if (!showStoppedEl.checked && !c.running) return false;
+    if (!q) return true;
+    return [c.display_name, c.image, c.project, c.service, c.ports]
+      .some(v => (v || '').toLowerCase().includes(q));
+  });
+}
+
+// reasonHtml renders a source's reason. The reasons carry a shell command in
+// backticks — the thing the user would actually run — so they are marked up as
+// code. Escaping happens first and the substitution only touches the escaped
+// text, so nothing from a CLI's error message can introduce markup.
+function reasonHtml(reason) {
+  return escapeHtml(reason || '利用できません')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+function sourceMeta(src) {
+  const bits = [];
+  if (src.engine) bits.push(src.engine);
+  if (src.context) bits.push(`context: ${src.context}`);
+  // Reported, never set: colima applies these only at `colima start`, so
+  // changing one means restarting the VM — and shrinking the disk recreates it.
+  if (src.cpus) bits.push(`${src.cpus} CPU`);
+  if (src.memory_bytes) bits.push(`mem ${gib(src.memory_bytes)}`);
+  if (src.disk_bytes) bits.push(`disk ${gib(src.disk_bytes)}`);
+  return bits.join(' · ');
+}
+
+function rowHtml(c) {
+  const nameClass = c.name ? 'name' : 'name unnamed';
+  const owner = c.project
+    ? `${escapeHtml(c.project)} / ${escapeHtml(c.service || '?')}`
+    : '<span class="stray">compose 外</span>';
+  return `<tr>
+    <td>
+      <span class="dot ${c.running ? 'on' : 'off'}">${c.running ? '●' : '○'}</span>
+      <span class="${nameClass} mono">${escapeHtml(c.display_name)}</span>
+      <div class="sub mono">${escapeHtml(c.image)}</div>
+    </td>
+    <td><span class="mono">${escapeHtml(c.state)}</span><div class="sub">${escapeHtml(c.status)}</div></td>
+    <td class="mono">${escapeHtml(c.ports) || '<span class="sub">—</span>'}</td>
+    <td class="mono">${owner}</td>
+  </tr>`;
+}
+
+function sourceHtml(src, rows) {
+  const head = `<div class="source-head">
+      <span class="source-name">${escapeHtml(src.label)}</span>
+      <span class="source-meta">${escapeHtml(sourceMeta(src))}</span>
+      <span class="source-count">${rows.length}</span>
+    </div>`;
+
+  if (!src.available) {
+    return `<section class="source">${head}
+      <div class="source-reason">${reasonHtml(src.reason)}</div>
+    </section>`;
+  }
+  if (!rows.length) {
+    const note = containers.some(c => c.source === src.id)
+      ? '該当するコンテナはありません（絞り込み中）'
+      : 'コンテナはありません';
+    return `<section class="source">${head}<div class="empty">${note}</div></section>`;
+  }
+  return `<section class="source">${head}
+    <table>
+      <thead><tr><th>コンテナ</th><th>状態</th><th>ポート</th><th>compose</th></tr></thead>
+      <tbody>${rows.map(rowHtml).join('')}</tbody>
+    </table>
+  </section>`;
+}
+
+function render() {
+  if (!sources.length) {
+    main.innerHTML = '<div class="empty">コンテナ実行基盤が見つかりません。</div>';
+    return;
+  }
+  const shown = visible();
+  main.innerHTML = sources
+    .map(src => sourceHtml(src, shown.filter(c => c.source === src.id)))
+    .join('');
+}
+
+$('refreshBtn').addEventListener('click', load);
+searchEl.addEventListener('input', render);
+showStoppedEl.addEventListener('change', render);
+load();
+</script>
+</body>
+</html>

@@ -53,6 +53,12 @@ type Source struct {
 	// says why, in the CLI's own words where there is one.
 	Available bool
 	Reason    string
+	// CPUs, MemoryBytes and DiskBytes describe a Colima source's VM. They are
+	// shown, never set — see ColimaProfile for why devhub does not offer to
+	// change them.
+	CPUs        int
+	MemoryBytes int64
+	DiskBytes   int64
 }
 
 // Container is one container as the panel shows it. Every field is what the CLI
@@ -230,6 +236,7 @@ func colimaSource(p Profile) Source {
 	src := Source{
 		ID: ProviderColima + ":" + p.Name, Label: "Colima: " + p.Name,
 		Profile: p.Name, Engine: p.Engine, Context: p.Context,
+		CPUs: p.CPUs, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes,
 	}
 	switch {
 	case !strings.EqualFold(p.Status, "Running"):
