@@ -57,7 +57,8 @@ func TestComponentStates(t *testing.T) {
 	}}}
 	live := map[int]int{3000: 11, 4001: 22}
 
-	states := componentStates(env, launches, live)
+	// No adapted states supplied: the compose component stays unknown.
+	states := componentStates(env, launches, live, nil)
 	for id, want := range map[string]componentState{
 		"up": stateRunning, "down": stateStopped, "portless": stateUnknown,
 		"broken": stateUnknown, "offset": stateRunning, "svc": stateUnknown,
@@ -71,6 +72,12 @@ func TestComponentStates(t *testing.T) {
 	}
 	if states["up"].Reason != "" {
 		t.Errorf("an observed state needs no reason, got %q", states["up"].Reason)
+	}
+
+	// An adapter's answer wins for the kinds this function cannot observe.
+	adapted := map[string]componentStatus{"svc": {State: stateRunning}}
+	if got := componentStates(env, launches, live, adapted)["svc"]; got.State != stateRunning {
+		t.Errorf("adapted state = %+v, want running", got)
 	}
 }
 
