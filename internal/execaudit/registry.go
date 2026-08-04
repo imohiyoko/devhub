@@ -72,6 +72,15 @@ var Registry = []Surface{
 		Gate:     "Not reachable over HTTP; runs in-process at boot only.",
 	},
 	{
+		ID:       "envs-compose",
+		Binaries: []string{"docker"},
+		Kind:     Fixed,
+		Trigger:  "GET /api/envs/state and POST /api/envs/switch/plan — reads the state of an environment's compose_service components",
+		Input:    "Fixed argv: `compose --project-name <project> [--file <f>…] ps --format json --all`. project/files/cwd come from the saved env definition, not from the request, and no command string is accepted from the caller.",
+		Gate:     "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Writing env definitions goes through POST /api/envs (same gates).",
+		Notes:    "Read-only today: only `ps` runs. Every invocation is scoped to the definition's compose project name, which is how devhub bounds itself to containers the environment declares. The global Docker context is never changed (plan §6.3); a context/profile will be passed per command when Colima support lands. All calls funnel through execRunner in internal/controllers/envs/command.go.",
+	},
+	{
 		ID:       "envs-open-terminal",
 		Binaries: []string{"settings.terminal.<os>.emulator: ghostty|wt|gnome-terminal|xterm", "osascript (Terminal.app/iTerm)"},
 		Kind:     Dynamic,

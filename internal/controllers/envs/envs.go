@@ -4,11 +4,13 @@
 package envs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,6 +66,10 @@ type Controller struct {
 	ports     portsService
 	workspace workspaceService
 
+	// compose reports the state of compose_service components. Per-instance
+	// like the seams below so tests answer without Docker installed.
+	compose composeStater
+
 	// spawn launches a prepared command fire-and-forget (errors discarded, as
 	// before); settle is the pause after baton kills before processes start.
 	// Both are per-instance so tests can capture spawns and skip the wait
@@ -77,8 +83,9 @@ type Controller struct {
 func New(store launchStore, git gitService, ports portsService, workspace workspaceService) *Controller {
 	return &Controller{
 		store: store, git: git, ports: ports, workspace: workspace,
-		spawn:  func(cmd *exec.Cmd) { _ = cmd.Start() },
-		settle: 500 * time.Millisecond,
+		compose: newDockerCompose(),
+		spawn:   func(cmd *exec.Cmd) { _ = cmd.Start() },
+		settle:  500 * time.Millisecond,
 	}
 }
 
@@ -221,7 +228,7 @@ func (c *Controller) environmentStates() (map[string]any, error) {
 	live := c.livePortIndex()
 	envs := []any{}
 	for _, env := range decodeEnvironments(envsDoc) {
-		states := componentStates(env, launches, live)
+		states := componentStates(env, launches, live, c.composeStates(env))
 		components := []any{}
 		for _, comp := range env.Components {
 			status := states[comp.ID]
@@ -280,12 +287,54 @@ func (c *Controller) switchPlan(data map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	states := componentStates(env, toAnySlice(launchDoc["launches"]), c.livePortIndex())
+	states := componentStates(env, toAnySlice(launchDoc["launches"]), c.livePortIndex(), c.composeStates(env))
 	plan, err := planSwitch(env, req, states)
 	if err != nil {
 		return nil, err
 	}
 	return switchPlanJSON(plan), nil
+}
+
+// composeStates probes the compose projects of env's compose_service
+// components. Components sharing one project are answered by a single
+// `docker compose ps`. A failed probe is not fatal: those components report
+// unknown carrying Docker's own message, so an environment of host processes
+// still works on a machine without Docker — and an unknown component is never
+// stopped automatically.
+func (c *Controller) composeStates(env environment) map[string]componentStatus {
+	type group struct {
+		spec  composeSpec
+		comps []component
+	}
+	groups := map[string]*group{}
+	var order []string
+	for _, comp := range env.Components {
+		if comp.Kind != kindComposeService {
+			continue
+		}
+		key := strings.Join(append([]string{comp.Compose.Project, comp.Compose.Cwd}, comp.Compose.Files...), "\x00")
+		if groups[key] == nil {
+			groups[key] = &group{spec: comp.Compose}
+			order = append(order, key)
+		}
+		groups[key].comps = append(groups[key].comps, comp)
+	}
+
+	out := make(map[string]componentStatus, len(env.Components))
+	for _, key := range order {
+		g := groups[key]
+		ctx, cancel := context.WithTimeout(context.Background(), composeProbeTimeout)
+		services, err := c.compose.ServiceStates(ctx, g.spec)
+		cancel()
+		for _, comp := range g.comps {
+			if err != nil {
+				out[comp.ID] = componentStatus{stateUnknown, err.Error()}
+				continue
+			}
+			out[comp.ID] = componentStatus{State: composeComponentState(comp.Compose, services)}
+		}
+	}
+	return out
 }
 
 // switchPlanJSON renders a plan for the wire — the boundary where the typed
