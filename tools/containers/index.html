@@ -302,6 +302,9 @@ async function load() {
     setStatus(`エラー: ${e.message}`, 'error');
   }
   render();
+  // Reported so a caller that ran an operation can say what happened to the
+  // operation, rather than letting the listing's outcome speak for it.
+  return !loadError;
 }
 
 // visible applies the two filters the header offers. The stopped filter is a
@@ -603,10 +606,15 @@ main.addEventListener('click', async e => {
       setStatus('');
       return;
     }
-    // The server names what it acted on rather than echoing the request, so
-    // this is the container that really moved.
-    setStatus(`${res.container.name}: ${op} 完了`, 'ok');
-    await load();
+    // Set after the reload, not before. load() writes its own status, so a
+    // listing that failed would otherwise overwrite the result of the
+    // operation with the result of the listing — and the container did stop.
+    // The name comes from the server, which reports what it acted on rather
+    // than echoing the request back.
+    const reloaded = await load();
+    setStatus(reloaded
+      ? `${res.container.name}: ${op} 完了`
+      : `${res.container.name}: ${op} 完了（一覧を再読込できません）`, reloaded ? 'ok' : 'error');
   } catch (err) {
     setStatus(`エラー: ${err.message}`, 'error');
   } finally {
