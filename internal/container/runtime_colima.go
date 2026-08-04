@@ -1,9 +1,11 @@
 package container
 
 // Colima capability detection. Colima is an optional dependency (plan §6.2):
-// it is only consulted on macOS with the CLI present, and no Colima type
-// escapes this file — the rest of the package, and every consumer of it,
-// speaks in Spec, Provider and docker contexts.
+// it is only consulted on macOS with the CLI present, and no colima command
+// escapes this file. ColimaProfile does cross the boundary — it is what a
+// listing returns — but nothing outside runs colima or decides what its output
+// means, and the package and its consumers otherwise speak in Spec, Provider
+// and docker contexts.
 //
 // Everything here is read-only. devhub never starts, stops or reconfigures a
 // profile: that is a slow, resource-reserving operation with effects far

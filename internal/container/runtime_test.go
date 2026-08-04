@@ -1,8 +1,11 @@
 package container
 
-// Tests for the runtime capability report. The point of this endpoint is that
-// an unusable provider is reported *with the reason*, so most of these
-// assertions are about what a host that has nothing installed is told.
+// Tests for runtime.go: the capability report, plus the two lookups beside it.
+// The point of the report is that an unusable provider is named *with the
+// reason*, so most of these assertions are about what a host that has nothing
+// installed is told. ComposeFor and DockerContextFor are about a different
+// guarantee — that devhub follows the declaration rather than what the host
+// turns out to be running.
 
 import (
 	"context"
