@@ -64,7 +64,7 @@ const (
 // prober that says which profiles exist. The fields are exported so a consumer
 // can substitute fakes in its own tests and never reach a real daemon.
 //
-// All three are required. Build one with New, or — in a test — set every field;
+// All four are required. Build one with New, or — in a test — set every field;
 // the methods dereference them without a nil check on purpose, so a half-wired
 // Runtime fails at the line that wired it rather than reporting a host that
 // merely looks like it has nothing installed.
@@ -72,6 +72,11 @@ type Runtime struct {
 	Docker     Adapter
 	Containerd Adapter
 	Colima     ProfileLister
+	// Inventory answers "what is on this machine", as opposed to the adapters'
+	// "is what this environment declared running". It is a separate seam
+	// because it is read-only and deliberately not scoped to any compose
+	// project — see internal/container/inventory.go.
+	Inventory Lister
 }
 
 // New wires the real implementations. Nothing is probed here: construction is
@@ -82,5 +87,6 @@ func New() *Runtime {
 		Docker:     newDockerCompose(),
 		Containerd: newNerdctlCompose(),
 		Colima:     newColimaCLI(),
+		Inventory:  newCLIInventory(),
 	}
 }

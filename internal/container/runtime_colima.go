@@ -44,6 +44,14 @@ type ColimaProfile struct {
 	// "unknown" rather than guessing (plan §6.4).
 	Engine string
 	Arch   string
+	// CPUs, MemoryBytes and DiskBytes are the resources the VM was created
+	// with. devhub reports them and never sets them: colima applies these only
+	// at `colima start`, so changing one means stopping and restarting the VM —
+	// and shrinking the disk means recreating it, losing every image and
+	// container on it. That is the user's call (plan §13).
+	CPUs        int
+	MemoryBytes int64
+	DiskBytes   int64
 }
 
 func (p ColimaProfile) running() bool { return strings.EqualFold(p.Status, "Running") }
@@ -104,6 +112,9 @@ type colimaListEntry struct {
 	Status  string `json:"status"`
 	Arch    string `json:"arch"`
 	Runtime string `json:"runtime"`
+	CPUs    int    `json:"cpus"`
+	Memory  int64  `json:"memory"`
+	Disk    int64  `json:"disk"`
 }
 
 // parseColimaList reads `colima list --json`, which prints one JSON object per
@@ -126,6 +137,7 @@ func parseColimaList(out string) ([]ColimaProfile, error) {
 		}
 		profiles = append(profiles, ColimaProfile{
 			Name: entry.Name, Status: entry.Status, Engine: entry.Runtime, Arch: entry.Arch,
+			CPUs: entry.CPUs, MemoryBytes: entry.Memory, DiskBytes: entry.Disk,
 		})
 	}
 	return profiles, nil

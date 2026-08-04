@@ -37,6 +37,12 @@ type Profile struct {
 	// save-time validation would then reject.
 	Supported bool
 	Reason    string
+	// CPUs, MemoryBytes and DiskBytes are what the VM was created with,
+	// reported so the panel can show them. devhub never sets them: see
+	// ColimaProfile.
+	CPUs        int
+	MemoryBytes int64
+	DiskBytes   int64
 }
 
 // Provider is one execution base and what it can currently do.
@@ -106,6 +112,7 @@ func (r *Runtime) Providers(ctx context.Context) []Provider {
 			colima.Profiles = append(colima.Profiles, Profile{
 				Name: p.Name, Status: p.Status, Engine: p.Engine, Arch: p.Arch,
 				Context: colimaDockerContext(p.Name), Supported: supported, Reason: reason,
+				CPUs: p.CPUs, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes,
 			})
 		}
 	}

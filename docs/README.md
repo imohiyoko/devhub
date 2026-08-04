@@ -14,6 +14,7 @@ docs/
   ports/         ports ツール
   env-launcher/  env-launcher ツール
   diff-kun/      diff-kun ツール
+  containers/    containers ツール
 ```
 
 ## ADR 規約
