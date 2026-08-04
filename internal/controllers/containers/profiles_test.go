@@ -52,15 +52,12 @@ func post(t *testing.T, a *fakeAdmin, path string, body map[string]any) (int, ma
 	t.Helper()
 	rr := httptest.NewRecorder()
 	c := &Controller{admin: a}
-	err := c.HandleProfilePost(rr, httptest.NewRequest(http.MethodPost, path, nil), body)
-	if err != nil {
-		// Controllers signal a status by returning an *HTTPError; anything else
-		// is a plain failure, which the server renders as a 400.
-		var he *httpx.HTTPError
-		if errors.As(err, &he) {
-			return he.Status, map[string]any{"error": he.Msg}
-		}
-		return http.StatusInternalServerError, map[string]any{"error": err.Error()}
+	if err := c.HandleProfilePost(rr, httptest.NewRequest(http.MethodPost, path, nil), body); err != nil {
+		// Rendered by the same function the server uses, rather than restating
+		// its mapping here: a helper that picks its own statuses can agree with
+		// the test and disagree with production, and then the status assertions
+		// below are only checking the helper.
+		httpx.WriteError(rr, err)
 	}
 	var out map[string]any
 	if e := json.Unmarshal(rr.Body.Bytes(), &out); e != nil {
@@ -204,9 +201,13 @@ func TestRefusalsGetTheirOwnStatus(t *testing.T) {
 	}
 
 	// Anything else is a real failure and must not be dressed up as a refusal.
+	// httpx.WriteError would otherwise render a bare error as 400, which is the
+	// same status a rejected request gets — so the caller could not tell "your
+	// spec was wrong, nothing happened" from "the stop ran and the start did
+	// not". profileError gives those a 500 on purpose.
 	a := &fakeAdmin{err: errors.New("boom")}
-	if code, _ := post(t, a, "/api/containers/profiles", map[string]any{"name": "x"}); code == http.StatusBadRequest {
-		t.Error("an unknown error was reported as a bad request")
+	if code, _ := post(t, a, "/api/containers/profiles", map[string]any{"name": "x"}); code != http.StatusInternalServerError {
+		t.Errorf("an unknown failure got %d, want 500 — indistinguishable from a refusal", code)
 	}
 }
 

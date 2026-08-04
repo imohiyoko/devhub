@@ -163,6 +163,13 @@ func decodeSpec(data map[string]any, name string) (container.ProfileSpec, error)
 // are refusals rather than failures — nothing was attempted — so they must not
 // read as 500s, and the message is already written for the person who will see
 // it.
+//
+// Anything else gets an explicit 500, which is a deliberate departure from
+// httpx.WriteError's default of 400 for a bare error. Here the difference
+// carries information a caller acts on: a refusal means the request was wrong
+// and the machine is untouched, while a failure means devhub or colima tried
+// and something is now in an unknown state — possibly a stopped VM. An agent
+// that cannot tell those apart will retry the second one.
 func profileError(err error) error {
 	switch {
 	case errors.Is(err, container.ErrProfileExists):
@@ -175,7 +182,7 @@ func profileError(err error) error {
 		errors.Is(err, container.ErrColimaMissing):
 		return httpx.Errorf(http.StatusBadRequest, "%s", err.Error())
 	}
-	return err
+	return httpx.Errorf(http.StatusInternalServerError, "%s", err.Error())
 }
 
 func describeSpecJSON(spec container.ProfileSpec) map[string]any {
