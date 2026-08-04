@@ -280,7 +280,8 @@ func TestValidateDocVersion(t *testing.T) {
 			t.Errorf("validateEnvs(%v) errored: %v", doc, err)
 		}
 	}
-	for _, v := range []any{float64(3), "2", true} {
+	// A fractional version must be rejected, not truncated into a supported one.
+	for _, v := range []any{float64(3), float64(1.5), float64(2.5), "2", true} {
 		if err := validateEnvs(map[string]any{"version": v}); err == nil {
 			t.Errorf("version %v should be rejected", v)
 		}
@@ -386,6 +387,14 @@ func TestValidateEnvsV2(t *testing.T) {
 		{"unknown dependency", map[string]any{"id": "e", "components": []any{
 			map[string]any{"id": "a", "depends_on": []any{"ghost"}}}},
 			"Dependency 'ghost' for component 'a' not found"},
+		// A malformed depends_on must be rejected, not silently decoded into
+		// fewer edges than the author wrote.
+		{"scalar depends_on", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "db"}, map[string]any{"id": "a", "depends_on": "db"}}},
+			"depends_on must be an array of component ids"},
+		{"depends_on with a non-string entry", map[string]any{"id": "e", "components": []any{
+			map[string]any{"id": "db"}, map[string]any{"id": "a", "depends_on": []any{"db", float64(42)}}}},
+			"depends_on must be an array of component ids"},
 		{"dependency cycle", map[string]any{"id": "e", "components": []any{
 			map[string]any{"id": "a", "depends_on": []any{"b"}},
 			map[string]any{"id": "b", "depends_on": []any{"a"}}}},

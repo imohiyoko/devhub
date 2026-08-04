@@ -95,7 +95,9 @@ function saveEnv() {
     envsData.environments[currentEnvIndex] =
       Object.assign({}, envsData.environments[currentEnvIndex], edited);
   } else {
-    edited.processes = [];
+    // A v2 document defines environments through components/scenarios and the
+    // server rejects a processes key there, so only seed the v1 shape.
+    if (envsData.version !== 2) edited.processes = [];
     envsData.environments.push(edited);
   }
 

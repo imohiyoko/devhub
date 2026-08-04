@@ -79,8 +79,17 @@ func validateDocVersion(data map[string]any) (int, error) {
 	if !present || raw == nil {
 		return 1, nil
 	}
-	if v := toIntVal(raw); v == 1 || v == 2 {
-		return v, nil
+	// Compare the number as-is: truncating first would let a fractional
+	// version (1.5) pass as a supported one.
+	switch n := raw.(type) {
+	case float64:
+		if n == 1 || n == 2 {
+			return int(n), nil
+		}
+	case int:
+		if n == 1 || n == 2 {
+			return n, nil
+		}
 	}
 	return 0, errors.New("Config version must be 1 or 2")
 }
@@ -204,6 +213,12 @@ func validateComponents(env map[string]any, eid string, repoScope map[string]boo
 				return fmt.Errorf("Component '%s' lifecycle must be 'shared' or 'scenario' in environment '%s'", cid, eid)
 			}
 		}
+		// depends_on must be checked before decoding: the decode drops
+		// non-string entries, so a malformed list would otherwise be saved
+		// with some or all of its edges silently missing, changing start order.
+		if _, ok := stringList(cm["depends_on"]); !ok {
+			return fmt.Errorf("Component '%s' depends_on must be an array of component ids in environment '%s'", cid, eid)
+		}
 		comps = append(comps, decodeComponent(cm))
 	}
 
@@ -227,25 +242,15 @@ func validateCompose(cm map[string]any, cid, eid string) error {
 	if pStr(compose, "project") == "" {
 		return fmt.Errorf("Component '%s' compose needs a project name in environment '%s'", cid, eid)
 	}
-	services, ok := compose["services"].([]any)
-	if !ok || len(services) == 0 {
+	services, ok := stringList(compose["services"])
+	if !ok {
+		return fmt.Errorf("Component '%s' compose services must be non-empty strings in environment '%s'", cid, eid)
+	}
+	if len(services) == 0 {
 		return fmt.Errorf("Component '%s' compose needs at least one service in environment '%s'", cid, eid)
 	}
-	for _, s := range services {
-		if str, ok := s.(string); !ok || strings.TrimSpace(str) == "" {
-			return fmt.Errorf("Component '%s' compose services must be non-empty strings in environment '%s'", cid, eid)
-		}
-	}
-	if raw, present := compose["files"]; present && raw != nil {
-		files, ok := raw.([]any)
-		if !ok {
-			return fmt.Errorf("Component '%s' compose files must be an array of strings in environment '%s'", cid, eid)
-		}
-		for _, f := range files {
-			if str, ok := f.(string); !ok || strings.TrimSpace(str) == "" {
-				return fmt.Errorf("Component '%s' compose files must be an array of strings in environment '%s'", cid, eid)
-			}
-		}
+	if _, ok := stringList(compose["files"]); !ok {
+		return fmt.Errorf("Component '%s' compose files must be an array of strings in environment '%s'", cid, eid)
 	}
 	return nil
 }
@@ -305,19 +310,13 @@ func validateScenarios(env map[string]any, comps []component, eid string) error 
 			return fmt.Errorf("Duplicate scenario ID '%s' in environment '%s'", sid, eid)
 		}
 		scenIDs[sid] = true
-		if raw, present := sm["components"]; present && raw != nil {
-			list, ok := raw.([]any)
-			if !ok {
-				return fmt.Errorf("Scenario '%s' components must be an array of component ids in environment '%s'", sid, eid)
-			}
-			for _, e := range list {
-				cid, ok := e.(string)
-				if !ok {
-					return fmt.Errorf("Scenario '%s' components must be an array of component ids in environment '%s'", sid, eid)
-				}
-				if !known[cid] {
-					return fmt.Errorf("Scenario '%s' references unknown component '%s' in environment '%s'", sid, cid, eid)
-				}
+		refs, ok := stringList(sm["components"])
+		if !ok {
+			return fmt.Errorf("Scenario '%s' components must be an array of component ids in environment '%s'", sid, eid)
+		}
+		for _, cid := range refs {
+			if !known[cid] {
+				return fmt.Errorf("Scenario '%s' references unknown component '%s' in environment '%s'", sid, cid, eid)
 			}
 		}
 	}
@@ -362,6 +361,29 @@ func scopeList(env map[string]any, key, eid string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// stringList reads a JSON array of non-empty strings — the shape v2 uses for
+// id lists (depends_on, scenario components) and compose files/services. An
+// absent value yields no entries and ok=true; a present value that is not such
+// an array yields ok=false, leaving the field-specific message to the caller.
+func stringList(raw any) ([]string, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	arr, isArray := raw.([]any)
+	if !isArray {
+		return nil, false
+	}
+	out := make([]string, 0, len(arr))
+	for _, item := range arr {
+		s, isString := item.(string)
+		if !isString || strings.TrimSpace(s) == "" {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
 }
 
 // bindingStr returns (value, isStringOrAbsent). A present non-string fails the check.
