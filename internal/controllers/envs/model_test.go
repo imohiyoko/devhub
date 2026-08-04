@@ -35,7 +35,7 @@ func TestDecodeEnvironmentLenient(t *testing.T) {
 			"not-a-process",  // non-object process entries are skipped
 			map[string]any{}, // an empty process decodes to zero values, default delay
 		},
-	})
+	}, 1)
 	if env.ID != "dev" || env.Name != "Dev" {
 		t.Errorf("env id/name = %q/%q", env.ID, env.Name)
 	}
@@ -85,6 +85,100 @@ func TestDecodeEnvironmentsSkipsMalformed(t *testing.T) {
 	}
 	if envs[1].Worktree != (worktree{}) {
 		t.Errorf("malformed worktree = %+v, want zero", envs[1].Worktree)
+	}
+}
+
+// TestDecodeV1ConvertsToComponents pins the v1→component conversion: every
+// process becomes a scenario-scoped host_process component, gathered into one
+// default scenario, so the switch paths see v1 documents through the same model.
+func TestDecodeV1ConvertsToComponents(t *testing.T) {
+	env := decodeEnvironment(map[string]any{
+		"id": "dev",
+		"processes": []any{
+			map[string]any{"id": "db", "label": "DB", "command": "run-db", "port": float64(3000)},
+			map[string]any{"id": "api", "depends_on": []any{"db"}},
+		},
+	}, 1)
+	if len(env.Components) != 2 {
+		t.Fatalf("components = %+v, want 2", env.Components)
+	}
+	db := env.Components[0]
+	if db.ID != "db" || db.Label != "DB" || db.Kind != kindHostProcess || db.Shared {
+		t.Errorf("db component = %+v", db)
+	}
+	if db.Proc.Command != "run-db" || db.Proc.Port != float64(3000) {
+		t.Errorf("db payload = %+v", db.Proc)
+	}
+	if !reflect.DeepEqual(env.Components[1].DependsOn, []string{"db"}) {
+		t.Errorf("api deps = %v", env.Components[1].DependsOn)
+	}
+	if len(env.Scenarios) != 1 {
+		t.Fatalf("scenarios = %+v, want the default scenario", env.Scenarios)
+	}
+	def := env.Scenarios[0]
+	if def.ID != defaultScenarioID || !reflect.DeepEqual(def.Components, []string{"db", "api"}) {
+		t.Errorf("default scenario = %+v", def)
+	}
+
+	empty := decodeEnvironment(map[string]any{"id": "idle"}, 1)
+	if len(empty.Components) != 0 || len(empty.Scenarios) != 0 {
+		t.Errorf("empty env must have no components/scenarios, got %+v / %+v", empty.Components, empty.Scenarios)
+	}
+}
+
+// TestDecodeV2Environment pins the v2 decode: compose payloads, the shared
+// lifecycle, scenarios, and the derived Processes view (host_process only)
+// that keeps the existing launch paths working.
+func TestDecodeV2Environment(t *testing.T) {
+	env := decodeEnvironment(map[string]any{
+		"id": "micro", "name": "Micro",
+		"components": []any{
+			map[string]any{"id": "mysql", "label": "MySQL", "kind": "compose_service", "lifecycle": "shared",
+				"compose": map[string]any{"cwd": "~/platform", "files": []any{"compose.yml"}, "project": "platform-local", "services": []any{"mysql"}}},
+			map[string]any{"id": "api", "command": "run-api", "port": float64(3000), "depends_on": []any{"mysql"}}, // kind absent = host_process
+		},
+		"scenarios": []any{
+			map[string]any{"id": "accounting", "name": "会計", "components": []any{"api"}},
+		},
+	}, 2)
+	if len(env.Components) != 2 {
+		t.Fatalf("components = %+v", env.Components)
+	}
+	mysql := env.Components[0]
+	if mysql.Kind != kindComposeService || !mysql.Shared {
+		t.Errorf("mysql = %+v, want shared compose_service", mysql)
+	}
+	wantCompose := composeSpec{Cwd: "~/platform", Files: []string{"compose.yml"}, Project: "platform-local", Services: []string{"mysql"}}
+	if !reflect.DeepEqual(mysql.Compose, wantCompose) {
+		t.Errorf("compose = %+v, want %+v", mysql.Compose, wantCompose)
+	}
+	api := env.Components[1]
+	if api.Kind != kindHostProcess || api.Shared || api.Proc.Command != "run-api" {
+		t.Errorf("api = %+v, want host_process with payload", api)
+	}
+	// Only the host_process component appears in the Processes view.
+	if len(env.Processes) != 1 || env.Processes[0].ID != "api" {
+		t.Errorf("processes view = %+v, want [api]", env.Processes)
+	}
+	if len(env.Scenarios) != 1 || env.Scenarios[0].ID != "accounting" || !reflect.DeepEqual(env.Scenarios[0].Components, []string{"api"}) {
+		t.Errorf("scenarios = %+v", env.Scenarios)
+	}
+}
+
+func TestDocVersion(t *testing.T) {
+	cases := []struct {
+		doc  map[string]any
+		want int
+	}{
+		{map[string]any{}, 1},
+		{map[string]any{"version": float64(1)}, 1},
+		{map[string]any{"version": float64(2)}, 2},
+		{map[string]any{"version": "2"}, 1}, // lenient decode: non-numeric reads as v1; validateEnvs is the strict gate
+	}
+	for _, c := range cases {
+		if got := docVersion(c.doc); got != c.want {
+			t.Errorf("docVersion(%v) = %d, want %d", c.doc, got, c.want)
+		}
 	}
 }
 
