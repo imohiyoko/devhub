@@ -223,15 +223,15 @@ main { padding: 16px; overflow-y: auto; }
 </main>
 
 <div class="modal-overlay" id="logsOverlay">
-  <div class="modal logs-modal">
+  <div class="modal logs-modal" role="dialog" aria-modal="true" aria-labelledby="logsTitle">
     <div class="modal-header" id="logsTitle"></div>
-    <pre class="logs-body" id="logsBody"></pre>
+    <pre class="logs-body" id="logsBody" tabindex="0"></pre>
     <div class="modal-footer"><button class="btn" id="logsClose">閉じる</button></div>
   </div>
 </div>
 
 <div class="modal-overlay" id="profileModalOverlay">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
     <div class="modal-header" id="profileModalTitle">Colima profile を作成</div>
     <div class="modal-body">
       <div id="profileWarn"></div>
@@ -396,7 +396,7 @@ function sourceHtml(src, rows) {
   }
   return `<section class="source">${head}
     <table>
-      <thead><tr><th>コンテナ</th><th>状態</th><th>ポート</th><th>compose</th><th></th></tr></thead>
+      <thead><tr><th scope="col">コンテナ</th><th scope="col">状態</th><th scope="col">ポート</th><th scope="col">compose</th><th scope="col">操作</th></tr></thead>
       <tbody>${rows.map(rowHtml).join('')}</tbody>
     </table>
   </section>`;
@@ -595,8 +595,14 @@ main.addEventListener('click', async e => {
 
   if (op === 'stop' && !confirm(`${label} を停止します。${owner ? `\n（${owner}）` : ''}`)) return;
 
+  // The whole row, not just the button that was clicked. stop and restart on
+  // one container are contradictory instructions, and firing both leaves the
+  // final state decided by whichever request finishes last — which is not
+  // something the user chose. The daemon serialises the operations themselves;
+  // what it cannot do is know that the second click was a mistake.
+  const inRow = [...(row?.querySelectorAll('[data-op]') || [btn])];
   const wasText = btn.textContent;
-  btn.disabled = true;
+  inRow.forEach(b => { b.disabled = true; });
   btn.textContent = '...';
   setStatus(`${label}: ${op}`);
   try {
@@ -618,23 +624,55 @@ main.addEventListener('click', async e => {
   } catch (err) {
     setStatus(`エラー: ${err.message}`, 'error');
   } finally {
-    btn.disabled = false;
+    // Harmless when load() has already replaced the table: these nodes are
+    // detached by then, and the fresh row comes back enabled.
+    inRow.forEach(b => { b.disabled = false; });
     btn.textContent = wasText;
   }
 });
 
+// returnFocus is what had focus before a modal opened, so closing puts the user
+// back where they were rather than at the top of the document — on this panel
+// that means the row they were working on, in a table that can be 90 rows long.
+let returnFocus = null;
+
 function showLogs(target, text) {
+  returnFocus = document.activeElement;
   $('logsTitle').textContent = `${target.name}${target.project ? ` (${target.project})` : ''}`;
   // textContent, not innerHTML: this is a container's own output, which is the
   // least trustworthy string on the page.
   $('logsBody').textContent = text || '（出力はありません）';
   $('logsOverlay').classList.add('open');
   $('logsBody').scrollTop = $('logsBody').scrollHeight;
+  // Focus moves into the dialog, so the next Tab or Escape is about the logs
+  // and not about the table behind them.
+  $('logsClose').focus();
 }
 
-$('logsClose').addEventListener('click', () => $('logsOverlay').classList.remove('open'));
+function closeLogs() {
+  if (!$('logsOverlay').classList.contains('open')) return;
+  $('logsOverlay').classList.remove('open');
+  returnFocus?.focus?.();
+  returnFocus = null;
+}
+
+$('logsClose').addEventListener('click', closeLogs);
 $('logsOverlay').addEventListener('click', e => {
-  if (e.target === $('logsOverlay')) $('logsOverlay').classList.remove('open');
+  if (e.target === $('logsOverlay')) closeLogs();
+});
+
+// Escape closes whichever modal is open, matching the rest of devhub
+// (tools/git/repo-switcher.js). The profile modal refuses while an operation is
+// in flight, for the same reason its cancel button is disabled then: closing
+// would not stop the VM coming up, so offering the exit would promise a
+// cancellation that does not exist.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if ($('logsOverlay').classList.contains('open')) {
+    closeLogs();
+  } else if ($('profileModalOverlay').classList.contains('open')) {
+    closeProfileModal();
+  }
 });
 
 $('refreshBtn').addEventListener('click', load);
