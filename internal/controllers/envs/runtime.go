@@ -86,6 +86,21 @@ func (c *Controller) RuntimeProviders(ctx context.Context) []RuntimeProvider {
 	return []RuntimeProvider{host, docker, colima}
 }
 
+// composeFor picks the adapter for an environment's declared engine. The
+// choice follows the *declaration*, not what the profile turns out to be
+// running: devhub never silently switches engines (plan §6.4), so a definition
+// that disagrees with reality is driven as written and reported by
+// RuntimeWarnings rather than quietly re-routed.
+func (c *Controller) composeFor(rt runtimeSpec) (composeAdapter, error) {
+	if rt.Engine != engineContainerd {
+		return c.compose, nil
+	}
+	if rt.Provider != providerColima {
+		return nil, errContainerdUnsupported
+	}
+	return c.containerd, nil
+}
+
 // dockerContextFor is the Docker context an environment's compose commands
 // must run in: a Colima profile's own context, or "" — the ambient context —
 // for the plain docker provider. Returning "" rather than the resolved name of
@@ -117,10 +132,7 @@ func (c *Controller) RuntimeWarnings(ctx context.Context, env environment) []str
 		return []string{fmt.Sprintf("Colima の状態を確認できません: %v。コンテナの操作は失敗する可能性があります。", err)}
 	}
 
-	name := rt.Profile
-	if name == "" {
-		name = defaultColimaProfile
-	}
+	name := colimaProfileFor(rt)
 	i := slices.IndexFunc(profiles, func(p colimaProfile) bool { return p.Name == name })
 	if i < 0 {
 		return []string{fmt.Sprintf("Colima profile '%s' が見つかりません。`colima start -p %s` で作成してください。", name, name)}
@@ -142,19 +154,21 @@ func (c *Controller) RuntimeWarnings(ctx context.Context, env environment) []str
 	if supported, reason := engineSupport(profile.Engine); !supported {
 		warnings = append(warnings, fmt.Sprintf("profile '%s': %s", name, reason))
 	}
+	// The readiness gap is a property of the engine, not of this profile's
+	// health, so it is reported whenever containerd will actually be used.
+	// Saying it once up front beats a dependent component failing to connect
+	// and looking like a flaky start.
+	if rt.Engine == engineContainerd {
+		warnings = append(warnings,
+			"containerd では起動完了（healthcheck）を待てません（`nerdctl compose up` に --wait がないため）。依存する component が先に起動する可能性があります。")
+	}
 	return warnings
 }
 
 // drivableEngines are the container engines devhub has an adapter for. It is
 // what a provider advertises and what decides whether a profile is usable, so
-// devhub never offers an engine it cannot actually drive. containerd joins the
-// list together with its adapter (plan §11 PR 3).
-//
-// A definition may still *declare* engineContainerd: there, the engine is an
-// assertion about the profile that devhub checks, not a request for a driver.
-// Such an environment is accepted and warned about rather than silently driven
-// with the wrong tool.
-func drivableEngines() []string { return []string{engineDocker} }
+// devhub never offers an engine it cannot actually drive.
+func drivableEngines() []string { return []string{engineDocker, engineContainerd} }
 
 // engineSupport judges whether devhub can drive a profile. Colima also hosts
 // engines this tool has no adapter for (incus, and containerd until its

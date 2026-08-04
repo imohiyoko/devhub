@@ -124,9 +124,10 @@ type fakeCompose struct {
 	// unavailable is the reason Available reports; nil means Docker is present.
 	unavailable error
 	calls       []composeSpec
-	// contexts records the Docker context of every operation, so a test can
-	// assert devhub addressed the engine the environment declared.
-	contexts []string
+	// runtimes records the runtime of every operation, so a test can assert
+	// devhub addressed the engine the environment declared. Turning it into an
+	// argv is each adapter's own job and is tested there.
+	runtimes []runtimeSpec
 	// ups/stops record what apply operated on as "<project>/<services>", so a
 	// test can assert both the operation and the scope it was confined to;
 	// upErr/stopErr make those operations fail.
@@ -138,24 +139,24 @@ type fakeCompose struct {
 
 func (f *fakeCompose) Available(context.Context) error { return f.unavailable }
 
-func (f *fakeCompose) ServiceStates(_ context.Context, dockerContext string, spec composeSpec) (map[string]componentState, error) {
+func (f *fakeCompose) ServiceStates(_ context.Context, rt runtimeSpec, spec composeSpec) (map[string]componentState, error) {
 	f.calls = append(f.calls, spec)
-	f.contexts = append(f.contexts, dockerContext)
+	f.runtimes = append(f.runtimes, rt)
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.states[spec.Project], nil
 }
 
-func (f *fakeCompose) Up(_ context.Context, dockerContext string, spec composeSpec) error {
+func (f *fakeCompose) Up(_ context.Context, rt runtimeSpec, spec composeSpec) error {
 	f.ups = append(f.ups, spec.Project+"/"+strings.Join(spec.Services, ","))
-	f.contexts = append(f.contexts, dockerContext)
+	f.runtimes = append(f.runtimes, rt)
 	return f.upErr
 }
 
-func (f *fakeCompose) Stop(_ context.Context, dockerContext string, spec composeSpec) error {
+func (f *fakeCompose) Stop(_ context.Context, rt runtimeSpec, spec composeSpec) error {
 	f.stops = append(f.stops, spec.Project+"/"+strings.Join(spec.Services, ","))
-	f.contexts = append(f.contexts, dockerContext)
+	f.runtimes = append(f.runtimes, rt)
 	return f.stopErr
 }
 
@@ -196,11 +197,12 @@ func (l *spawnLog) all() []*exec.Cmd {
 // testDeps are the optional collaborator fakes for newTestController; nil
 // fields get fresh zero-value fakes, so call sites name only what they use.
 type testDeps struct {
-	git     *fakeGit
-	ports   *fakePorts
-	ws      *fakeWorkspace
-	compose *fakeCompose
-	colima  *fakeColima
+	git        *fakeGit
+	ports      *fakePorts
+	ws         *fakeWorkspace
+	compose    *fakeCompose
+	containerd *fakeCompose
+	colima     *fakeColima
 }
 
 // fakeColima answers capability probes without Colima — and, on a CI runner
@@ -233,6 +235,9 @@ func newTestController(store *fakeStore, d testDeps) (*Controller, *spawnLog) {
 	if d.compose == nil {
 		d.compose = &fakeCompose{}
 	}
+	if d.containerd == nil {
+		d.containerd = &fakeCompose{}
+	}
 	if d.colima == nil {
 		d.colima = &fakeColima{err: errColimaMissing}
 	}
@@ -241,6 +246,10 @@ func newTestController(store *fakeStore, d testDeps) (*Controller, *spawnLog) {
 	c.spawn = log.record
 	c.settle = 0
 	c.compose = d.compose
+	// Always replaced, never left as the real adapter: an environment
+	// declaring containerd would otherwise shell out to the developer's own
+	// Colima during `go test`.
+	c.containerd = d.containerd
 	c.colima = d.colima
 	return c, log
 }
@@ -811,12 +820,12 @@ func TestComposeOperationsCarryTheEnvironmentContext(t *testing.T) {
 		if _, _, err := c.ApplySwitch("micro", target, ""); err != nil {
 			t.Fatalf("ApplySwitch: %v", err)
 		}
-		if len(compose.contexts) == 0 {
+		if len(compose.runtimes) == 0 {
 			t.Fatal("no compose operation was recorded")
 		}
-		for i, got := range compose.contexts {
-			if got != "colima-dev" {
-				t.Errorf("operation %d ran in context %q, want colima-dev", i, got)
+		for i, rt := range compose.runtimes {
+			if got := dockerContextFor(rt); got != "colima-dev" {
+				t.Errorf("operation %d addressed context %q, want colima-dev", i, got)
 			}
 		}
 		return compose
@@ -830,6 +839,53 @@ func TestComposeOperationsCarryTheEnvironmentContext(t *testing.T) {
 	// Scenario target with that component down: probed and started.
 	if started := apply(t, stateStopped, SwitchTarget{ScenarioID: "acc"}); len(started.ups) == 0 {
 		t.Error("nothing was started; the fixture no longer exercises the start path")
+	}
+}
+
+// TestContainerdEnvironmentUsesTheContainerdAdapter follows a declared engine
+// through the controller. Selecting the wrong adapter would not fail loudly —
+// it would address a Docker context that happens to exist and report on the
+// wrong containers — so the assertion is that the Docker adapter is not
+// touched at all.
+func TestContainerdEnvironmentUsesTheContainerdAdapter(t *testing.T) {
+	doc := composeDoc()
+	doc["environments"].([]any)[0].(map[string]any)["runtime"] =
+		map[string]any{"provider": "colima", "profile": "dev", "engine": "containerd"}
+
+	docker := &fakeCompose{}
+	containerd := &fakeCompose{states: map[string]map[string]componentState{
+		"platform-local":   {"mysql": stateRunning, "redis": stateRunning},
+		"accounting-local": {"api": stateStopped, "worker": stateStopped},
+	}}
+	c, _ := newTestController(&fakeStore{envs: doc}, testDeps{
+		compose: docker, containerd: containerd,
+		colima: &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Running", Engine: engineContainerd}}},
+	})
+
+	plan, results, err := c.ApplySwitch("micro", SwitchTarget{ScenarioID: "acc"}, "")
+	if err != nil {
+		t.Fatalf("ApplySwitch: %v", err)
+	}
+	for _, r := range results {
+		if r.Err != nil {
+			t.Errorf("%s %s: %v", r.Action, r.Step.ID, r.Err)
+		}
+	}
+	if len(containerd.ups) == 0 || len(containerd.calls) == 0 {
+		t.Errorf("containerd adapter unused: ups=%v probes=%v", containerd.ups, containerd.calls)
+	}
+	if len(docker.calls)+len(docker.ups)+len(docker.stops) != 0 {
+		t.Errorf("docker adapter was used for a containerd environment: %+v", docker)
+	}
+	// The readiness gap is stated before the switch, not discovered after it.
+	var warned bool
+	for _, w := range plan.Warnings {
+		if strings.Contains(w, "--wait") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("no readiness warning for containerd: %v", plan.Warnings)
 	}
 }
 
