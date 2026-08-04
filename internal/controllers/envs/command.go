@@ -8,7 +8,9 @@ package envs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
+	"strings"
 )
 
 // commandRunner runs one external command to completion and returns what it
@@ -25,7 +27,7 @@ type commandRunner interface {
 type execRunner struct{}
 
 func (execRunner) Run(ctx context.Context, cwd, name string, args ...string) (string, string, error) {
-	cmd := exec.CommandContext(ctx, name, args...) //execaudit:envs-compose
+	cmd := exec.CommandContext(ctx, name, args...) //execaudit:envs-runtime
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
@@ -34,4 +36,16 @@ func (execRunner) Run(ctx context.Context, cwd, name string, args ...string) (st
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	return stdout.String(), stderr.String(), err
+}
+
+// cliError turns a failed invocation into the reason a user sees: the tool's
+// own first stderr line when it wrote one, the exec error otherwise (a missing
+// working directory or a timeout writes nothing to stderr). Shared by the
+// runtime adapters so Docker's and Colima's own wording reaches the UI
+// unparaphrased — devhub cannot diagnose their failures better than they can.
+func cliError(stderr string, err error) error {
+	if line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n"); line != "" {
+		return errors.New(line)
+	}
+	return err
 }

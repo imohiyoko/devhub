@@ -39,6 +39,53 @@ func testCompose(runner commandRunner) *dockerCompose {
 	}
 }
 
+// TestComposeAvailableChecksThePlugin covers the gap between "docker is
+// installed" and "docker compose works": they are separate packages on most
+// Linux distributions, and the capability API must not promise the second
+// because it found the first.
+func TestComposeAvailableChecksThePlugin(t *testing.T) {
+	runner := &fakeRunner{stdout: "v2.39.4\n"}
+	adapter := testCompose(runner)
+	if err := adapter.Available(context.Background()); err != nil {
+		t.Fatalf("Available: %v", err)
+	}
+	if len(runner.calls) != 1 || !slices.Equal(runner.calls[0].args, []string{"compose", "version", "--short"}) {
+		t.Errorf("probe = %+v, want a bare `compose version --short`", runner.calls)
+	}
+
+	// Docker present, Compose plugin absent: Docker's own wording is what
+	// tells the user which half is missing. (The message below is what Docker
+	// CLI 29 prints for an unknown subcommand; older builds say "is not a
+	// docker command" — devhub passes through whichever it gets.)
+	missingPlugin := &fakeRunner{
+		stderr: "docker: unknown command: docker compose",
+		err:    errors.New("exit status 1"),
+	}
+	err := testCompose(missingPlugin).Available(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unknown command: docker compose") {
+		t.Errorf("err = %v, want Docker's missing-plugin message", err)
+	}
+
+	noBinary := testCompose(&fakeRunner{})
+	noBinary.lookPath = func(string) (string, error) { return "", errors.New("not found") }
+	if err := noBinary.Available(context.Background()); !errors.Is(err, errDockerMissing) {
+		t.Errorf("err = %v, want errDockerMissing", err)
+	}
+}
+
+// TestComposeRunSkipsThePluginProbe keeps the operational path cheap: every
+// compose call would otherwise pay for a second process, and the command it is
+// about to run reports a missing plugin by itself.
+func TestComposeRunSkipsThePluginProbe(t *testing.T) {
+	runner := &fakeRunner{stdout: "[]"}
+	if _, err := testCompose(runner).ServiceStates(context.Background(), composeSpec{Project: "p"}); err != nil {
+		t.Fatalf("ServiceStates: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Errorf("calls = %+v, want only the ps invocation", runner.calls)
+	}
+}
+
 func TestComposeServiceStatesBuildsScopedArgv(t *testing.T) {
 	runner := &fakeRunner{stdout: `[{"Service":"mysql","State":"running"}]`}
 	spec := composeSpec{Cwd: "~/platform", Files: []string{"compose.yml", "compose.override.yml"},

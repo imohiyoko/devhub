@@ -349,6 +349,31 @@ func TestValidateEnvsV2(t *testing.T) {
 			"must not have processes"},
 		{"non-object runtime", map[string]any{"id": "e", "runtime": "colima"},
 			"runtime must be an object"},
+		{"unknown provider", map[string]any{"id": "e", "runtime": map[string]any{"provider": "podman"}},
+			"provider must be 'host', 'docker' or 'colima'"},
+		// A field that does not apply to the chosen provider is rejected rather
+		// than dropped: silently ignoring it would let the user believe devhub
+		// talks to a VM it never touches.
+		{"profile without the colima provider", map[string]any{"id": "e", "runtime": map[string]any{"provider": "docker", "profile": "dev"}},
+			"profile is only valid for the colima provider"},
+		{"profile with a bad name", map[string]any{"id": "e", "runtime": map[string]any{"provider": "colima", "profile": "dev/../x"}},
+			"profile must be alphanumeric"},
+		{"unknown engine", map[string]any{"id": "e", "runtime": map[string]any{"provider": "colima", "engine": "podman"}},
+			"engine must be 'docker' or 'containerd'"},
+		{"containerd without the colima provider", map[string]any{"id": "e", "runtime": map[string]any{"provider": "docker", "engine": "containerd"}},
+			"engine is only valid for the colima provider"},
+		// Even a true-but-unread engine is rejected: the docker provider does
+		// not consult it, and storing a field devhub ignores is how a config
+		// starts meaning something it does not.
+		{"engine docker on the docker provider", map[string]any{"id": "e", "runtime": map[string]any{"provider": "docker", "engine": "docker"}},
+			"engine is only valid for the colima provider"},
+		{"engine on the host provider", map[string]any{"id": "e", "runtime": map[string]any{"provider": "host", "engine": "docker"}},
+			"engine is only valid for the colima provider"},
+		{"compose_service under the host provider", map[string]any{"id": "e",
+			"runtime": map[string]any{"provider": "host"},
+			"components": []any{map[string]any{"id": "a", "kind": "compose_service",
+				"compose": map[string]any{"cwd": "~/p", "project": "p", "services": []any{"s"}}}}},
+			"runtime provider is 'host'"},
 		{"non-array components", map[string]any{"id": "e", "components": "nope"},
 			"components must be an array"},
 		{"non-object component", map[string]any{"id": "e", "components": []any{"nope"}},
