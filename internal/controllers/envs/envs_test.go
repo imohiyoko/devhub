@@ -361,9 +361,14 @@ func TestValidateEnvsV2(t *testing.T) {
 		{"unknown engine", map[string]any{"id": "e", "runtime": map[string]any{"provider": "colima", "engine": "podman"}},
 			"engine must be 'docker' or 'containerd'"},
 		{"containerd without the colima provider", map[string]any{"id": "e", "runtime": map[string]any{"provider": "docker", "engine": "containerd"}},
-			"needs the colima provider"},
+			"engine is only valid for the colima provider"},
+		// Even a true-but-unread engine is rejected: the docker provider does
+		// not consult it, and storing a field devhub ignores is how a config
+		// starts meaning something it does not.
+		{"engine docker on the docker provider", map[string]any{"id": "e", "runtime": map[string]any{"provider": "docker", "engine": "docker"}},
+			"engine is only valid for the colima provider"},
 		{"engine on the host provider", map[string]any{"id": "e", "runtime": map[string]any{"provider": "host", "engine": "docker"}},
-			"engine is only valid for a container provider"},
+			"engine is only valid for the colima provider"},
 		{"compose_service under the host provider", map[string]any{"id": "e",
 			"runtime": map[string]any{"provider": "host"},
 			"components": []any{map[string]any{"id": "a", "kind": "compose_service",

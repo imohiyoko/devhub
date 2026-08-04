@@ -133,7 +133,7 @@ type fakeCompose struct {
 	stopErr error
 }
 
-func (f *fakeCompose) Available() error { return f.unavailable }
+func (f *fakeCompose) Available(context.Context) error { return f.unavailable }
 
 func (f *fakeCompose) ServiceStates(_ context.Context, spec composeSpec) (map[string]componentState, error) {
 	f.calls = append(f.calls, spec)

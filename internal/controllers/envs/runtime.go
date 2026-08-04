@@ -11,20 +11,35 @@ package envs
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"time"
 )
+
+// runtimeProbeTimeout bounds the whole capability report. The runtimes
+// endpoint is on the UI's load path, so it must fail rather than hang.
+const runtimeProbeTimeout = 10 * time.Second
 
 // RuntimeProfile is one Colima profile as the UI sees it.
 type RuntimeProfile struct {
 	Name   string
 	Status string
-	// Engine is empty when it cannot be observed (a stopped profile does not
-	// report one). The UI shows that as unknown; devhub does not infer it.
+	// Engine is Colima's own value, verbatim. It is empty when it cannot be
+	// observed (a stopped profile does not report one); the UI shows that as
+	// unknown, and devhub does not infer it.
 	Engine string
 	Arch   string
 	// Context is the Docker context this profile's docker engine listens on.
 	// It is what devhub would pass per command, and never something it sets
 	// globally (plan §6.3).
 	Context string
+	// Supported is false when the profile runs an engine devhub has no adapter
+	// for — Colima can also host incus, which this tool cannot drive. Reason
+	// says which engine that is, so such a profile is listed with an
+	// explanation rather than hidden, or worse, offered as a valid choice that
+	// save-time validation would then reject.
+	Supported bool
+	Reason    string
 }
 
 // RuntimeProvider is one execution base and what it can currently do.
@@ -46,7 +61,7 @@ func (c *Controller) RuntimeProviders(ctx context.Context) []RuntimeProvider {
 	host := RuntimeProvider{ID: providerHost, Label: "ホスト", Available: true, Engines: []string{}}
 
 	docker := RuntimeProvider{ID: providerDocker, Label: "Docker", Available: true, Engines: []string{engineDocker}}
-	if err := c.compose.Available(); err != nil {
+	if err := c.compose.Available(ctx); err != nil {
 		docker.Available, docker.Reason = false, err.Error()
 	}
 
@@ -60,14 +75,27 @@ func (c *Controller) RuntimeProviders(ctx context.Context) []RuntimeProvider {
 	} else {
 		colima.Available = true
 		for _, p := range profiles {
+			supported, reason := engineSupport(p.Engine, colima.Engines)
 			colima.Profiles = append(colima.Profiles, RuntimeProfile{
 				Name: p.Name, Status: p.Status, Engine: p.Engine, Arch: p.Arch,
-				Context: colimaDockerContext(p.Name),
+				Context: colimaDockerContext(p.Name), Supported: supported, Reason: reason,
 			})
 		}
 	}
 
 	return []RuntimeProvider{host, docker, colima}
+}
+
+// engineSupport judges whether devhub can drive a profile. Colima also hosts
+// engines this tool has no adapter for (incus), and such a profile must be
+// reported as unusable up front rather than offered and then rejected at save
+// time. An engine devhub cannot observe — a stopped profile reports none — is
+// not called unsupported: nothing is known about it yet.
+func engineSupport(engine string, supported []string) (bool, string) {
+	if engine == "" || slices.Contains(supported, engine) {
+		return true, ""
+	}
+	return false, fmt.Sprintf("engine '%s' に対応するアダプタがありません", engine)
 }
 
 // runtimeProvidersJSON renders the capability report for the API. Slices are
@@ -81,6 +109,7 @@ func runtimeProvidersJSON(providers []RuntimeProvider) map[string]any {
 			profiles = append(profiles, map[string]any{
 				"name": pr.Name, "status": pr.Status, "engine": pr.Engine,
 				"arch": pr.Arch, "context": pr.Context,
+				"supported": pr.Supported, "reason": pr.Reason,
 			})
 		}
 		engines := make([]any, 0, len(p.Engines))

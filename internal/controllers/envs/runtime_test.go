@@ -73,6 +73,36 @@ func TestRuntimeProvidersListsColimaProfiles(t *testing.T) {
 	if got := colima.Profiles[1]; got.Context != "colima-dev" || got.Engine != engineDocker {
 		t.Errorf("dev profile = %+v, want context colima-dev and the docker engine", got)
 	}
+	for _, p := range colima.Profiles {
+		if !p.Supported || p.Reason != "" {
+			t.Errorf("profile %s = %+v, want supported", p.Name, p)
+		}
+	}
+}
+
+// TestRuntimeProvidersFlagsUnsupportedEngines covers the engines Colima can
+// host that devhub has no adapter for: such a profile must be listed with a
+// reason, not offered as a choice that save-time validation would reject.
+func TestRuntimeProvidersFlagsUnsupportedEngines(t *testing.T) {
+	c, _ := newTestController(&fakeStore{envs: map[string]any{}}, testDeps{
+		colima: &fakeColima{profiles: []colimaProfile{
+			{Name: "lxc", Status: "Running", Engine: "incus"},
+			{Name: "ctr", Status: "Running", Engine: engineContainerd},
+		}},
+	})
+
+	profiles := providerByID(c.RuntimeProviders(context.Background()), providerColima).Profiles
+	if len(profiles) != 2 {
+		t.Fatalf("profiles = %+v", profiles)
+	}
+	// Colima's value is reported verbatim — "incus" is more useful than a
+	// blanked-out engine — but flagged as one devhub cannot drive.
+	if profiles[0].Engine != "incus" || profiles[0].Supported || profiles[0].Reason == "" {
+		t.Errorf("incus profile = %+v, want engine reported and marked unsupported", profiles[0])
+	}
+	if !profiles[1].Supported {
+		t.Errorf("containerd profile = %+v, want supported", profiles[1])
+	}
 }
 
 func TestRuntimesEndpoint(t *testing.T) {

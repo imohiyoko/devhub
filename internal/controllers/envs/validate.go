@@ -297,16 +297,16 @@ func validateRuntime(env map[string]any, eid string) (string, error) {
 
 	if v, present := rt["engine"]; present && v != nil {
 		s, _ := v.(string)
-		if provider == providerHost {
-			return "", fmt.Errorf("Environment '%s' runtime engine is only valid for a container provider", eid)
+		// The engine is a property of a Colima profile. Under the docker
+		// provider nothing reads it — not even `engine: docker`, which is
+		// merely true rather than honoured — and under host there are no
+		// containers at all. Storing a field devhub does not consult is how a
+		// config starts meaning something it does not.
+		if provider != providerColima {
+			return "", fmt.Errorf("Environment '%s' runtime engine is only valid for the colima provider", eid)
 		}
 		if s != engineDocker && s != engineContainerd {
 			return "", fmt.Errorf("Environment '%s' runtime engine must be 'docker' or 'containerd'", eid)
-		}
-		// Only a Colima profile can run something other than Docker: the
-		// docker provider is the local Docker context by definition.
-		if provider != providerColima && s != engineDocker {
-			return "", fmt.Errorf("Environment '%s' runtime engine '%s' needs the colima provider", eid, s)
 		}
 	}
 	return provider, nil

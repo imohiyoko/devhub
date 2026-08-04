@@ -16,14 +16,9 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/imohiyoko/devhub/internal/platform"
 )
-
-// colimaProbeTimeout bounds one `colima list`. The runtimes endpoint is on the
-// UI's load path, so it must fail rather than hang.
-const colimaProbeTimeout = 10 * time.Second
 
 var (
 	errColimaUnsupportedOS = errors.New("Colima は macOS でのみ利用できます")
