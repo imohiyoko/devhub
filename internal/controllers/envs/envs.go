@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imohiyoko/devhub/internal/container"
 	gitctl "github.com/imohiyoko/devhub/internal/controllers/git"
 	portsctl "github.com/imohiyoko/devhub/internal/controllers/ports"
 	"github.com/imohiyoko/devhub/internal/httpx"
@@ -66,13 +67,10 @@ type Controller struct {
 	ports     portsService
 	workspace workspaceService
 
-	// compose and containerd read and operate on compose_service components,
-	// one per container engine; colima reports the profiles this host offers.
-	// Per-instance like the seams below so tests answer without Docker or
-	// Colima installed.
-	compose    composeAdapter
-	containerd composeAdapter
-	colima     colimaProvider
+	// runtime is the machine's container runtimes: which execution bases exist,
+	// and the adapter that drives the one an environment declares. Per-instance
+	// like the seams below so tests answer without Docker or Colima installed.
+	runtime *container.Runtime
 
 	// spawn starts a prepared command and reports whether it started; settle is
 	// the pause after baton kills before processes start. Both are per-instance
@@ -87,11 +85,9 @@ type Controller struct {
 func New(store launchStore, git gitService, ports portsService, workspace workspaceService) *Controller {
 	return &Controller{
 		store: store, git: git, ports: ports, workspace: workspace,
-		compose:    newDockerCompose(),
-		containerd: newNerdctlCompose(),
-		colima:     newColimaCLI(),
-		spawn:      func(cmd *exec.Cmd) error { return cmd.Start() },
-		settle:     500 * time.Millisecond,
+		runtime: container.New(),
+		spawn:   func(cmd *exec.Cmd) error { return cmd.Start() },
+		settle:  500 * time.Millisecond,
 	}
 }
 
@@ -119,9 +115,9 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 		}
 		httpx.WriteJSON(w, http.StatusOK, data)
 	case "/api/envs/runtimes":
-		ctx, cancel := context.WithTimeout(r.Context(), runtimeProbeTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), container.ProbeTimeout)
 		defer cancel()
-		httpx.WriteJSON(w, http.StatusOK, runtimeProvidersJSON(c.RuntimeProviders(ctx)))
+		httpx.WriteJSON(w, http.StatusOK, runtimeProvidersJSON(c.runtime.Providers(ctx)))
 	default:
 		return httpx.Errorf(http.StatusNotFound, "not found")
 	}
@@ -348,7 +344,7 @@ func (c *Controller) observeEnv(envID string) (environment, map[string]component
 // stopped automatically.
 func (c *Controller) composeStates(env environment) map[string]componentStatus {
 	type group struct {
-		spec  composeSpec
+		spec  container.ComposeSpec
 		comps []component
 	}
 	groups := map[string]*group{}
@@ -368,12 +364,12 @@ func (c *Controller) composeStates(env environment) map[string]componentStatus {
 	// An environment whose engine has no adapter reports that as the reason
 	// its components are unknown, exactly like an unreachable daemon: the rest
 	// of the environment still works.
-	adapter, adapterErr := c.composeFor(env.Runtime)
-	probe := func(spec composeSpec) (map[string]componentState, error) {
+	adapter, adapterErr := c.runtime.ComposeFor(env.Runtime)
+	probe := func(spec container.ComposeSpec) (map[string]componentState, error) {
 		if adapterErr != nil {
 			return nil, adapterErr
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), composeProbeTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), container.ComposeProbeTimeout)
 		defer cancel()
 		return adapter.ServiceStates(ctx, env.Runtime, spec)
 	}
@@ -387,7 +383,7 @@ func (c *Controller) composeStates(env environment) map[string]componentStatus {
 				out[comp.ID] = componentStatus{stateUnknown, err.Error()}
 				continue
 			}
-			out[comp.ID] = componentStatus{State: composeComponentState(comp.Compose, services)}
+			out[comp.ID] = componentStatus{State: container.ComposeState(comp.Compose, services)}
 		}
 	}
 	return out

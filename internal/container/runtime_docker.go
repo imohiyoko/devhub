@@ -1,4 +1,4 @@
-package envs
+package container
 
 // Minimal Docker Compose adapter — the read half (service state). Every
 // invocation is a fixed argv scoped to the definition's project name, so
@@ -18,24 +18,24 @@ import (
 	"github.com/imohiyoko/devhub/internal/pathutil"
 )
 
-// composeProbeTimeout bounds one `docker compose ps`. A status endpoint must
+// ComposeProbeTimeout bounds one `docker compose ps`. A status endpoint must
 // not hang when the daemon is slow to answer or is coming up.
-const composeProbeTimeout = 10 * time.Second
+const ComposeProbeTimeout = 10 * time.Second
 
-// composeUpTimeout bounds one `docker compose up`. It is generous because a
+// ComposeUpTimeout bounds one `docker compose up`. It is generous because a
 // first run may pull images; the operation is synchronous by design, since its
 // exit status is what tells the caller the services actually came up.
-const composeUpTimeout = 5 * time.Minute
+const ComposeUpTimeout = 5 * time.Minute
 
 // errDockerMissing is the one failure devhub diagnoses itself; every other
 // reason a compose call fails comes from Docker's own output.
 var errDockerMissing = errors.New("docker コマンドが見つかりません")
 
-// composeAdapter is what devhub does with a Compose implementation: read the
+// Adapter is what devhub does with a Compose implementation: read the
 // state of a project's services, and start or stop the services a component
 // declares. One implementation per container engine; the Controller holds them
 // as interfaces so tests answer without Docker or Colima.
-type composeAdapter interface {
+type Adapter interface {
 	// Available reports why the adapter cannot run at all, or nil. It is the
 	// "is this engine usable" half of the runtimes API, so it checks what
 	// every other method needs.
@@ -46,9 +46,9 @@ type composeAdapter interface {
 	// engine globally (plan §6.3): making every call site name the runtime is
 	// what keeps `docker context use` unnecessary, and what stops one
 	// environment's profile leaking into another's commands.
-	ServiceStates(ctx context.Context, rt runtimeSpec, spec composeSpec) (map[string]componentState, error)
-	Up(ctx context.Context, rt runtimeSpec, spec composeSpec) error
-	Stop(ctx context.Context, rt runtimeSpec, spec composeSpec) error
+	ServiceStates(ctx context.Context, rt Spec, spec ComposeSpec) (map[string]State, error)
+	Up(ctx context.Context, rt Spec, spec ComposeSpec) error
+	Stop(ctx context.Context, rt Spec, spec ComposeSpec) error
 }
 
 // dockerCompose talks to the local Docker via the `docker compose` CLI.
@@ -76,7 +76,7 @@ func (d *dockerCompose) Available(ctx context.Context) error {
 	if err := d.binaryPresent(); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(ctx, composeProbeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, ComposeProbeTimeout)
 	defer cancel()
 	if _, stderr, err := d.runner.Run(ctx, "", "docker", "compose", "version", "--short"); err != nil {
 		return fmt.Errorf("docker compose が使えません: %w", cliError(stderr, err))
@@ -97,7 +97,7 @@ func (d *dockerCompose) binaryPresent() error {
 // reason a component's state is unknown, so it carries Docker's own wording:
 // "docker is missing" and "the daemon is unreachable" are different problems
 // with different fixes, and only Docker can tell them apart reliably.
-func (d *dockerCompose) ServiceStates(ctx context.Context, rt runtimeSpec, spec composeSpec) (map[string]componentState, error) {
+func (d *dockerCompose) ServiceStates(ctx context.Context, rt Spec, spec ComposeSpec) (map[string]State, error) {
 	stdout, err := d.run(ctx, rt, spec, "ps", "--format", "json", "--all")
 	if err != nil {
 		return nil, err
@@ -109,14 +109,14 @@ func (d *dockerCompose) ServiceStates(ctx context.Context, rt runtimeSpec, spec 
 // host process handed to a terminal, this reports whether the start actually
 // succeeded — that is what `--wait` buys, and why apply can tell the user
 // which components really came up.
-func (d *dockerCompose) Up(ctx context.Context, rt runtimeSpec, spec composeSpec) error {
+func (d *dockerCompose) Up(ctx context.Context, rt Spec, spec ComposeSpec) error {
 	_, err := d.run(ctx, rt, spec, append([]string{"up", "--detach", "--wait"}, spec.Services...)...)
 	return err
 }
 
 // Stop stops the component's services, leaving the rest of the project (and
 // any other project) alone.
-func (d *dockerCompose) Stop(ctx context.Context, rt runtimeSpec, spec composeSpec) error {
+func (d *dockerCompose) Stop(ctx context.Context, rt Spec, spec ComposeSpec) error {
 	_, err := d.run(ctx, rt, spec, append([]string{"stop"}, spec.Services...)...)
 	return err
 }
@@ -128,12 +128,12 @@ func (d *dockerCompose) Stop(ctx context.Context, rt runtimeSpec, spec composeSp
 //
 // --context is a flag of `docker` itself, so it goes before the `compose`
 // subcommand; `docker compose --context …` is rejected as an unknown flag.
-func (d *dockerCompose) run(ctx context.Context, rt runtimeSpec, spec composeSpec, sub ...string) (string, error) {
+func (d *dockerCompose) run(ctx context.Context, rt Spec, spec ComposeSpec, sub ...string) (string, error) {
 	if err := d.binaryPresent(); err != nil {
 		return "", err
 	}
 	var args []string
-	if dockerContext := dockerContextFor(rt); dockerContext != "" {
+	if dockerContext := DockerContextFor(rt); dockerContext != "" {
 		args = append(args, "--context", dockerContext)
 	}
 	args = append(args, "compose", "--project-name", spec.Project)
@@ -164,9 +164,9 @@ type composePSEntry struct {
 // both emit for a live container; nerdctl's other values are raw containerd
 // statuses ("exited", "created", "paused"), which fall through to stopped
 // exactly as Docker's do.
-func parseComposePS(out string) (map[string]componentState, error) {
+func parseComposePS(out string) (map[string]State, error) {
 	out = strings.TrimSpace(out)
-	states := map[string]componentState{}
+	states := map[string]State{}
 	if out == "" {
 		return states, nil
 	}
@@ -192,31 +192,31 @@ func parseComposePS(out string) (map[string]componentState, error) {
 		if entry.Service == "" {
 			continue
 		}
-		state := stateRunning
+		state := StateRunning
 		if entry.State != "running" {
-			state = stateStopped
+			state = StateStopped
 		}
 		// With replicas one container that is not running makes the whole
 		// service not-running, so a later `up -d` can bring the missing one
 		// back: once a service is stopped it stays stopped.
-		if prev, seen := states[entry.Service]; !seen || prev == stateRunning {
+		if prev, seen := states[entry.Service]; !seen || prev == StateRunning {
 			states[entry.Service] = state
 		}
 	}
 	return states, nil
 }
 
-// composeComponentState folds a project's service states into one component
+// ComposeState folds a project's service states into one component
 // state: every service the component declares must be running for it to count
 // as running, so a half-up project is still a start candidate.
-func composeComponentState(spec composeSpec, services map[string]componentState) componentState {
+func ComposeState(spec ComposeSpec, services map[string]State) State {
 	if len(spec.Services) == 0 {
-		return stateUnknown
+		return StateUnknown
 	}
 	for _, name := range spec.Services {
-		if services[name] != stateRunning {
-			return stateStopped
+		if services[name] != StateRunning {
+			return StateStopped
 		}
 	}
-	return stateRunning
+	return StateRunning
 }

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/imohiyoko/devhub/internal/container"
 	"github.com/imohiyoko/devhub/internal/pathutil"
 )
 
@@ -206,7 +207,7 @@ func validateComponents(env map[string]any, eid string, repoScope map[string]boo
 			// A host-only runtime has nothing to run containers with, so
 			// saying both is a contradiction rather than a preference devhub
 			// could quietly resolve.
-			if provider == providerHost {
+			if provider == container.ProviderHost {
 				return fmt.Errorf("Component '%s' is a compose_service but environment '%s' runtime provider is 'host'", cid, eid)
 			}
 		default:
@@ -261,24 +262,24 @@ func validateCompose(cm map[string]any, cid, eid string) error {
 }
 
 // validateRuntime checks the optional runtime block and returns the provider
-// the environment declares (providerDocker when it says nothing). Fields that
+// the environment declares (container.ProviderDocker when it says nothing). Fields that
 // do not apply to the chosen provider are rejected rather than ignored: a
 // profile silently dropped because the provider is not colima would leave the
 // user believing devhub talks to a VM it never touches.
 func validateRuntime(env map[string]any, eid string) (string, error) {
 	raw, present := env["runtime"]
 	if !present || raw == nil {
-		return providerDocker, nil
+		return container.ProviderDocker, nil
 	}
 	rt, ok := raw.(map[string]any)
 	if !ok {
 		return "", fmt.Errorf("Environment '%s' runtime must be an object", eid)
 	}
-	provider := providerDocker
+	provider := container.ProviderDocker
 	if v, present := rt["provider"]; present && v != nil {
 		s, _ := v.(string)
 		switch s {
-		case providerHost, providerDocker, providerColima:
+		case container.ProviderHost, container.ProviderDocker, container.ProviderColima:
 			provider = s
 		default:
 			return "", fmt.Errorf("Environment '%s' runtime provider must be 'host', 'docker' or 'colima'", eid)
@@ -287,7 +288,7 @@ func validateRuntime(env map[string]any, eid string) (string, error) {
 
 	if v, present := rt["profile"]; present && v != nil {
 		s, _ := v.(string)
-		if provider != providerColima {
+		if provider != container.ProviderColima {
 			return "", fmt.Errorf("Environment '%s' runtime profile is only valid for the colima provider", eid)
 		}
 		if !envIDRe.MatchString(s) {
@@ -302,10 +303,10 @@ func validateRuntime(env map[string]any, eid string) (string, error) {
 		// merely true rather than honoured — and under host there are no
 		// containers at all. Storing a field devhub does not consult is how a
 		// config starts meaning something it does not.
-		if provider != providerColima {
+		if provider != container.ProviderColima {
 			return "", fmt.Errorf("Environment '%s' runtime engine is only valid for the colima provider", eid)
 		}
-		if s != engineDocker && s != engineContainerd {
+		if s != container.EngineDocker && s != container.EngineContainerd {
 			return "", fmt.Errorf("Environment '%s' runtime engine must be 'docker' or 'containerd'", eid)
 		}
 	}
