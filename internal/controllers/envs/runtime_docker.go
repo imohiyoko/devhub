@@ -27,10 +27,18 @@ const composeProbeTimeout = 10 * time.Second
 // exit status is what tells the caller the services actually came up.
 const composeUpTimeout = 5 * time.Minute
 
+// errDockerMissing is the one failure devhub diagnoses itself; every other
+// reason a compose call fails comes from Docker's own output.
+var errDockerMissing = errors.New("docker コマンドが見つかりません")
+
 // composeAdapter is what devhub does with Docker Compose: read the state of a
 // project's services, and start or stop the services a component declares. The
 // Controller holds it as an interface so tests answer without Docker.
 type composeAdapter interface {
+	// Available reports why the adapter cannot run at all, or nil. It answers
+	// without touching the daemon: it is the "is this provider usable" half of
+	// the runtimes API, which must not hang on a machine with no Docker.
+	Available() error
 	ServiceStates(ctx context.Context, spec composeSpec) (map[string]componentState, error)
 	Up(ctx context.Context, spec composeSpec) error
 	Stop(ctx context.Context, spec composeSpec) error
@@ -46,6 +54,13 @@ type dockerCompose struct {
 
 func newDockerCompose() *dockerCompose {
 	return &dockerCompose{runner: execRunner{}, lookPath: exec.LookPath}
+}
+
+func (d *dockerCompose) Available() error {
+	if _, err := d.lookPath("docker"); err != nil {
+		return errDockerMissing
+	}
+	return nil
 }
 
 // ServiceStates returns the state of each service of spec's project that has a
@@ -82,8 +97,8 @@ func (d *dockerCompose) Stop(ctx context.Context, spec composeSpec) error {
 // the scoping flags in one place is what guarantees every operation devhub
 // performs — read or write — is confined to the declared project.
 func (d *dockerCompose) run(ctx context.Context, spec composeSpec, sub ...string) (string, error) {
-	if _, err := d.lookPath("docker"); err != nil {
-		return "", errors.New("docker コマンドが見つかりません")
+	if err := d.Available(); err != nil {
+		return "", err
 	}
 	args := []string{"compose", "--project-name", spec.Project}
 	for _, file := range spec.Files {
@@ -93,19 +108,9 @@ func (d *dockerCompose) run(ctx context.Context, spec composeSpec, sub ...string
 
 	stdout, stderr, err := d.runner.Run(ctx, pathutil.ExpandUser(spec.Cwd), "docker", args...)
 	if err != nil {
-		return stdout, composeError(stderr, err)
+		return stdout, cliError(stderr, err)
 	}
 	return stdout, nil
-}
-
-// composeError turns a failed invocation into the reason a user sees: Docker's
-// own first stderr line when it wrote one, the exec error otherwise (a missing
-// working directory or a timeout writes nothing to stderr).
-func composeError(stderr string, err error) error {
-	if line, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n"); line != "" {
-		return errors.New(line)
-	}
-	return err
 }
 
 // composePSEntry is the subset of `docker compose ps --format json` devhub reads.
