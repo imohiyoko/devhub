@@ -1,10 +1,12 @@
 package container
 
-// Minimal Docker Compose adapter — the read half (service state). Every
-// invocation is a fixed argv scoped to the definition's project name, so
-// devhub only ever reports on (and later, only ever operates on) the compose
-// project the environment declares and never on unrelated containers
-// (plan §13). Nothing here changes the global Docker context (plan §6.3).
+// Minimal Docker Compose adapter. Every invocation is a fixed argv scoped to
+// the definition's project name, so this adapter only ever reports on and
+// operates on the compose project the environment declares, and never on
+// unrelated containers (plan §13). The bound is this file's, not devhub's:
+// inventory.go lists the machine and control.go acts on a container nothing
+// declared, each under its own execaudit Surface. Nothing here changes the
+// global Docker context (plan §6.3).
 
 import (
 	"context"
