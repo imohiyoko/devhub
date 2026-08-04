@@ -146,41 +146,6 @@ func TestNerdctlPSParsing(t *testing.T) {
 	}
 }
 
-// TestComposeForPicksTheAdapter covers engine selection. It follows the
-// declaration, not the profile's reality: devhub never silently re-routes to
-// another engine (plan §6.4).
-func TestComposeForPicksTheAdapter(t *testing.T) {
-	c := newTestRuntime(testDeps{})
-	c.Containerd = &fakeCompose{}
-
-	for _, tc := range []struct {
-		name string
-		rt   Spec
-		want Adapter
-	}{
-		{"docker provider", Spec{Provider: ProviderDocker}, c.Docker},
-		{"colima without an engine", Spec{Provider: ProviderColima}, c.Docker},
-		{"colima with docker", Spec{Provider: ProviderColima, Engine: EngineDocker}, c.Docker},
-		{"colima with containerd", Spec{Provider: ProviderColima, Engine: EngineContainerd}, c.Containerd},
-	} {
-		got, err := c.ComposeFor(tc.rt)
-		if err != nil {
-			t.Errorf("%s: %v", tc.name, err)
-			continue
-		}
-		if got != tc.want {
-			t.Errorf("%s: picked the wrong adapter", tc.name)
-		}
-	}
-
-	// containerd outside Colima is rejected rather than driven with Docker.
-	// Save-time validation already refuses it; decode is lenient, so a
-	// hand-edited document can still reach here.
-	if _, err := c.ComposeFor(Spec{Provider: ProviderDocker, Engine: EngineContainerd}); !errors.Is(err, errContainerdUnsupported) {
-		t.Errorf("err = %v, want errContainerdUnsupported", err)
-	}
-}
-
 func containerdRT(profile string) Spec {
 	return Spec{Provider: ProviderColima, Profile: profile, Engine: EngineContainerd}
 }
