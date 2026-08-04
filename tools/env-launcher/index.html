@@ -85,74 +85,118 @@
   </div>
 </div>
 
-<!-- Process Modal -->
+<!-- Process (v1) / Component (v2) Modal.
+     One modal serves both schemas: a v2 host_process component is a v1 process
+     object plus kind/lifecycle, so duplicating the port/binding/port_strategy
+     fields into a second modal would only let the two drift apart. -->
 <div class="modal-overlay" id="processModalOverlay">
   <div class="modal">
     <div class="modal-header" id="processModalTitle">プロセスの編集</div>
     <div class="modal-body">
       <div class="form-group">
-        <label>ID</label>
+        <label for="procId">ID</label>
         <input type="text" id="procId" class="form-control" placeholder="backend">
       </div>
       <div class="form-group">
-        <label>表示名</label>
+        <label for="procLabel">表示名</label>
         <input type="text" id="procLabel" class="form-control" placeholder="Rails API">
       </div>
-      <div class="form-group">
-        <label>コマンド <span style="font-size: 11px; color: var(--muted);">※複数行可（各行が順に実行されます）</span></label>
-        <textarea id="procCmd" class="form-control" rows="3" style="font-family: monospace; resize: vertical;" placeholder="bundle exec rails s"></textarea>
-      </div>
-      <div class="form-group">
-        <label>作業ディレクトリ (CWD)</label>
-        <input type="text" id="procCwd" class="form-control" placeholder="~/projects/myapp">
-      </div>
-      <div class="form-group">
-        <label>ポート (任意) <span style="font-size: 11px; color: var(--muted);">※ 稼働状況の表示・kill・再起動に使用。単一 (3000) または範囲 (3000-3010)。dev サーバが次の空きポートに採番する場合は範囲指定が便利です</span></label>
-        <input type="text" id="procPort" class="form-control" placeholder="3000 または 3000-3010">
-      </div>
-      <div class="form-group">
-        <label>Worktree binding (任意) <span style="font-size: 11px; color: var(--muted);">※ このプロセスを特定 branch の既存 worktree で起動します。未指定なら環境の worktree / CWD</span></label>
-        <div style="display: flex; gap: 8px;">
-          <select id="procBindRepo" class="form-control" style="flex: 1;"></select>
-          <select id="procBindBranch" class="form-control" style="flex: 1;"></select>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>ポート戦略</label>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <select id="procPortStrategy" class="form-control" style="flex: 1;">
-            <option value="baton">baton（排他・固定ポートを奪う）</option>
-            <option value="offset">offset（並列・空きポートを採番）</option>
+      <!-- v2 only. The kind picker lists exactly the two kinds the backend
+           implements, so an unsupported kind is never offered. -->
+      <div id="procV2Fields" style="display: none;">
+        <div class="form-group">
+          <label for="procKind">種別</label>
+          <select id="procKind" class="form-control" onchange="syncComponentKind()">
+            <option value="host_process">host_process（ホストで動くプロセス）</option>
+            <option value="compose_service">compose_service（Docker Compose のサービス）</option>
           </select>
-          <input type="text" id="procPortEnvVar" class="form-control" style="flex: 1;" placeholder="採番先 env 変数 (例: PORT)">
         </div>
-        <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
-          offset は base ポート（上のポート）から空きを探し、その番号を指定 env 変数でアプリに渡します（並列 worktree 向け）。
+        <div class="form-group">
+          <label for="procLifecycle">ライフサイクル</label>
+          <select id="procLifecycle" class="form-control">
+            <option value="scenario">scenario（シナリオ切替で入れ替わる）</option>
+            <option value="shared">shared（切替をまたいで維持する）</option>
+          </select>
+          <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">shared は全シナリオに暗黙で所属します（共通の DB など）。scenario はシナリオに所属させて初めて起動対象になります。</div>
         </div>
       </div>
       <div class="form-group">
-        <label>依存プロセス (Depends On)</label>
+        <label for="procDepends">依存 (Depends On)</label>
         <select id="procDepends" class="form-control" multiple style="height: 60px;">
           <!-- options populated dynamically -->
         </select>
       </div>
-      <div class="form-group">
-        <label>起動後待機時間 (秒)</label>
-        <input type="number" id="procDelay" class="form-control" value="1" step="0.1" min="0" placeholder="1.0">
-      </div>
-      <div class="form-group">
-        <label>環境変数 (Env Vars) <span style="font-size: 11px; color: var(--red);">※ 平文で保存されます。本番のクレデンシャル等は入力しないでください</span></label>
-        <div id="procEnvVars"></div>
-        <div style="margin-top: 8px; display: flex; gap: 8px;">
-          <button class="btn" onclick="addEnvVar()">＋ 追加</button>
-          <button class="btn" onclick="toggleBulkEnv()">一括貼り付け</button>
+      <div id="procHostFields">
+        <div class="form-group">
+          <label for="procCmd">コマンド <span style="font-size: 11px; color: var(--muted);">※複数行可（各行が順に実行されます）</span></label>
+          <textarea id="procCmd" class="form-control" rows="3" style="font-family: monospace; resize: vertical;" placeholder="bundle exec rails s"></textarea>
         </div>
-        <div id="bulkEnvArea" style="display: none; margin-top: 8px;">
-          <textarea id="bulkEnvText" class="form-control" rows="6" style="font-family: monospace; resize: vertical;" placeholder="export KEY=value または KEY=value を貼り付け&#10;# 行頭コメント・空行は無視（行末の # コメントは値の一部になります）"></textarea>
-          <div style="display: flex; gap: 8px; margin-top: 6px;">
-            <button class="btn btn-success" onclick="applyBulkEnv()">反映</button>
-            <button class="btn" onclick="toggleBulkEnv()">閉じる</button>
+        <div class="form-group">
+          <label for="procCwd">作業ディレクトリ (CWD)</label>
+          <input type="text" id="procCwd" class="form-control" placeholder="~/projects/myapp">
+        </div>
+        <div class="form-group">
+          <label for="procPort">ポート (任意) <span style="font-size: 11px; color: var(--muted);">※ 稼働状況の表示・kill・再起動に使用。単一 (3000) または範囲 (3000-3010)。dev サーバが次の空きポートに採番する場合は範囲指定が便利です</span></label>
+          <input type="text" id="procPort" class="form-control" placeholder="3000 または 3000-3010">
+        </div>
+        <div class="form-group">
+          <label>Worktree binding (任意) <span style="font-size: 11px; color: var(--muted);">※ このプロセスを特定 branch の既存 worktree で起動します。未指定なら環境の worktree / CWD</span></label>
+          <div style="display: flex; gap: 8px;">
+            <select id="procBindRepo" class="form-control" style="flex: 1;"></select>
+            <select id="procBindBranch" class="form-control" style="flex: 1;"></select>
           </div>
+        </div>
+        <div class="form-group">
+          <label>ポート戦略</label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <select id="procPortStrategy" class="form-control" style="flex: 1;">
+              <option value="baton">baton（排他・固定ポートを奪う）</option>
+              <option value="offset">offset（並列・空きポートを採番）</option>
+            </select>
+            <input type="text" id="procPortEnvVar" class="form-control" style="flex: 1;" placeholder="採番先 env 変数 (例: PORT)">
+          </div>
+          <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
+            offset は base ポート（上のポート）から空きを探し、その番号を指定 env 変数でアプリに渡します（並列 worktree 向け）。
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="procDelay">起動後待機時間 (秒)</label>
+          <input type="number" id="procDelay" class="form-control" value="1" step="0.1" min="0" placeholder="1.0">
+        </div>
+        <div class="form-group">
+          <label>環境変数 (Env Vars) <span style="font-size: 11px; color: var(--red);">※ 平文で保存されます。本番のクレデンシャル等は入力しないでください</span></label>
+          <div id="procEnvVars"></div>
+          <div style="margin-top: 8px; display: flex; gap: 8px;">
+            <button class="btn" onclick="addEnvVar()">＋ 追加</button>
+            <button class="btn" onclick="toggleBulkEnv()">一括貼り付け</button>
+          </div>
+          <div id="bulkEnvArea" style="display: none; margin-top: 8px;">
+            <textarea id="bulkEnvText" class="form-control" rows="6" style="font-family: monospace; resize: vertical;" placeholder="export KEY=value または KEY=value を貼り付け&#10;# 行頭コメント・空行は無視（行末の # コメントは値の一部になります）"></textarea>
+            <div style="display: flex; gap: 8px; margin-top: 6px;">
+              <button class="btn btn-success" onclick="applyBulkEnv()">反映</button>
+              <button class="btn" onclick="toggleBulkEnv()">閉じる</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="procComposeFields" style="display: none;">
+        <div class="form-group">
+          <label for="procComposeCwd">作業ディレクトリ (CWD)</label>
+          <input type="text" id="procComposeCwd" class="form-control" placeholder="~/projects/myapp">
+          <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">docker compose をこのディレクトリで実行します。</div>
+        </div>
+        <div class="form-group">
+          <label for="procComposeProject">Project 名</label>
+          <input type="text" id="procComposeProject" class="form-control" placeholder="myapp">
+          <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">devhub が操作対象を絞る所有権マーカーです（<code>--project-name</code>）。この project 以外のコンテナには触れません。</div>
+        </div>
+        <div class="form-group">
+          <label for="procComposeServices">サービス <span style="font-size: 11px; color: var(--muted);">※ 1行に1つ。1つ以上必要です</span></label>
+          <textarea id="procComposeServices" class="form-control" rows="3" style="font-family: monospace; resize: vertical;" placeholder="mysql&#10;redis"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="procComposeFiles">Compose ファイル (任意) <span style="font-size: 11px; color: var(--muted);">※ 1行に1つ。空なら compose の既定解決に任せます</span></label>
+          <textarea id="procComposeFiles" class="form-control" rows="2" style="font-family: monospace; resize: vertical;" placeholder="docker-compose.yml"></textarea>
         </div>
       </div>
     </div>
@@ -210,6 +254,9 @@
 <script src="/tools/env-launcher/launches.js"></script>
 <script src="/tools/env-launcher/switch.js"></script>
 <script src="/tools/env-launcher/runtime-editor.js"></script>
+<!-- Before render.js, which reads a v2 environment's components through
+     componentsOf() to draw the card. -->
+<script src="/tools/env-launcher/component-editor.js"></script>
 <script src="/tools/env-launcher/render.js"></script>
 <script src="/tools/env-launcher/env-editor.js"></script>
 <script src="/tools/env-launcher/process-editor.js"></script>
