@@ -103,13 +103,31 @@ func TestParsePSAcceptsBothShapes(t *testing.T) {
 // which is the one wrong answer a panel for finding stray containers must never
 // give.
 func TestParsePSRejectsAnUnknownSchema(t *testing.T) {
-	renamed := `{"container_id":"66c1d62e2d63","container_name":"platform-local-mysql-1","state":"exited"}`
-	got, err := parsePS(renamed, "docker")
-	if err == nil {
-		t.Fatalf("parsed %d containers from output with no recognised keys; want an error", len(got))
+	for _, tc := range []struct{ name, out string }{
+		{"nothing recognised", `{"container_id":"66c1d62e2d63","container_name":"mysql-1","state":"exited"}`},
+		// Only ID renamed. This decodes to rows that look plausible — they even
+		// have names — and is the dangerous case: collapseAliases matches on ID,
+		// so a whole listing of empty ones would fold every later source away as
+		// a duplicate and the rows would disappear without a word.
+		//
+		// Note the rename has to be a real one. encoding/json matches field
+		// names case-insensitively, so "Id" would still land in ID and this
+		// schema check would (correctly) not fire.
+		{"only ID renamed", `{"ContainerId":"66c1d62e2d63","Names":"platform-local-mysql-1","State":"exited"}`},
+	} {
+		got, err := parsePS(tc.out, "docker")
+		if err == nil {
+			t.Errorf("%s: parsed %d containers; want an error", tc.name, len(got))
+			continue
+		}
+		if !strings.Contains(err.Error(), "ID") {
+			t.Errorf("%s: error = %q, want it to name the missing field", tc.name, err)
+		}
 	}
-	if !strings.Contains(err.Error(), "ID/Names") {
-		t.Errorf("error = %q, want it to name the fields that were missing", err)
+
+	// A row with an ID but no name is real output, not a schema change.
+	if _, err := parsePS(namelessRow, "docker"); err != nil {
+		t.Errorf("a nameless container was rejected: %v", err)
 	}
 }
 

@@ -130,6 +130,10 @@ main { padding: 16px; overflow-y: auto; }
 <script>
 let sources = [];
 let containers = [];
+// loadError is kept separately from the empty source list because the two mean
+// different things and the body has to say which: no sources is "this machine
+// has no container engine", a failed call is "devhub could not ask".
+let loadError = '';
 
 const main = $('main');
 const statusEl = $('status');
@@ -153,11 +157,13 @@ async function load() {
     const data = await apiJson('/api/containers');
     sources = data.sources || [];
     containers = data.containers || [];
+    loadError = '';
     const live = containers.filter(c => c.running).length;
     setStatus(`${live} running / ${containers.length}`, 'ok');
   } catch (e) {
     sources = [];
     containers = [];
+    loadError = e.message;
     setStatus(`エラー: ${e.message}`, 'error');
   }
   render();
@@ -250,6 +256,10 @@ function sourceHtml(src, rows) {
 }
 
 function render() {
+  if (loadError) {
+    main.innerHTML = `<div class="empty">読み込みに失敗しました: ${escapeHtml(loadError)}</div>`;
+    return;
+  }
   if (!sources.length) {
     main.innerHTML = '<div class="empty">コンテナ実行基盤が見つかりません。</div>';
     return;
