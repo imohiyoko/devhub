@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func providerByID(providers []Provider, id string) Provider {
@@ -280,5 +281,68 @@ func TestComposeForPicksTheAdapter(t *testing.T) {
 	// hand-edited document can still reach here.
 	if _, err := c.ComposeFor(Spec{Provider: ProviderDocker, Engine: EngineContainerd}); !errors.Is(err, errContainerdUnsupported) {
 		t.Errorf("err = %v, want errContainerdUnsupported", err)
+	}
+}
+
+// blockingProbe and readyColima are local to the starvation test rather than
+// living in fakes_test.go: only this test needs a probe that consumes a
+// deadline, and only this test needs a Colima that consults the context.
+
+// blockingProbe is an engine whose availability probe takes the whole
+// deadline — a daemon that has just started, or a VM still booting.
+type blockingProbe struct{}
+
+func (blockingProbe) Available(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (blockingProbe) ServiceStates(context.Context, Spec, ComposeSpec) (map[string]State, error) {
+	return map[string]State{}, nil
+}
+
+func (blockingProbe) Up(context.Context, Spec, ComposeSpec) error   { return nil }
+func (blockingProbe) Stop(context.Context, Spec, ComposeSpec) error { return nil }
+
+// readyColima is a host that has Colima installed with a running profile. It
+// consults the context, which fakeColima does not, because that is what the
+// real colimaCLI does once past its darwin and lookPath checks: the answer
+// comes from `colima list`, and an expired context fails it.
+type readyColima struct{ profiles []ColimaProfile }
+
+func (c readyColima) Profiles(ctx context.Context) ([]ColimaProfile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.profiles, nil
+}
+
+// TestProvidersProbesDoNotStarveEachOther pins the concurrency in Providers.
+// Run in sequence under a caller's deadline, a slow Docker probe spent all of
+// it and Colima was then asked with an already-expired context — so a machine
+// with a healthy Colima was reported unavailable and its profile list came
+// back empty. That list is what the runtime picker is built from, so the
+// symptom was a working execution base vanishing from the UI, not merely a
+// worse error message.
+//
+// This is invisible to a response comparison against a previous build: both
+// answer instantly when nothing is slow. It takes a probe that actually
+// blocks, which is why the double is here.
+func TestProvidersProbesDoNotStarveEachOther(t *testing.T) {
+	r := &Runtime{
+		Docker:     blockingProbe{},
+		Containerd: &fakeCompose{},
+		Colima:     readyColima{profiles: []ColimaProfile{{Name: "default", Status: "Running", Engine: "docker"}}},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	colima := providerByID(r.Providers(ctx), ProviderColima)
+
+	if !colima.Available {
+		t.Fatalf("colima available = false (reason %q); the docker probe spent its budget", colima.Reason)
+	}
+	if len(colima.Profiles) != 1 {
+		t.Errorf("profiles = %d, want 1 — this list is what the runtime picker offers", len(colima.Profiles))
 	}
 }

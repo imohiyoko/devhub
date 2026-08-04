@@ -115,9 +115,9 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 		}
 		httpx.WriteJSON(w, http.StatusOK, data)
 	case "/api/envs/runtimes":
-		ctx, cancel := context.WithTimeout(r.Context(), container.CapabilityProbeTimeout)
-		defer cancel()
-		httpx.WriteJSON(w, http.StatusOK, runtimeProvidersJSON(c.runtime.Providers(ctx)))
+		// Providers bounds its own probes; passing the request context means a
+		// client that goes away also stops them.
+		httpx.WriteJSON(w, http.StatusOK, runtimeProvidersJSON(c.runtime.Providers(r.Context())))
 	default:
 		return httpx.Errorf(http.StatusNotFound, "not found")
 	}
@@ -369,9 +369,7 @@ func (c *Controller) composeStates(env environment) map[string]componentStatus {
 		if adapterErr != nil {
 			return nil, adapterErr
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), container.ComposeProbeTimeout)
-		defer cancel()
-		return adapter.ServiceStates(ctx, env.Runtime, spec)
+		return adapter.ServiceStates(context.Background(), env.Runtime, spec)
 	}
 
 	out := make(map[string]componentStatus, len(env.Components))

@@ -14,12 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
+	"sync"
 )
-
-// CapabilityProbeTimeout bounds the whole capability report. The runtimes
-// endpoint is on the UI's load path, so it must fail rather than hang.
-const CapabilityProbeTimeout = 10 * time.Second
 
 // Profile is one Colima profile as the UI sees it.
 type Profile struct {
@@ -64,20 +60,41 @@ type Provider struct {
 
 // Providers reports the execution bases available on this host. It is
 // read-only: it looks for CLIs and lists Colima profiles, and starts nothing.
+// Each probe bounds itself, so the report as a whole cannot hang even though
+// nothing here sets a deadline.
+//
+// The two probes run concurrently because they are independent and must not
+// spend each other's budget. Run in sequence under a caller's deadline, a
+// Docker probe that took all of it handed Colima an already-expired context,
+// and a Colima that was installed and running came back unavailable with a
+// deadline error — which costs the user their profile list, and that list is
+// what the runtime picker is built from. The failure showed up exactly when
+// Docker is slowest to answer: right after the daemon or the VM starts, which
+// is also when someone is most likely to be opening devhub.
 func (r *Runtime) Providers(ctx context.Context) []Provider {
+	var (
+		wg          sync.WaitGroup
+		dockerErr   error
+		profiles    []ColimaProfile
+		profilesErr error
+	)
+	wg.Add(2)
+	go func() { defer wg.Done(); dockerErr = r.Docker.Available(ctx) }()
+	go func() { defer wg.Done(); profiles, profilesErr = r.Colima.Profiles(ctx) }()
+	wg.Wait()
+
 	host := Provider{ID: ProviderHost, Label: "ホスト", Available: true, Supported: true, Engines: []string{}}
 
 	docker := Provider{ID: ProviderDocker, Label: "Docker", Available: true, Supported: true, Engines: []string{EngineDocker}}
-	if err := r.Docker.Available(ctx); err != nil {
-		docker.Available, docker.Reason = false, err.Error()
+	if dockerErr != nil {
+		docker.Available, docker.Reason = false, dockerErr.Error()
 	}
 
 	// Colima advertises the engines devhub can drive on it, not every engine
 	// Colima itself can host: an option the user could pick and devhub could
 	// not act on is worse than one that is absent with a reason.
 	colima := Provider{ID: ProviderColima, Label: "Colima", Supported: true, Engines: drivableEngines()}
-	profiles, err := r.Colima.Profiles(ctx)
-	if err != nil {
+	if err := profilesErr; err != nil {
 		colima.Reason = err.Error()
 		// The one failure that is about the machine rather than its setup: no
 		// amount of installing makes Colima available on Linux or Windows.
@@ -131,7 +148,8 @@ func DockerContextFor(rt Spec) string {
 // reconfiguring a profile is the user's call (plan §6.4, §13) — and because a
 // switch may not touch a container component at all.
 //
-// Only a colima spec pays the probe; anything else returns immediately.
+// Only a colima spec pays the probe; anything else returns immediately. The
+// probe that does run bounds itself, so a plan can never hang on it.
 func (r *Runtime) Warnings(ctx context.Context, rt Spec) []string {
 	if rt.Provider != ProviderColima {
 		return nil

@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imohiyoko/devhub/internal/container"
 	"github.com/imohiyoko/devhub/internal/httpx"
 )
 
@@ -49,9 +48,7 @@ func (c *Controller) PlanSwitch(envID string, target SwitchTarget) (SwitchPlan, 
 // that an environment's execution base is env.Runtime, and that a plan must not
 // hang waiting for the probe.
 func (c *Controller) runtimeWarnings(env environment) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), container.CapabilityProbeTimeout)
-	defer cancel()
-	return c.runtime.Warnings(ctx, env.Runtime)
+	return c.runtime.Warnings(context.Background(), env.Runtime)
 }
 
 // ApplySwitch switches envID to target and returns the plan it acted on with
@@ -112,9 +109,7 @@ func (c *Controller) applyStops(env environment, plan SwitchPlan, byID map[strin
 		var err error
 		if comp.Kind == kindComposeService {
 			if err = adapterErr; err == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), container.ComposeOpTimeout)
-				err = adapter.Stop(ctx, env.Runtime, comp.Compose)
-				cancel()
+				err = adapter.Stop(context.Background(), env.Runtime, comp.Compose)
 			}
 		} else {
 			err = c.stopHostComponent(ports[comp.ID], live)
@@ -173,9 +168,7 @@ func (c *Controller) applyStarts(env environment, plan SwitchPlan, byID map[stri
 		switch {
 		case comp.Kind == kindComposeService:
 			if err = adapterErr; err == nil {
-				ctx, cancel := context.WithTimeout(context.Background(), container.ComposeOpTimeout)
-				err = adapter.Up(ctx, env.Runtime, comp.Compose)
-				cancel()
+				err = adapter.Up(context.Background(), env.Runtime, comp.Compose)
 			}
 		case hostErr != nil:
 			err = hostErr

@@ -51,6 +51,8 @@ func (n *nerdctlCompose) Available(context.Context) error {
 }
 
 func (n *nerdctlCompose) ServiceStates(ctx context.Context, rt Spec, spec ComposeSpec) (map[string]State, error) {
+	ctx, cancel := context.WithTimeout(ctx, composeProbeTimeout)
+	defer cancel()
 	stdout, err := n.run(ctx, rt, spec, "ps", "--format", "json", "--all")
 	if err != nil {
 		return nil, err
@@ -66,11 +68,15 @@ func (n *nerdctlCompose) ServiceStates(ctx context.Context, rt Spec, spec Compos
 // before what it depends on is actually serving. The user is told so by
 // Warnings rather than left to discover it from a flaky start.
 func (n *nerdctlCompose) Up(ctx context.Context, rt Spec, spec ComposeSpec) error {
+	ctx, cancel := context.WithTimeout(ctx, composeOpTimeout)
+	defer cancel()
 	_, err := n.run(ctx, rt, spec, append([]string{"up", "--detach"}, spec.Services...)...)
 	return err
 }
 
 func (n *nerdctlCompose) Stop(ctx context.Context, rt Spec, spec ComposeSpec) error {
+	ctx, cancel := context.WithTimeout(ctx, composeOpTimeout)
+	defer cancel()
 	_, err := n.run(ctx, rt, spec, append([]string{"stop"}, spec.Services...)...)
 	return err
 }
