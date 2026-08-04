@@ -58,9 +58,10 @@ type Source struct {
 	// always. Its containers are reported under that source instead, so they
 	// are not counted twice. Empty for a source that stands alone.
 	AliasOf string
-	// CPUs, MemoryBytes and DiskBytes describe a Colima source's VM. They are
-	// shown, never set — see ColimaProfile for why devhub does not offer to
-	// change them.
+	// CPUs, MemoryBytes and DiskBytes describe a Colima source's VM. Listing
+	// reads them and never sets them: changing a size stops and restarts the
+	// VM, so it is a request of its own (ProfileManager) and never something
+	// that falls out of looking at the machine.
 	CPUs        int
 	MemoryBytes int64
 	DiskBytes   int64
@@ -306,7 +307,7 @@ func (r *Runtime) inventorySources(ctx context.Context) []Source {
 // colimaSource turns one profile into a listable source, or into an entry that
 // explains why it is not one. A stopped profile is the common case and the one
 // worth naming: its containers still exist on disk, devhub simply cannot see
-// them until the user starts the VM — and devhub does not start it (plan §13).
+// them until the VM is started, which a listing never does on its own (plan §13).
 func colimaSource(p Profile) Source {
 	src := Source{
 		ID: ProviderColima + ":" + p.Name, Label: "Colima: " + p.Name,
