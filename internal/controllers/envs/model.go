@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/imohiyoko/devhub/internal/container"
 )
 
 // Component kinds and lifecycles (config schema v2).
@@ -26,20 +28,6 @@ const (
 	lifecycleScenario   = "scenario"
 	defaultScenarioID   = "default"
 	defaultScenarioName = "デフォルト"
-)
-
-// Runtime providers and container engines (plan §5). A provider is where
-// commands run; an engine is what runs containers inside a provider.
-const (
-	providerHost     = "host"
-	providerDocker   = "docker"
-	providerColima   = "colima"
-	engineDocker     = "docker"
-	engineContainerd = "containerd"
-
-	// defaultColimaProfile is the profile colima itself uses when none is
-	// given (`colima start` without -p).
-	defaultColimaProfile = "default"
 )
 
 // environment is one entry of the envs document's environments array.
@@ -54,37 +42,24 @@ type environment struct {
 	ID         string
 	Name       string
 	Worktree   worktree
-	Runtime    runtimeSpec
+	Runtime    container.Spec
 	Processes  []process
 	Components []component
 	Scenarios  []scenario
 }
 
-// runtimeSpec is the execution base a v2 environment declares for its
-// container components. Profile and Engine are meaningful for the colima
-// provider only.
-//
-// The zero-ish default is provider "docker": a document that says nothing
-// keeps using whatever Docker context the user's shell resolves to, which is
-// what devhub did before runtimes existed.
-type runtimeSpec struct {
-	Provider string // providerHost | providerDocker | providerColima
-	Profile  string // colima profile name
-	Engine   string // engineDocker | engineContainerd; "" means "whatever the profile runs"
-}
-
 // decodeRuntime reads the optional runtime block. Like the rest of decoding it
 // is lenient — validateRuntime is the gate that rejects unknown providers at
 // save time.
-func decodeRuntime(m map[string]any) runtimeSpec {
+func decodeRuntime(m map[string]any) container.Spec {
 	rt := pMap(m, "runtime")
-	spec := runtimeSpec{
+	spec := container.Spec{
 		Provider: pStr(rt, "provider"),
 		Profile:  pStr(rt, "profile"),
 		Engine:   pStr(rt, "engine"),
 	}
 	if spec.Provider == "" {
-		spec.Provider = providerDocker
+		spec.Provider = container.ProviderDocker
 	}
 	return spec
 }
@@ -97,8 +72,8 @@ type component struct {
 	Kind      string // kindHostProcess | kindComposeService
 	Shared    bool   // lifecycle "shared": kept across scenario switches
 	DependsOn []string
-	Proc      process     // host_process payload (zero for compose_service)
-	Compose   composeSpec // compose_service payload (zero for host_process)
+	Proc      process               // host_process payload (zero for compose_service)
+	Compose   container.ComposeSpec // compose_service payload (zero for host_process)
 }
 
 // displayLabel is what to call the component in the UI: its label, falling
@@ -108,16 +83,6 @@ func (c component) displayLabel() string {
 		return c.Label
 	}
 	return c.ID
-}
-
-// composeSpec locates a compose_service: where to run docker compose, which
-// files, under which project name (the ownership marker devhub operates on),
-// and which services.
-type composeSpec struct {
-	Cwd      string
-	Files    []string
-	Project  string
-	Services []string
 }
 
 // scenario is a named set of scenario-scoped component ids; shared components
@@ -201,7 +166,7 @@ func decodeEnvironment(m map[string]any, version int) environment {
 	// v1 has no runtime block, and reading one out of a hand-edited v1
 	// document would report an execution base that nothing in the v1 path
 	// honours. It carries the default instead.
-	env.Runtime = runtimeSpec{Provider: providerDocker}
+	env.Runtime = container.Spec{Provider: container.ProviderDocker}
 	if version >= 2 {
 		env.Runtime = decodeRuntime(m)
 		for _, cm := range objSlice(m["components"]) {
@@ -253,7 +218,7 @@ func decodeComponent(m map[string]any) component {
 	switch c.Kind {
 	case kindComposeService:
 		cm := pMap(m, "compose")
-		c.Compose = composeSpec{
+		c.Compose = container.ComposeSpec{
 			Cwd:      pStr(cm, "cwd"),
 			Files:    toStringSlice(cm["files"]),
 			Project:  pStr(cm, "project"),

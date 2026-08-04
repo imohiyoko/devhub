@@ -11,15 +11,20 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
+
+	"github.com/imohiyoko/devhub/internal/container"
 )
 
-// componentState is a component's observed state.
-type componentState string
+// A component's observed state. The vocabulary is the container package's,
+// reused verbatim for host processes: a process is running, stopped, or
+// unobservable in exactly the same sense a container is, and having two
+// spellings of it would only invite a conversion that can drift.
+type componentState = container.State
 
 const (
-	stateRunning componentState = "running"
-	stateStopped componentState = "stopped"
-	stateUnknown componentState = "unknown"
+	stateRunning = container.StateRunning
+	stateStopped = container.StateStopped
+	stateUnknown = container.StateUnknown
 )
 
 // componentStatus pairs the observed state with the reason it could not be
