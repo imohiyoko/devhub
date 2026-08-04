@@ -58,6 +58,36 @@ func TestRuntimeProvidersReportsWhyEachIsUnusable(t *testing.T) {
 	}
 }
 
+// TestRuntimeProvidersSeparatesSupportedFromAvailable is what lets the UI hide
+// Colima on Linux while still showing it — with the reason — on a macOS host
+// that simply has not installed it (plan §10). Collapsing the two into one flag
+// would force the UI to string-match the reason.
+func TestRuntimeProvidersSeparatesSupportedFromAvailable(t *testing.T) {
+	notInstalled, _ := newTestController(&fakeStore{envs: map[string]any{}}, testDeps{
+		colima: &fakeColima{err: errColimaMissing},
+	})
+	p := providerByID(notInstalled.RuntimeProviders(context.Background()), providerColima)
+	if p.Available || !p.Supported {
+		t.Errorf("macOS without Colima = %+v, want unavailable but supported", p)
+	}
+
+	wrongOS, _ := newTestController(&fakeStore{envs: map[string]any{}}, testDeps{
+		colima: &fakeColima{err: errColimaUnsupportedOS},
+	})
+	p = providerByID(wrongOS.RuntimeProviders(context.Background()), providerColima)
+	if p.Available || p.Supported {
+		t.Errorf("non-macOS = %+v, want neither available nor supported", p)
+	}
+
+	// The providers that need nothing installed are always both.
+	for _, id := range []string{providerHost, providerDocker} {
+		got := providerByID(wrongOS.RuntimeProviders(context.Background()), id)
+		if !got.Supported {
+			t.Errorf("%s = %+v, want supported", id, got)
+		}
+	}
+}
+
 func TestRuntimeProvidersListsColimaProfiles(t *testing.T) {
 	c, _ := newTestController(&fakeStore{envs: map[string]any{}}, testDeps{
 		colima: &fakeColima{profiles: []colimaProfile{

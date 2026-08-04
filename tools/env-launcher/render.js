@@ -81,6 +81,7 @@ function render() {
     // and switch but not yet edit (#150) — so it offers the switcher instead
     // of a process editor that could not save.
     if (isV2Document()) {
+      html += runtimeSectionHtml(env, eIdx);
       html += switchSectionHtml(env);
       html += `</div></div>`;
       return;
