@@ -154,7 +154,7 @@ func (l *spawnLog) record(cmd *exec.Cmd) error {
 	l.cmds = append(l.cmds, cmd)
 	l.mu.Unlock()
 	l.ch <- cmd
-	if l.failOn != "" && strings.Contains(strings.Join(cmd.Args, " "), l.failOn) {
+	if l.failOn != "" && strings.Contains(spawnedCommandLine(cmd), l.failOn) {
 		return errors.New("terminal did not start")
 	}
 	return nil
