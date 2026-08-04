@@ -209,6 +209,22 @@ main {
 .run-badge.down { border-color: var(--muted); color: var(--muted); }
 /* .btn-sm / .btn-danger: shared/ui/components.css */
 
+/* --- execution base (runtime-editor.js) --- */
+.runtime-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.runtime-head { display: flex; align-items: center; gap: 10px; }
+.runtime-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.runtime-head .btn { margin-left: auto; }
+/* Muted, not red: everything reported here is something devhub declines to fix
+   on the user's behalf, not something that has already gone wrong. */
+.runtime-note { font-size: 11px; color: var(--muted); }
+
 /* --- scenario switching (switch.js / render.js) --- */
 .switch-section { display: flex; flex-direction: column; gap: 8px; }
 .switch-head {
