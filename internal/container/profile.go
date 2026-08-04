@@ -86,6 +86,11 @@ type ProfileSpec struct {
 type ProfileManager interface {
 	Create(ctx context.Context, spec ProfileSpec) error
 	Resize(ctx context.Context, spec ProfileSpec) error
+	// CheckResize answers whether a resize would be allowed, without doing it.
+	// It exists so a caller can refuse before asking the user to agree to
+	// anything: being told "the disk cannot shrink" after consenting to stop a
+	// VM full of containers is a worse sequence than being told first.
+	CheckResize(ctx context.Context, spec ProfileSpec) error
 }
 
 // adminRunner spawns the two commands that move a VM. It is its own seam, not
@@ -146,26 +151,42 @@ func (a *colimaAdmin) Create(ctx context.Context, spec ProfileSpec) error {
 // that path recreates the VM, and no amount of starting it again brings the
 // images back.
 func (a *colimaAdmin) Resize(ctx context.Context, spec ProfileSpec) error {
-	if err := a.check(spec); err != nil {
-		return err
-	}
-	current, found, err := a.find(ctx, spec.Name)
+	current, err := a.checkResize(ctx, spec)
 	if err != nil {
 		return err
 	}
-	if !found {
-		return ErrProfileMissing
-	}
-	if spec.DiskGiB > 0 && current.DiskBytes > 0 && int64(spec.DiskGiB)*gib < current.DiskBytes {
-		return fmt.Errorf("%w（現在 %d GiB）", ErrDiskShrink, current.DiskBytes/gib)
-	}
-
 	if current.running() {
 		if err := a.stop(ctx, spec.Name); err != nil {
 			return err
 		}
 	}
 	return a.start(ctx, spec)
+}
+
+// CheckResize runs every refusal Resize would, and nothing else.
+func (a *colimaAdmin) CheckResize(ctx context.Context, spec ProfileSpec) error {
+	_, err := a.checkResize(ctx, spec)
+	return err
+}
+
+// checkResize returns the profile as it stands, or the reason the resize is
+// refused. Resize and CheckResize share it so the two can never disagree about
+// what is allowed — which is the whole point of offering a dry run.
+func (a *colimaAdmin) checkResize(ctx context.Context, spec ProfileSpec) (ColimaProfile, error) {
+	if err := a.check(spec); err != nil {
+		return ColimaProfile{}, err
+	}
+	current, found, err := a.find(ctx, spec.Name)
+	if err != nil {
+		return ColimaProfile{}, err
+	}
+	if !found {
+		return ColimaProfile{}, ErrProfileMissing
+	}
+	if spec.DiskGiB > 0 && current.DiskBytes > 0 && int64(spec.DiskGiB)*gib < current.DiskBytes {
+		return current, fmt.Errorf("%w（現在 %d GiB）", ErrDiskShrink, current.DiskBytes/gib)
+	}
+	return current, nil
 }
 
 const gib = 1 << 30
