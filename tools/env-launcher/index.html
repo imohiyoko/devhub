@@ -181,18 +181,18 @@
     <div class="modal-header">実行基盤の設定</div>
     <div class="modal-body">
       <div class="form-group">
-        <label>Provider</label>
+        <label for="runtimeProvider">Provider</label>
         <select id="runtimeProvider" class="form-control" onchange="syncRuntimeFields()"></select>
         <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">この環境の compose_service をどこで動かすか。ホストは host_process のみの環境向けです。</div>
       </div>
       <div id="runtimeColimaFields" style="display: none;">
         <div class="form-group">
-          <label>Colima profile</label>
+          <label for="runtimeProfile">Colima profile</label>
           <select id="runtimeProfile" class="form-control"></select>
           <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">devhub は profile を起動・再構成しません。停止中なら <code>colima start -p &lt;profile&gt;</code> を実行してください。</div>
         </div>
         <div class="form-group">
-          <label>Container engine</label>
+          <label for="runtimeEngine">Container engine</label>
           <select id="runtimeEngine" class="form-control"></select>
           <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">profile が実際に使っている engine を指定します。食い違っても devhub は切り替えません（既存のイメージとコンテナに影響するため）。</div>
         </div>

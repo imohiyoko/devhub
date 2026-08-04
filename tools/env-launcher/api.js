@@ -13,12 +13,16 @@ async function fetchEnvs() {
   }
 }
 
+// saveEnvsData persists the whole document and reports whether it landed. The
+// caller needs that answer: this is a full-document replace, so an edit left in
+// envsData after a failed save is not discarded — it rides along with whatever
+// is saved next, long after the alert the user dismissed.
 async function saveEnvsData() {
   // Never persist before a successful load, or we'd replace the stored
   // document with the empty/partial default and lose every environment.
   if (!envsLoaded) {
     alert('環境がまだ読み込まれていないため保存できません。ページを再読み込みしてください。');
-    return;
+    return false;
   }
   try {
     const res = await fetch('/api/envs', {
@@ -29,8 +33,10 @@ async function saveEnvsData() {
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Failed to save environments');
     render();
+    return true;
   } catch(e) {
     alert('Error saving environments: ' + e.message);
+    return false;
   }
 }
 
