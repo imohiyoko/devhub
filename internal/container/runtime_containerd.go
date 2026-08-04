@@ -102,8 +102,22 @@ func (n *nerdctlCompose) run(ctx context.Context, rt Spec, spec ComposeSpec, sub
 	return stdout, nil
 }
 
-// errContainerdUnsupported is returned when an environment asks for containerd
+// errContainerdUnsupported is returned when a Spec asks for containerd
 // somewhere it cannot exist.
+//
+// It is a defensive path, not a user-facing one, and that is the thing worth
+// knowing about it. validateRuntime already refuses an engine under any
+// provider but colima, so no definition saved through devhub can produce it;
+// reaching it means a definition arrived some other way, or a writer stopped
+// validating. It stays a typed error rather than a panic for that reason — one
+// environment is misconfigured, and the rest of the machine still works.
+//
+// It stays unexported for the same reason. An exported error is a promise that
+// callers will want to match on it, and no consumer can reach this one to try:
+// the exported method that returns it, ComposeFor, only produces it for a Spec
+// the schema will not accept. Export it when something outside this package has
+// a reason to tell it apart from "the engine is not answering" — at that point
+// the distinction will be real, and so will the caller.
 var errContainerdUnsupported = errors.New("containerd engine は Colima profile でのみ利用できます")
 
 // colimaProfileFor is the profile a runtime addresses, defaulting to colima's
