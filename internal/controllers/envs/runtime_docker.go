@@ -35,10 +35,11 @@ var errDockerMissing = errors.New("docker コマンドが見つかりません")
 // project's services, and start or stop the services a component declares. The
 // Controller holds it as an interface so tests answer without Docker.
 type composeAdapter interface {
-	// Available reports why the adapter cannot run at all, or nil. It answers
-	// without touching the daemon: it is the "is this provider usable" half of
-	// the runtimes API, which must not hang on a machine with no Docker.
-	Available() error
+	// Available reports why the adapter cannot run at all, or nil. It is the
+	// "is this provider usable" half of the runtimes API, so it checks what
+	// every other method needs: the docker binary *and* the compose plugin,
+	// which are separate packages on most Linux distributions.
+	Available(ctx context.Context) error
 	ServiceStates(ctx context.Context, spec composeSpec) (map[string]componentState, error)
 	Up(ctx context.Context, spec composeSpec) error
 	Stop(ctx context.Context, spec composeSpec) error
@@ -56,7 +57,28 @@ func newDockerCompose() *dockerCompose {
 	return &dockerCompose{runner: execRunner{}, lookPath: exec.LookPath}
 }
 
-func (d *dockerCompose) Available() error {
+// Available probes for both halves of `docker compose`. The plugin check runs
+// a command rather than looking for a file because Compose can be installed as
+// a CLI plugin in several directories; `docker compose version` is the
+// supported way to ask. It does not contact the daemon, so a machine with
+// Docker installed but not running still answers promptly.
+//
+// Only the capability API pays for this: the operational path (run) keeps the
+// cheap binary check, because it is about to invoke compose anyway and
+// Docker's own "is not a docker command" error says it better than devhub can.
+func (d *dockerCompose) Available(ctx context.Context) error {
+	if err := d.binaryPresent(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, composeProbeTimeout)
+	defer cancel()
+	if _, stderr, err := d.runner.Run(ctx, "", "docker", "compose", "version", "--short"); err != nil {
+		return fmt.Errorf("docker compose が使えません: %w", cliError(stderr, err))
+	}
+	return nil
+}
+
+func (d *dockerCompose) binaryPresent() error {
 	if _, err := d.lookPath("docker"); err != nil {
 		return errDockerMissing
 	}
@@ -97,7 +119,7 @@ func (d *dockerCompose) Stop(ctx context.Context, spec composeSpec) error {
 // the scoping flags in one place is what guarantees every operation devhub
 // performs — read or write — is confined to the declared project.
 func (d *dockerCompose) run(ctx context.Context, spec composeSpec, sub ...string) (string, error) {
-	if err := d.Available(); err != nil {
+	if err := d.binaryPresent(); err != nil {
 		return "", err
 	}
 	args := []string{"compose", "--project-name", spec.Project}
