@@ -1,4 +1,4 @@
-package envs
+package container
 
 // Tests for the Colima adapter. Nothing here runs Colima: the runner is a
 // fake, so the assertions are about the argv devhub builds, how it reads
@@ -26,8 +26,8 @@ func testColima(runner commandRunner, darwin bool) *colimaCLI {
 func TestColimaProfilesSkipsNonDarwin(t *testing.T) {
 	runner := &fakeRunner{}
 	_, err := testColima(runner, false).Profiles(context.Background())
-	if !errors.Is(err, errColimaUnsupportedOS) {
-		t.Fatalf("err = %v, want errColimaUnsupportedOS", err)
+	if !errors.Is(err, ErrColimaUnsupportedOS) {
+		t.Fatalf("err = %v, want ErrColimaUnsupportedOS", err)
 	}
 	if len(runner.calls) != 0 {
 		t.Errorf("ran %v on a non-macOS host; nothing should be spawned", runner.calls)
@@ -40,8 +40,8 @@ func TestColimaProfilesMissingCLI(t *testing.T) {
 	adapter.lookPath = func(string) (string, error) { return "", errors.New("not found") }
 
 	_, err := adapter.Profiles(context.Background())
-	if !errors.Is(err, errColimaMissing) {
-		t.Fatalf("err = %v, want errColimaMissing", err)
+	if !errors.Is(err, ErrColimaMissing) {
+		t.Fatalf("err = %v, want ErrColimaMissing", err)
 	}
 	if len(runner.calls) != 0 {
 		t.Errorf("ran %v without a colima binary", runner.calls)
@@ -77,7 +77,7 @@ func TestColimaProfilesArgvAndParsing(t *testing.T) {
 	if profiles[0].Name != "default" || profiles[0].Engine != "" || profiles[0].running() {
 		t.Errorf("stopped profile = %+v, want name default, no engine, not running", profiles[0])
 	}
-	if profiles[1].Engine != engineDocker || !profiles[1].running() {
+	if profiles[1].Engine != EngineDocker || !profiles[1].running() {
 		t.Errorf("running profile = %+v, want docker engine and running", profiles[1])
 	}
 }

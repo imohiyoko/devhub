@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imohiyoko/devhub/internal/container"
 	gitctl "github.com/imohiyoko/devhub/internal/controllers/git"
 	portsctl "github.com/imohiyoko/devhub/internal/controllers/ports"
 	"github.com/imohiyoko/devhub/internal/platform"
@@ -123,11 +124,11 @@ type fakeCompose struct {
 	err    error
 	// unavailable is the reason Available reports; nil means Docker is present.
 	unavailable error
-	calls       []composeSpec
+	calls       []container.ComposeSpec
 	// runtimes records the runtime of every operation, so a test can assert
 	// devhub addressed the engine the environment declared. Turning it into an
 	// argv is each adapter's own job and is tested there.
-	runtimes []runtimeSpec
+	runtimes []container.Spec
 	// ups/stops record what apply operated on as "<project>/<services>", so a
 	// test can assert both the operation and the scope it was confined to;
 	// upErr/stopErr make those operations fail.
@@ -139,7 +140,7 @@ type fakeCompose struct {
 
 func (f *fakeCompose) Available(context.Context) error { return f.unavailable }
 
-func (f *fakeCompose) ServiceStates(_ context.Context, rt runtimeSpec, spec composeSpec) (map[string]componentState, error) {
+func (f *fakeCompose) ServiceStates(_ context.Context, rt container.Spec, spec container.ComposeSpec) (map[string]componentState, error) {
 	f.calls = append(f.calls, spec)
 	f.runtimes = append(f.runtimes, rt)
 	if f.err != nil {
@@ -148,13 +149,13 @@ func (f *fakeCompose) ServiceStates(_ context.Context, rt runtimeSpec, spec comp
 	return f.states[spec.Project], nil
 }
 
-func (f *fakeCompose) Up(_ context.Context, rt runtimeSpec, spec composeSpec) error {
+func (f *fakeCompose) Up(_ context.Context, rt container.Spec, spec container.ComposeSpec) error {
 	f.ups = append(f.ups, spec.Project+"/"+strings.Join(spec.Services, ","))
 	f.runtimes = append(f.runtimes, rt)
 	return f.upErr
 }
 
-func (f *fakeCompose) Stop(_ context.Context, rt runtimeSpec, spec composeSpec) error {
+func (f *fakeCompose) Stop(_ context.Context, rt container.Spec, spec container.ComposeSpec) error {
 	f.stops = append(f.stops, spec.Project+"/"+strings.Join(spec.Services, ","))
 	f.runtimes = append(f.runtimes, rt)
 	return f.stopErr
@@ -208,14 +209,14 @@ type testDeps struct {
 // fakeColima answers capability probes without Colima — and, on a CI runner
 // that happens to have it, without the real one.
 type fakeColima struct {
-	profiles []colimaProfile
+	profiles []container.ColimaProfile
 	err      error
 	// calls counts probes, so a test can assert a non-Colima environment does
 	// not pay for one.
 	calls int
 }
 
-func (f *fakeColima) Profiles(context.Context) ([]colimaProfile, error) {
+func (f *fakeColima) Profiles(context.Context) ([]container.ColimaProfile, error) {
 	f.calls++
 	return f.profiles, f.err
 }
@@ -239,18 +240,16 @@ func newTestController(store *fakeStore, d testDeps) (*Controller, *spawnLog) {
 		d.containerd = &fakeCompose{}
 	}
 	if d.colima == nil {
-		d.colima = &fakeColima{err: errColimaMissing}
+		d.colima = &fakeColima{err: container.ErrColimaMissing}
 	}
 	c := New(store, d.git, d.ports, d.ws)
 	log := &spawnLog{ch: make(chan *exec.Cmd, 16)}
 	c.spawn = log.record
 	c.settle = 0
-	c.compose = d.compose
-	// Always replaced, never left as the real adapter: an environment
+	// Always replaced, never left as the real runtime: an environment
 	// declaring containerd would otherwise shell out to the developer's own
 	// Colima during `go test`.
-	c.containerd = d.containerd
-	c.colima = d.colima
+	c.runtime = &container.Runtime{Docker: d.compose, Containerd: d.containerd, Colima: d.colima}
 	return c, log
 }
 
@@ -679,8 +678,8 @@ func TestHandleGetState(t *testing.T) {
 	}
 	// The declared execution base travels with the state so the environment
 	// card can show it; a document that declares none reports the default.
-	if got := pStr(pMap(env, "runtime"), "provider"); got != providerDocker {
-		t.Errorf("runtime provider = %q, want %q", got, providerDocker)
+	if got := pStr(pMap(env, "runtime"), "provider"); got != container.ProviderDocker {
+		t.Errorf("runtime provider = %q, want %q", got, container.ProviderDocker)
 	}
 
 	// A v1 document reports through its generated components and default
@@ -769,7 +768,7 @@ func TestSwitchPlanEndpointCarriesRuntimeWarnings(t *testing.T) {
 	doc["environments"].([]any)[0].(map[string]any)["runtime"] =
 		map[string]any{"provider": "colima", "profile": "dev"}
 	c, _ := newTestController(&fakeStore{envs: doc}, testDeps{
-		colima: &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Stopped"}}},
+		colima: &fakeColima{profiles: []container.ColimaProfile{{Name: "dev", Status: "Stopped"}}},
 	})
 
 	rr := httptest.NewRecorder()
@@ -815,7 +814,7 @@ func TestComposeOperationsCarryTheEnvironmentContext(t *testing.T) {
 		}}
 		c, _ := newTestController(&fakeStore{envs: doc}, testDeps{
 			compose: compose,
-			colima:  &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Running", Engine: engineDocker}}},
+			colima:  &fakeColima{profiles: []container.ColimaProfile{{Name: "dev", Status: "Running", Engine: container.EngineDocker}}},
 		})
 		if _, _, err := c.ApplySwitch("micro", target, ""); err != nil {
 			t.Fatalf("ApplySwitch: %v", err)
@@ -824,7 +823,7 @@ func TestComposeOperationsCarryTheEnvironmentContext(t *testing.T) {
 			t.Fatal("no compose operation was recorded")
 		}
 		for i, rt := range compose.runtimes {
-			if got := dockerContextFor(rt); got != "colima-dev" {
+			if got := container.DockerContextFor(rt); got != "colima-dev" {
 				t.Errorf("operation %d addressed context %q, want colima-dev", i, got)
 			}
 		}
@@ -859,7 +858,7 @@ func TestContainerdEnvironmentUsesTheContainerdAdapter(t *testing.T) {
 	}}
 	c, _ := newTestController(&fakeStore{envs: doc}, testDeps{
 		compose: docker, containerd: containerd,
-		colima: &fakeColima{profiles: []colimaProfile{{Name: "dev", Status: "Running", Engine: engineContainerd}}},
+		colima: &fakeColima{profiles: []container.ColimaProfile{{Name: "dev", Status: "Running", Engine: container.EngineContainerd}}},
 	})
 
 	plan, results, err := c.ApplySwitch("micro", SwitchTarget{ScenarioID: "acc"}, "")

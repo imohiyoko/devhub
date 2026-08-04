@@ -1,4 +1,4 @@
-package envs
+package container
 
 // containerd Compose adapter, driven through nerdctl. It is a separate
 // adapter from the Docker one — not a flag on it — because the two engines
@@ -42,15 +42,15 @@ func newNerdctlCompose() *nerdctlCompose {
 // would mean starting or entering a VM just to answer a capability question.
 func (n *nerdctlCompose) Available(context.Context) error {
 	if !n.darwin {
-		return errColimaUnsupportedOS
+		return ErrColimaUnsupportedOS
 	}
 	if _, err := n.lookPath("colima"); err != nil {
-		return errColimaMissing
+		return ErrColimaMissing
 	}
 	return nil
 }
 
-func (n *nerdctlCompose) ServiceStates(ctx context.Context, rt runtimeSpec, spec composeSpec) (map[string]componentState, error) {
+func (n *nerdctlCompose) ServiceStates(ctx context.Context, rt Spec, spec ComposeSpec) (map[string]State, error) {
 	stdout, err := n.run(ctx, rt, spec, "ps", "--format", "json", "--all")
 	if err != nil {
 		return nil, err
@@ -63,14 +63,14 @@ func (n *nerdctlCompose) ServiceStates(ctx context.Context, rt runtimeSpec, spec
 // successful return means "the containers were created", not "the services are
 // ready". Dependent components may therefore start earlier than they would
 // under Docker — planSwitch's ordering still holds, but the readiness
-// guarantee behind it does not. The user is told so by RuntimeWarnings rather
+// guarantee behind it does not. The user is told so by Warnings rather
 // than left to discover it from a flaky start.
-func (n *nerdctlCompose) Up(ctx context.Context, rt runtimeSpec, spec composeSpec) error {
+func (n *nerdctlCompose) Up(ctx context.Context, rt Spec, spec ComposeSpec) error {
 	_, err := n.run(ctx, rt, spec, append([]string{"up", "--detach"}, spec.Services...)...)
 	return err
 }
 
-func (n *nerdctlCompose) Stop(ctx context.Context, rt runtimeSpec, spec composeSpec) error {
+func (n *nerdctlCompose) Stop(ctx context.Context, rt Spec, spec ComposeSpec) error {
 	_, err := n.run(ctx, rt, spec, append([]string{"stop"}, spec.Services...)...)
 	return err
 }
@@ -79,7 +79,7 @@ func (n *nerdctlCompose) Stop(ctx context.Context, rt runtimeSpec, spec composeS
 // The `--` separator is what keeps the two -p flags apart: colima's own -p
 // selects the VM profile, and the -p after the separator is compose's project
 // name. Without it colima would swallow the project name as a profile.
-func (n *nerdctlCompose) run(ctx context.Context, rt runtimeSpec, spec composeSpec, sub ...string) (string, error) {
+func (n *nerdctlCompose) run(ctx context.Context, rt Spec, spec ComposeSpec, sub ...string) (string, error) {
 	if err := n.Available(ctx); err != nil {
 		return "", err
 	}
@@ -103,9 +103,9 @@ var errContainerdUnsupported = errors.New("containerd engine は Colima profile 
 // colimaProfileFor is the profile a runtime addresses, defaulting to colima's
 // own default so an environment that names the provider but no profile still
 // resolves to a real VM.
-func colimaProfileFor(rt runtimeSpec) string {
+func colimaProfileFor(rt Spec) string {
 	if strings.TrimSpace(rt.Profile) != "" {
 		return rt.Profile
 	}
-	return defaultColimaProfile
+	return DefaultColimaProfile
 }

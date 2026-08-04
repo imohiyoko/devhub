@@ -1,0 +1,81 @@
+// Package container is devhub's view of the container runtimes on this
+// machine: which execution bases exist, what they can drive, and how to run a
+// command against a chosen one.
+//
+// It owns the vocabulary (provider, engine, Colima profile, Docker context) and
+// every spawn that talks to a container CLI. Consumers declare *what* they want
+// operated on — env-launcher declares a compose project per component — and
+// this package decides what argv that becomes and which engine answers.
+//
+// Two rules hold throughout and are the reason the package exists as a seam:
+// nothing here starts, stops or reconfigures a Colima profile (plan §13), and
+// nothing changes the global Docker context — the context is passed per command
+// instead (plan §6.3).
+package container
+
+// Runtime providers and container engines (plan §5). A provider is where
+// commands run; an engine is what runs containers inside a provider.
+const (
+	ProviderHost     = "host"
+	ProviderDocker   = "docker"
+	ProviderColima   = "colima"
+	EngineDocker     = "docker"
+	EngineContainerd = "containerd"
+
+	// DefaultColimaProfile is the profile colima itself uses when none is
+	// given (`colima start` without -p).
+	DefaultColimaProfile = "default"
+)
+
+// Spec is the execution base a consumer declares for its container work.
+// Profile and Engine are meaningful for the colima provider only.
+//
+// The zero-ish default is provider "docker": a definition that says nothing
+// keeps using whatever Docker context the user's shell resolves to, which is
+// what devhub did before runtimes existed.
+type Spec struct {
+	Provider string // ProviderHost | ProviderDocker | ProviderColima
+	Profile  string // colima profile name
+	Engine   string // EngineDocker | EngineContainerd; "" means "whatever the profile runs"
+}
+
+// ComposeSpec locates a set of Compose services: where to run compose, which
+// files, under which project name (the ownership marker every operation is
+// confined to), and which services.
+type ComposeSpec struct {
+	Cwd      string
+	Files    []string
+	Project  string
+	Services []string
+}
+
+// State is an observed state. Unknown is not a failure: it means devhub could
+// not look (the engine is unreachable, the directory is gone), and a caller
+// must not act on it as though it meant stopped.
+type State string
+
+const (
+	StateRunning State = "running"
+	StateStopped State = "stopped"
+	StateUnknown State = "unknown"
+)
+
+// Runtime is the set of engines devhub can drive on this host, plus the Colima
+// prober that says which profiles exist. The fields are exported so a consumer
+// can substitute fakes in its own tests and never reach a real daemon.
+type Runtime struct {
+	Docker     Adapter
+	Containerd Adapter
+	Colima     ProfileLister
+}
+
+// New wires the real implementations. Nothing is probed here: construction is
+// cheap and spawns nothing, so a host with neither Docker nor Colima installed
+// pays nothing until something is actually asked of it.
+func New() *Runtime {
+	return &Runtime{
+		Docker:     newDockerCompose(),
+		Containerd: newNerdctlCompose(),
+		Colima:     newColimaCLI(),
+	}
+}
