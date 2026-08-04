@@ -102,19 +102,23 @@ func (n *nerdctlCompose) run(ctx context.Context, rt Spec, spec ComposeSpec, sub
 	return stdout, nil
 }
 
-// ErrContainerdUnsupported is returned when a Spec asks for containerd
-// somewhere it cannot exist. It is exported because ComposeFor is: a consumer
-// handed a bare error can only tell this apart from "the engine is not
-// answering" by matching on the message, and those two want different
-// responses — one is a definition to fix, the other a daemon to start.
+// errContainerdUnsupported is returned when a Spec asks for containerd
+// somewhere it cannot exist.
 //
-// It is a defensive path, not a user-facing one. validateRuntime already
-// refuses an engine under any provider but colima, so no definition saved
-// through devhub can produce it; reaching it means a definition arrived some
-// other way, or a writer stopped validating. That is exactly why it stays a
-// typed error rather than a panic — the environment is misconfigured, which is
-// worth saying plainly, and the rest of the machine still works.
-var ErrContainerdUnsupported = errors.New("containerd engine は Colima profile でのみ利用できます")
+// It is a defensive path, not a user-facing one, and that is the thing worth
+// knowing about it. validateRuntime already refuses an engine under any
+// provider but colima, so no definition saved through devhub can produce it;
+// reaching it means a definition arrived some other way, or a writer stopped
+// validating. It stays a typed error rather than a panic for that reason — one
+// environment is misconfigured, and the rest of the machine still works.
+//
+// It stays unexported for the same reason. An exported error is a promise that
+// callers will want to match on it, and no consumer can reach this one to try:
+// the exported method that returns it, ComposeFor, only produces it for a Spec
+// the schema will not accept. Export it when something outside this package has
+// a reason to tell it apart from "the engine is not answering" — at that point
+// the distinction will be real, and so will the caller.
+var errContainerdUnsupported = errors.New("containerd engine は Colima profile でのみ利用できます")
 
 // colimaProfileFor is the profile a runtime addresses, defaulting to colima's
 // own default so an environment that names the provider but no profile still
