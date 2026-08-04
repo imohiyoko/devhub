@@ -31,24 +31,24 @@ const composeUpTimeout = 5 * time.Minute
 // reason a compose call fails comes from Docker's own output.
 var errDockerMissing = errors.New("docker コマンドが見つかりません")
 
-// composeAdapter is what devhub does with Docker Compose: read the state of a
-// project's services, and start or stop the services a component declares. The
-// Controller holds it as an interface so tests answer without Docker.
+// composeAdapter is what devhub does with a Compose implementation: read the
+// state of a project's services, and start or stop the services a component
+// declares. One implementation per container engine; the Controller holds them
+// as interfaces so tests answer without Docker or Colima.
 type composeAdapter interface {
 	// Available reports why the adapter cannot run at all, or nil. It is the
-	// "is this provider usable" half of the runtimes API, so it checks what
-	// every other method needs: the docker binary *and* the compose plugin,
-	// which are separate packages on most Linux distributions.
+	// "is this engine usable" half of the runtimes API, so it checks what
+	// every other method needs.
 	Available(ctx context.Context) error
-	// The operational methods take the Docker context to run against ("" for
-	// the ambient one). It is a parameter rather than adapter state because
-	// devhub must never select a context globally (plan §6.3): making every
-	// call site name it is what keeps `docker context use` unnecessary, and
-	// what stops one environment's Colima profile leaking into another's
-	// commands.
-	ServiceStates(ctx context.Context, dockerContext string, spec composeSpec) (map[string]componentState, error)
-	Up(ctx context.Context, dockerContext string, spec composeSpec) error
-	Stop(ctx context.Context, dockerContext string, spec composeSpec) error
+	// The operational methods take the environment's runtime and derive what
+	// they need from it — a Docker context, a Colima profile. It is a
+	// parameter rather than adapter state because devhub must never select an
+	// engine globally (plan §6.3): making every call site name the runtime is
+	// what keeps `docker context use` unnecessary, and what stops one
+	// environment's profile leaking into another's commands.
+	ServiceStates(ctx context.Context, rt runtimeSpec, spec composeSpec) (map[string]componentState, error)
+	Up(ctx context.Context, rt runtimeSpec, spec composeSpec) error
+	Stop(ctx context.Context, rt runtimeSpec, spec composeSpec) error
 }
 
 // dockerCompose talks to the local Docker via the `docker compose` CLI.
@@ -97,8 +97,8 @@ func (d *dockerCompose) binaryPresent() error {
 // reason a component's state is unknown, so it carries Docker's own wording:
 // "docker is missing" and "the daemon is unreachable" are different problems
 // with different fixes, and only Docker can tell them apart reliably.
-func (d *dockerCompose) ServiceStates(ctx context.Context, dockerContext string, spec composeSpec) (map[string]componentState, error) {
-	stdout, err := d.run(ctx, dockerContext, spec, "ps", "--format", "json", "--all")
+func (d *dockerCompose) ServiceStates(ctx context.Context, rt runtimeSpec, spec composeSpec) (map[string]componentState, error) {
+	stdout, err := d.run(ctx, rt, spec, "ps", "--format", "json", "--all")
 	if err != nil {
 		return nil, err
 	}
@@ -109,15 +109,15 @@ func (d *dockerCompose) ServiceStates(ctx context.Context, dockerContext string,
 // host process handed to a terminal, this reports whether the start actually
 // succeeded — that is what `--wait` buys, and why apply can tell the user
 // which components really came up.
-func (d *dockerCompose) Up(ctx context.Context, dockerContext string, spec composeSpec) error {
-	_, err := d.run(ctx, dockerContext, spec, append([]string{"up", "--detach", "--wait"}, spec.Services...)...)
+func (d *dockerCompose) Up(ctx context.Context, rt runtimeSpec, spec composeSpec) error {
+	_, err := d.run(ctx, rt, spec, append([]string{"up", "--detach", "--wait"}, spec.Services...)...)
 	return err
 }
 
 // Stop stops the component's services, leaving the rest of the project (and
 // any other project) alone.
-func (d *dockerCompose) Stop(ctx context.Context, dockerContext string, spec composeSpec) error {
-	_, err := d.run(ctx, dockerContext, spec, append([]string{"stop"}, spec.Services...)...)
+func (d *dockerCompose) Stop(ctx context.Context, rt runtimeSpec, spec composeSpec) error {
+	_, err := d.run(ctx, rt, spec, append([]string{"stop"}, spec.Services...)...)
 	return err
 }
 
@@ -128,12 +128,12 @@ func (d *dockerCompose) Stop(ctx context.Context, dockerContext string, spec com
 //
 // --context is a flag of `docker` itself, so it goes before the `compose`
 // subcommand; `docker compose --context …` is rejected as an unknown flag.
-func (d *dockerCompose) run(ctx context.Context, dockerContext string, spec composeSpec, sub ...string) (string, error) {
+func (d *dockerCompose) run(ctx context.Context, rt runtimeSpec, spec composeSpec, sub ...string) (string, error) {
 	if err := d.binaryPresent(); err != nil {
 		return "", err
 	}
 	var args []string
-	if dockerContext != "" {
+	if dockerContext := dockerContextFor(rt); dockerContext != "" {
 		args = append(args, "--context", dockerContext)
 	}
 	args = append(args, "compose", "--project-name", spec.Project)
@@ -149,15 +149,21 @@ func (d *dockerCompose) run(ctx context.Context, dockerContext string, spec comp
 	return stdout, nil
 }
 
-// composePSEntry is the subset of `docker compose ps --format json` devhub reads.
+// composePSEntry is the subset of `compose ps --format json` devhub reads.
+// nerdctl names these fields the same way (its PortPublisher comment says the
+// intent is to "match the json output with docker compose"), so one shape
+// serves both engines.
 type composePSEntry struct {
 	Service string `json:"Service"`
 	State   string `json:"State"`
 }
 
-// parseComposePS reads `docker compose ps --format json`, which prints either a
-// JSON array or one JSON object per line depending on the Compose version —
-// both shapes are accepted so devhub does not pin a Compose release.
+// parseComposePS reads `compose ps --format json` from either engine, which
+// prints a JSON array or one JSON object per line depending on the release —
+// both shapes are accepted so devhub does not pin one. "running" is the token
+// both emit for a live container; nerdctl's other values are raw containerd
+// statuses ("exited", "created", "paused"), which fall through to stopped
+// exactly as Docker's do.
 func parseComposePS(out string) (map[string]componentState, error) {
 	out = strings.TrimSpace(out)
 	states := map[string]componentState{}
@@ -167,7 +173,7 @@ func parseComposePS(out string) (map[string]componentState, error) {
 	var entries []composePSEntry
 	if strings.HasPrefix(out, "[") {
 		if err := json.Unmarshal([]byte(out), &entries); err != nil {
-			return nil, fmt.Errorf("docker compose ps の出力を解釈できません: %w", err)
+			return nil, fmt.Errorf("compose ps の出力を解釈できません: %w", err)
 		}
 	} else {
 		for line := range strings.SplitSeq(out, "\n") {
@@ -177,7 +183,7 @@ func parseComposePS(out string) (map[string]componentState, error) {
 			}
 			var entry composePSEntry
 			if err := json.Unmarshal([]byte(line), &entry); err != nil {
-				return nil, fmt.Errorf("docker compose ps の出力を解釈できません: %w", err)
+				return nil, fmt.Errorf("compose ps の出力を解釈できません: %w", err)
 			}
 			entries = append(entries, entry)
 		}
