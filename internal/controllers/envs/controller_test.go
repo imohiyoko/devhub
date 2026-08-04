@@ -485,6 +485,141 @@ func TestHandleGetEnvsAndWorktrees(t *testing.T) {
 	}
 }
 
+// v2SwitchDoc is a v2 document with a shared component and two scenarios —
+// the switch endpoints' fixture.
+func v2SwitchDoc() map[string]any {
+	return map[string]any{
+		"version": 2,
+		"environments": []any{map[string]any{
+			"id": "micro", "name": "Micro",
+			"components": []any{
+				map[string]any{"id": "db", "label": "DB", "lifecycle": "shared", "command": "run-db", "port": 3000},
+				map[string]any{"id": "acc", "command": "run-acc", "port": 4000, "depends_on": []any{"db"}},
+				map[string]any{"id": "bill", "command": "run-bill", "port": 5000, "depends_on": []any{"db"}},
+			},
+			"scenarios": []any{
+				map[string]any{"id": "accounting", "name": "会計", "components": []any{"acc"}},
+				map[string]any{"id": "billing", "name": "請求", "components": []any{"bill"}},
+			},
+		}},
+	}
+}
+
+func TestHandleGetState(t *testing.T) {
+	store := &fakeStore{envs: v2SwitchDoc()}
+	ports := &fakePorts{open: []portsctl.PortEntry{{Port: 3000, PID: 11}, {Port: 4000, PID: 22}}}
+	c, _ := newTestController(store, testDeps{ports: ports})
+
+	rr := httptest.NewRecorder()
+	if err := c.HandleGet(rr, httptest.NewRequest("GET", "/api/envs/state", nil)); err != nil {
+		t.Fatalf("GET /api/envs/state: %v", err)
+	}
+	envs := toAnySlice(decodeJSON(t, rr)["environments"])
+	if len(envs) != 1 {
+		t.Fatalf("environments = %v", envs)
+	}
+	env := envs[0].(map[string]any)
+	if len(toAnySlice(env["scenarios"])) != 2 {
+		t.Errorf("scenarios = %v", env["scenarios"])
+	}
+	states := map[string]string{}
+	for _, compAny := range toAnySlice(env["components"]) {
+		comp := compAny.(map[string]any)
+		states[pStr(comp, "id")] = pStr(comp, "state")
+	}
+	want := map[string]string{"db": "running", "acc": "running", "bill": "stopped"}
+	for id, state := range want {
+		if states[id] != state {
+			t.Errorf("%s state = %q, want %q", id, states[id], state)
+		}
+	}
+	db := toAnySlice(env["components"])[0].(map[string]any)
+	if db["shared"] != true || pStr(db, "label") != "DB" || pStr(db, "kind") != kindHostProcess {
+		t.Errorf("component metadata = %v", db)
+	}
+
+	// A v1 document reports through its generated components and default
+	// scenario, so the state view works before any migration.
+	c, _ = newTestController(&fakeStore{envs: testEnvsDoc()}, testDeps{ports: ports})
+	rr = httptest.NewRecorder()
+	if err := c.HandleGet(rr, httptest.NewRequest("GET", "/api/envs/state", nil)); err != nil {
+		t.Fatalf("GET /api/envs/state (v1): %v", err)
+	}
+	v1 := toAnySlice(decodeJSON(t, rr)["environments"])[0].(map[string]any)
+	if len(toAnySlice(v1["components"])) != 2 {
+		t.Errorf("v1 components = %v, want the two processes", v1["components"])
+	}
+	scenarios := toAnySlice(v1["scenarios"])
+	if len(scenarios) != 1 || pStr(scenarios[0].(map[string]any), "id") != defaultScenarioID {
+		t.Errorf("v1 scenarios = %v, want the default scenario", scenarios)
+	}
+}
+
+func TestHandlePostSwitchPlan(t *testing.T) {
+	store := &fakeStore{envs: v2SwitchDoc()}
+	ports := &fakePorts{open: []portsctl.PortEntry{{Port: 3000, PID: 11}, {Port: 4000, PID: 22}}}
+	c, _ := newTestController(store, testDeps{ports: ports})
+	req := httptest.NewRequest("POST", "/api/envs/switch/plan", nil)
+
+	rr := httptest.NewRecorder()
+	if err := c.HandlePost(rr, req, map[string]any{"env_id": "micro", "scenario_id": "billing"}); err != nil {
+		t.Fatalf("switch plan: %v", err)
+	}
+	plan := decodeJSON(t, rr)
+	ids := func(key string) []string {
+		var out []string
+		for _, s := range toAnySlice(plan[key]) {
+			out = append(out, pStr(s.(map[string]any), "id"))
+		}
+		return out
+	}
+	if !slices.Equal(ids("stop"), []string{"acc"}) || !slices.Equal(ids("keep"), []string{"db"}) ||
+		!slices.Equal(ids("start"), []string{"bill"}) {
+		t.Errorf("plan = stop%v keep%v start%v", ids("stop"), ids("keep"), ids("start"))
+	}
+	if pStr(plan, "scenario_id") != "billing" || pStr(plan, "env_id") != "micro" {
+		t.Errorf("plan header = %v", plan)
+	}
+	if _, ok := plan["warnings"].([]any); !ok {
+		t.Errorf("warnings must always be an array, got %#v", plan["warnings"])
+	}
+	// Nothing was launched or killed: planning is side-effect free.
+	if len(ports.kills) != 0 {
+		t.Errorf("planning killed ports: %v", ports.kills)
+	}
+
+	// An explicit selection is the other accepted target: an empty one keeps
+	// only the shared component.
+	rr = httptest.NewRecorder()
+	if err := c.HandlePost(rr, req, map[string]any{"env_id": "micro", "components": []any{}}); err != nil {
+		t.Fatalf("switch plan with selection: %v", err)
+	}
+	plan = decodeJSON(t, rr)
+	if !slices.Equal(ids("stop"), []string{"acc"}) || !slices.Equal(ids("keep"), []string{"db"}) {
+		t.Errorf("empty selection = stop%v keep%v, want the shared component kept", ids("stop"), ids("keep"))
+	}
+
+	for _, c2 := range []struct {
+		name string
+		body map[string]any
+		want string
+	}{
+		{"missing env_id", map[string]any{"scenario_id": "billing"}, "env_id is required"},
+		{"no target", map[string]any{"env_id": "micro"}, "exactly one of scenario_id or components"},
+		{"both targets", map[string]any{"env_id": "micro", "scenario_id": "billing", "components": []any{"acc"}},
+			"exactly one of scenario_id or components"},
+		{"malformed selection", map[string]any{"env_id": "micro", "components": "acc"},
+			"components must be an array"},
+		{"unknown env", map[string]any{"env_id": "ghost", "scenario_id": "billing"}, "not found"},
+		{"unknown scenario", map[string]any{"env_id": "micro", "scenario_id": "ghost"}, "Scenario 'ghost' not found"},
+	} {
+		err := c.HandlePost(httptest.NewRecorder(), req, c2.body)
+		if err == nil || !strings.Contains(err.Error(), c2.want) {
+			t.Errorf("%s: err = %v, want containing %q", c2.name, err, c2.want)
+		}
+	}
+}
+
 func TestHandleGetLaunchesEnriched(t *testing.T) {
 	wt := t.TempDir()
 	store := &fakeStore{

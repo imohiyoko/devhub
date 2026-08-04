@@ -57,6 +57,15 @@ type component struct {
 	Compose   composeSpec // compose_service payload (zero for host_process)
 }
 
+// displayLabel is what to call the component in the UI: its label, falling
+// back to its id (the same fallback launch records use for processes).
+func (c component) displayLabel() string {
+	if c.Label != "" {
+		return c.Label
+	}
+	return c.ID
+}
+
 // composeSpec locates a compose_service: where to run docker compose, which
 // files, under which project name (the ownership marker devhub operates on),
 // and which services.

@@ -99,6 +99,12 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 		httpx.WriteJSON(w, http.StatusOK, data)
 	case "/api/envs/worktrees":
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"repos": c.worktreeInventory(), "home": pathutil.ExpandUser("~")})
+	case "/api/envs/state":
+		data, err := c.environmentStates()
+		if err != nil {
+			return err
+		}
+		httpx.WriteJSON(w, http.StatusOK, data)
 	default:
 		return httpx.Errorf(http.StatusNotFound, "not found")
 	}
@@ -130,6 +136,12 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 			return err
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	case "/api/envs/switch/plan":
+		plan, err := c.switchPlan(data)
+		if err != nil {
+			return err
+		}
+		httpx.WriteJSON(w, http.StatusOK, plan)
 	case "/api/envs/launches/remove":
 		launchID := pStr(data, "launch_id")
 		if launchID == "" {
@@ -191,6 +203,115 @@ func (c *Controller) launchSingleProcess(data map[string]any) error {
 	}
 	c.runSpawns([]spawnStep{spawnStepFor(proc, cwds[processID], assigned)}, false)
 	return nil
+}
+
+// environmentStates serves GET /api/envs/state: every environment's components
+// with their observed state, plus the scenarios they can be switched to. The
+// port scan and the launch registry are read once for all environments.
+func (c *Controller) environmentStates() (map[string]any, error) {
+	envsDoc, err := c.store.LoadEnvs()
+	if err != nil {
+		return nil, err
+	}
+	launchDoc, err := c.store.LoadLaunches()
+	if err != nil {
+		return nil, err
+	}
+	launches := toAnySlice(launchDoc["launches"])
+	live := c.livePortIndex()
+	envs := []any{}
+	for _, env := range decodeEnvironments(envsDoc) {
+		states := componentStates(env, launches, live)
+		components := []any{}
+		for _, comp := range env.Components {
+			status := states[comp.ID]
+			components = append(components, map[string]any{
+				"id":     comp.ID,
+				"label":  comp.displayLabel(),
+				"kind":   comp.Kind,
+				"shared": comp.Shared,
+				"state":  string(status.State),
+				"reason": status.Reason,
+			})
+		}
+		scenarios := []any{}
+		for _, s := range env.Scenarios {
+			members := s.Components
+			if members == nil {
+				members = []string{}
+			}
+			scenarios = append(scenarios, map[string]any{"id": s.ID, "name": s.Name, "components": members})
+		}
+		envs = append(envs, map[string]any{
+			"id": env.ID, "name": env.Name, "components": components, "scenarios": scenarios,
+		})
+	}
+	return map[string]any{"environments": envs}, nil
+}
+
+// switchPlan serves POST /api/envs/switch/plan: the stop/keep/start difference
+// for a target scenario (or an explicit component selection), computed without
+// touching anything. Applying a plan is a separate call.
+func (c *Controller) switchPlan(data map[string]any) (map[string]any, error) {
+	envID := pStr(data, "env_id")
+	if envID == "" {
+		return nil, httpx.Errorf(http.StatusBadRequest, "env_id is required")
+	}
+	req := switchRequest{ScenarioID: pStr(data, "scenario_id")}
+	selection, selected := data["components"]
+	if selected {
+		ids, ok := stringList(selection)
+		if !ok {
+			return nil, httpx.Errorf(http.StatusBadRequest, "components must be an array of component ids")
+		}
+		req.Components = ids
+	}
+	// An empty components array is a valid target (the shared components
+	// alone), so the request is read by key presence, not by emptiness.
+	byScenario := req.ScenarioID != ""
+	if byScenario == selected {
+		return nil, httpx.Errorf(http.StatusBadRequest, "specify exactly one of scenario_id or components")
+	}
+	env, err := c.findEnv(envID)
+	if err != nil {
+		return nil, err
+	}
+	launchDoc, err := c.store.LoadLaunches()
+	if err != nil {
+		return nil, err
+	}
+	states := componentStates(env, toAnySlice(launchDoc["launches"]), c.livePortIndex())
+	plan, err := planSwitch(env, req, states)
+	if err != nil {
+		return nil, err
+	}
+	return switchPlanJSON(plan), nil
+}
+
+// switchPlanJSON renders a plan for the wire — the boundary where the typed
+// model turns back into maps.
+func switchPlanJSON(plan SwitchPlan) map[string]any {
+	steps := func(list []PlanStep) []any {
+		out := []any{}
+		for _, s := range list {
+			out = append(out, map[string]any{
+				"id": s.ID, "label": s.Label, "kind": s.Kind, "shared": s.Shared, "state": string(s.State),
+			})
+		}
+		return out
+	}
+	warnings := plan.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+	return map[string]any{
+		"env_id":      plan.EnvID,
+		"scenario_id": plan.ScenarioID,
+		"stop":        steps(plan.Stop),
+		"keep":        steps(plan.Keep),
+		"start":       steps(plan.Start),
+		"warnings":    warnings,
+	}
 }
 
 // worktreeInventory fans out `git worktree list` across repos (order-preserving).
