@@ -122,6 +122,13 @@ type fakeCompose struct {
 	states map[string]map[string]componentState // project -> service -> state
 	err    error
 	calls  []composeSpec
+	// ups/stops record what apply operated on as "<project>/<services>", so a
+	// test can assert both the operation and the scope it was confined to;
+	// upErr/stopErr make those operations fail.
+	ups     []string
+	stops   []string
+	upErr   error
+	stopErr error
 }
 
 func (f *fakeCompose) ServiceStates(_ context.Context, spec composeSpec) (map[string]componentState, error) {
@@ -130,6 +137,16 @@ func (f *fakeCompose) ServiceStates(_ context.Context, spec composeSpec) (map[st
 		return nil, f.err
 	}
 	return f.states[spec.Project], nil
+}
+
+func (f *fakeCompose) Up(_ context.Context, spec composeSpec) error {
+	f.ups = append(f.ups, spec.Project+"/"+strings.Join(spec.Services, ","))
+	return f.upErr
+}
+
+func (f *fakeCompose) Stop(_ context.Context, spec composeSpec) error {
+	f.stops = append(f.stops, spec.Project+"/"+strings.Join(spec.Services, ","))
+	return f.stopErr
 }
 
 type fakeWorkspace struct{ opened []string }
