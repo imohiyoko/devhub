@@ -287,11 +287,11 @@ func (c *Controller) switchPlan(data map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	env, states, err := c.observeEnv(envID)
-	if err != nil {
-		return nil, err
-	}
-	plan, err := planSwitch(env, req, states)
+	// Through PlanSwitch, not planSwitch: the exported one is what the CLI
+	// calls, and re-deriving the plan here instead is how the two surfaces
+	// silently drift apart (plan §6.5). It cost the UI its runtime warnings
+	// once already.
+	plan, err := c.PlanSwitch(envID, req)
 	if err != nil {
 		return nil, err
 	}
@@ -362,11 +362,12 @@ func (c *Controller) composeStates(env environment) map[string]componentStatus {
 		groups[key].comps = append(groups[key].comps, comp)
 	}
 
+	dockerContext := dockerContextFor(env.Runtime)
 	out := make(map[string]componentStatus, len(env.Components))
 	for _, key := range order {
 		g := groups[key]
 		ctx, cancel := context.WithTimeout(context.Background(), composeProbeTimeout)
-		services, err := c.compose.ServiceStates(ctx, g.spec)
+		services, err := c.compose.ServiceStates(ctx, dockerContext, g.spec)
 		cancel()
 		for _, comp := range g.comps {
 			if err != nil {
