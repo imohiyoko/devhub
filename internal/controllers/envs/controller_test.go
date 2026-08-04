@@ -9,6 +9,7 @@ package envs
 // terminal.go.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -115,6 +116,22 @@ func (f *fakePorts) KillPortProcess(port, pid int) error {
 	return f.killErr[port]
 }
 
+// fakeCompose answers compose probes without Docker. Every controller under
+// test gets one, so no test can reach the real `docker` binary.
+type fakeCompose struct {
+	states map[string]map[string]componentState // project -> service -> state
+	err    error
+	calls  []composeSpec
+}
+
+func (f *fakeCompose) ServiceStates(_ context.Context, spec composeSpec) (map[string]componentState, error) {
+	f.calls = append(f.calls, spec)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.states[spec.Project], nil
+}
+
 type fakeWorkspace struct{ opened []string }
 
 func (f *fakeWorkspace) OpenInEditor(path string) { f.opened = append(f.opened, path) }
@@ -144,9 +161,10 @@ func (l *spawnLog) all() []*exec.Cmd {
 // testDeps are the optional collaborator fakes for newTestController; nil
 // fields get fresh zero-value fakes, so call sites name only what they use.
 type testDeps struct {
-	git   *fakeGit
-	ports *fakePorts
-	ws    *fakeWorkspace
+	git     *fakeGit
+	ports   *fakePorts
+	ws      *fakeWorkspace
+	compose *fakeCompose
 }
 
 // newTestController wires a controller to the fakes, captures spawns in the
@@ -161,10 +179,14 @@ func newTestController(store *fakeStore, d testDeps) (*Controller, *spawnLog) {
 	if d.ws == nil {
 		d.ws = &fakeWorkspace{}
 	}
+	if d.compose == nil {
+		d.compose = &fakeCompose{}
+	}
 	c := New(store, d.git, d.ports, d.ws)
 	log := &spawnLog{ch: make(chan *exec.Cmd, 16)}
 	c.spawn = log.record
 	c.settle = 0
+	c.compose = d.compose
 	return c, log
 }
 
@@ -552,6 +574,103 @@ func TestHandleGetState(t *testing.T) {
 	scenarios := toAnySlice(v1["scenarios"])
 	if len(scenarios) != 1 || pStr(scenarios[0].(map[string]any), "id") != defaultScenarioID {
 		t.Errorf("v1 scenarios = %v, want the default scenario", scenarios)
+	}
+}
+
+// composeDoc is a v2 document whose shared database is a compose_service, plus
+// two components sharing one compose project.
+func composeDoc() map[string]any {
+	spec := func(project string, services ...any) map[string]any {
+		return map[string]any{"cwd": "~/platform", "files": []any{"compose.yml"},
+			"project": project, "services": services}
+	}
+	return map[string]any{
+		"version": 2,
+		"environments": []any{map[string]any{
+			"id": "micro",
+			"components": []any{
+				map[string]any{"id": "mysql", "kind": "compose_service", "lifecycle": "shared",
+					"compose": spec("platform-local", "mysql")},
+				map[string]any{"id": "redis", "kind": "compose_service", "lifecycle": "shared",
+					"compose": spec("platform-local", "redis")},
+				map[string]any{"id": "api", "kind": "compose_service",
+					"compose": spec("accounting-local", "api", "worker")},
+			},
+			"scenarios": []any{map[string]any{"id": "acc", "components": []any{"api"}}},
+		}},
+	}
+}
+
+func TestComposeStates(t *testing.T) {
+	compose := &fakeCompose{states: map[string]map[string]componentState{
+		"platform-local":   {"mysql": stateRunning, "redis": stateStopped},
+		"accounting-local": {"api": stateRunning, "worker": stateRunning},
+	}}
+	c, _ := newTestController(&fakeStore{envs: composeDoc()}, testDeps{compose: compose})
+	env, err := c.findEnv("micro")
+	if err != nil {
+		t.Fatalf("findEnv: %v", err)
+	}
+
+	states := c.composeStates(env)
+	for id, want := range map[string]componentState{
+		"mysql": stateRunning, "redis": stateStopped, "api": stateRunning,
+	} {
+		if states[id].State != want {
+			t.Errorf("%s = %+v, want %q", id, states[id], want)
+		}
+	}
+	// mysql and redis share one project, so they cost one probe, not two.
+	if len(compose.calls) != 2 {
+		t.Errorf("probes = %d (%v), want one per compose project", len(compose.calls), compose.calls)
+	}
+
+	// A probe failure leaves those components unknown — carrying Docker's own
+	// message — instead of failing the whole request.
+	compose = &fakeCompose{err: errors.New("Cannot connect to the Docker daemon")}
+	c, _ = newTestController(&fakeStore{envs: composeDoc()}, testDeps{compose: compose})
+	states = c.composeStates(env)
+	for _, id := range []string{"mysql", "redis", "api"} {
+		if states[id].State != stateUnknown || !strings.Contains(states[id].Reason, "Cannot connect") {
+			t.Errorf("%s on probe failure = %+v", id, states[id])
+		}
+	}
+}
+
+// TestSwitchPlanWithComposeKeepsSharedService is the flagship use case end to
+// end through the API: the shared database is running under Compose, so
+// switching scenarios keeps it rather than restarting it.
+func TestSwitchPlanWithComposeKeepsSharedService(t *testing.T) {
+	compose := &fakeCompose{states: map[string]map[string]componentState{
+		"platform-local":   {"mysql": stateRunning, "redis": stateRunning},
+		"accounting-local": {"api": stateStopped, "worker": stateStopped},
+	}}
+	c, _ := newTestController(&fakeStore{envs: composeDoc()}, testDeps{compose: compose})
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/envs/switch/plan", nil)
+	if err := c.HandlePost(rr, req, map[string]any{"env_id": "micro", "scenario_id": "acc"}); err != nil {
+		t.Fatalf("switch plan: %v", err)
+	}
+	plan := decodeJSON(t, rr)
+	ids := func(key string) []string {
+		var out []string
+		for _, s := range toAnySlice(plan[key]) {
+			out = append(out, pStr(s.(map[string]any), "id"))
+		}
+		return out
+	}
+	if !slices.Equal(ids("keep"), []string{"mysql", "redis"}) {
+		t.Errorf("keep = %v, want the shared compose services kept", ids("keep"))
+	}
+	if !slices.Equal(ids("start"), []string{"api"}) {
+		t.Errorf("start = %v, want [api]", ids("start"))
+	}
+	if len(ids("stop")) != 0 {
+		t.Errorf("stop = %v, want nothing stopped", ids("stop"))
+	}
+	if warnings := toAnySlice(plan["warnings"]); len(warnings) != 0 {
+		t.Errorf("warnings = %v, want none once Compose state is observable", warnings)
 	}
 }
 
