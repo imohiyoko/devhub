@@ -173,7 +173,8 @@ func TestDocVersion(t *testing.T) {
 		{map[string]any{}, 1},
 		{map[string]any{"version": float64(1)}, 1},
 		{map[string]any{"version": float64(2)}, 2},
-		{map[string]any{"version": "2"}, 1}, // lenient decode: non-numeric reads as v1; validateEnvs is the strict gate
+		{map[string]any{"version": "2"}, 1},        // lenient decode: non-numeric reads as v1; validateEnvs is the strict gate
+		{map[string]any{"version": float64(3)}, 1}, // a future schema must not decode as v2
 	}
 	for _, c := range cases {
 		if got := docVersion(c.doc); got != c.want {

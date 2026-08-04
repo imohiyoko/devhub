@@ -116,9 +116,12 @@ func (p process) isOffset() bool {
 // docVersion reads the document's schema version: absent or unrecognized
 // reads as 1 (every pre-versioning document is v1). This is deliberately
 // lenient like the rest of the decode layer; validateEnvs is the strict gate
-// that keeps unsupported versions out of the store.
+// that keeps unsupported versions out of the store. Only an exact 2 selects
+// the v2 decode — a future version's components would carry semantics this
+// build does not know, so it falls back to v1 (an empty environment) rather
+// than launching them under v2 rules.
 func docVersion(doc map[string]any) int {
-	if toIntVal(doc["version"]) >= 2 {
+	if toIntVal(doc["version"]) == 2 {
 		return 2
 	}
 	return 1
