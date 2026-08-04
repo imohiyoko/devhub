@@ -6,7 +6,6 @@ package envs
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,7 +15,7 @@ import (
 
 func TestRuntimesEndpoint(t *testing.T) {
 	c, _ := newTestController(&fakeStore{envs: map[string]any{}}, testDeps{
-		compose: &fakeCompose{unavailable: errors.New("docker コマンドが見つかりません")},
+		compose: &fakeCompose{unavailable: container.ErrDockerMissing},
 		colima:  &fakeColima{err: container.ErrColimaMissing},
 	})
 

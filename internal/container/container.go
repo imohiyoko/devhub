@@ -63,6 +63,11 @@ const (
 // Runtime is the set of engines devhub can drive on this host, plus the Colima
 // prober that says which profiles exist. The fields are exported so a consumer
 // can substitute fakes in its own tests and never reach a real daemon.
+//
+// All three are required. Build one with New, or — in a test — set every field;
+// the methods dereference them without a nil check on purpose, so a half-wired
+// Runtime fails at the line that wired it rather than reporting a host that
+// merely looks like it has nothing installed.
 type Runtime struct {
 	Docker     Adapter
 	Containerd Adapter

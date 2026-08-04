@@ -73,8 +73,8 @@ func TestComposeAvailableChecksThePlugin(t *testing.T) {
 
 	noBinary := testCompose(&fakeRunner{})
 	noBinary.lookPath = func(string) (string, error) { return "", errors.New("not found") }
-	if err := noBinary.Available(context.Background()); !errors.Is(err, errDockerMissing) {
-		t.Errorf("err = %v, want errDockerMissing", err)
+	if err := noBinary.Available(context.Background()); !errors.Is(err, ErrDockerMissing) {
+		t.Errorf("err = %v, want ErrDockerMissing", err)
 	}
 }
 
