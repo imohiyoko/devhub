@@ -90,7 +90,7 @@ func TestPlanSwitchKeepsShared(t *testing.T) {
 		"accounting-api": {State: stateRunning},
 		"billing-api":    {State: stateStopped},
 	}
-	plan, err := planSwitch(switchEnv(), switchRequest{ScenarioID: "billing"}, states)
+	plan, err := planSwitch(switchEnv(), SwitchTarget{ScenarioID: "billing"}, states)
 	if err != nil {
 		t.Fatalf("planSwitch: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestPlanSwitchReapplyIsIdempotent(t *testing.T) {
 		"accounting-api": {State: stateRunning},
 		"billing-api":    {State: stateStopped},
 	}
-	plan, err := planSwitch(switchEnv(), switchRequest{ScenarioID: "accounting"}, states)
+	plan, err := planSwitch(switchEnv(), SwitchTarget{ScenarioID: "accounting"}, states)
 	if err != nil {
 		t.Fatalf("planSwitch: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestPlanSwitchOrdersByDependency(t *testing.T) {
 	stopped := map[string]componentStatus{
 		"web": {State: stateStopped}, "api": {State: stateStopped}, "db": {State: stateStopped},
 	}
-	plan, err := planSwitch(env, switchRequest{ScenarioID: "all"}, stopped)
+	plan, err := planSwitch(env, SwitchTarget{ScenarioID: "all"}, stopped)
 	if err != nil {
 		t.Fatalf("planSwitch: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestPlanSwitchOrdersByDependency(t *testing.T) {
 		"web": {State: stateRunning}, "api": {State: stateRunning}, "db": {State: stateRunning},
 	}
 	// An empty selection targets the shared components only — here, none.
-	plan, err = planSwitch(env, switchRequest{Components: []string{}}, running)
+	plan, err = planSwitch(env, SwitchTarget{Components: []string{}}, running)
 	if err != nil {
 		t.Fatalf("planSwitch: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestPlanSwitchPullsInDependencies(t *testing.T) {
 		},
 		"scenarios": []any{map[string]any{"id": "s", "components": []any{"api"}}}, // worker unlisted
 	}, 2)
-	plan, err := planSwitch(env, switchRequest{ScenarioID: "s"}, map[string]componentStatus{
+	plan, err := planSwitch(env, SwitchTarget{ScenarioID: "s"}, map[string]componentStatus{
 		"api": {State: stateStopped}, "worker": {State: stateStopped},
 	})
 	if err != nil {
@@ -214,7 +214,7 @@ func TestPlanSwitchUnknownState(t *testing.T) {
 		"api":   {State: stateStopped},
 	}
 
-	plan, err := planSwitch(env, switchRequest{ScenarioID: "api-only"}, states)
+	plan, err := planSwitch(env, SwitchTarget{ScenarioID: "api-only"}, states)
 	if err != nil {
 		t.Fatalf("planSwitch: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestPlanSwitchUnknownState(t *testing.T) {
 		t.Errorf("warnings = %v, want one explaining the skipped stop", plan.Warnings)
 	}
 
-	plan, err = planSwitch(env, switchRequest{ScenarioID: "ghost-only"}, states)
+	plan, err = planSwitch(env, SwitchTarget{ScenarioID: "ghost-only"}, states)
 	if err != nil {
 		t.Fatalf("planSwitch: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestPlanSwitchV1Environment(t *testing.T) {
 			map[string]any{"id": "api", "command": "run-api", "port": float64(4000), "depends_on": []any{"db"}},
 		},
 	}, 1)
-	plan, err := planSwitch(env, switchRequest{ScenarioID: defaultScenarioID}, map[string]componentStatus{
+	plan, err := planSwitch(env, SwitchTarget{ScenarioID: defaultScenarioID}, map[string]componentStatus{
 		"db": {State: stateRunning}, "api": {State: stateStopped},
 	})
 	if err != nil {
@@ -263,22 +263,22 @@ func TestPlanSwitchErrors(t *testing.T) {
 	cases := []struct {
 		name string
 		env  environment
-		req  switchRequest
+		req  SwitchTarget
 		want string
 	}{
-		{"unknown scenario", env, switchRequest{ScenarioID: "ghost"}, "Scenario 'ghost' not found"},
-		{"unknown component", env, switchRequest{Components: []string{"ghost"}}, "Component 'ghost' not found"},
+		{"unknown scenario", env, SwitchTarget{ScenarioID: "ghost"}, "Scenario 'ghost' not found"},
+		{"unknown component", env, SwitchTarget{Components: []string{"ghost"}}, "Component 'ghost' not found"},
 		{"dependency cycle", decodeEnvironment(map[string]any{
 			"id": "bad",
 			"components": []any{
 				map[string]any{"id": "a", "command": "run", "depends_on": []any{"b"}},
 				map[string]any{"id": "b", "command": "run", "depends_on": []any{"a"}},
 			},
-		}, 2), switchRequest{Components: []string{}}, "Circular dependency"},
+		}, 2), SwitchTarget{Components: []string{}}, "Circular dependency"},
 		{"dangling dependency", decodeEnvironment(map[string]any{
 			"id":         "bad",
 			"components": []any{map[string]any{"id": "a", "command": "run", "depends_on": []any{"ghost"}}},
-		}, 2), switchRequest{Components: []string{}}, "Dependency 'ghost' for component 'a' not found"},
+		}, 2), SwitchTarget{Components: []string{}}, "Dependency 'ghost' for component 'a' not found"},
 	}
 	for _, c := range cases {
 		_, err := planSwitch(c.env, c.req, map[string]componentStatus{})
