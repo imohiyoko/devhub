@@ -151,9 +151,10 @@ func DockerContextFor(rt Spec) string {
 // Warnings reports what the user should know before devhub drives an
 // environment's containers: the declared profile is missing, is not running,
 // or runs a different engine than the definition claims. They are warnings
-// rather than errors because devhub does not repair any of it — starting or
-// reconfiguring a profile is the user's call (plan §6.4, §13) — and because a
-// switch may not touch a container component at all.
+// rather than errors because a switch repairs none of it: starting or
+// reconfiguring a profile never happens as part of one (plan §6.4, §13), and a
+// switch may not touch a container component at all. The user can act on the
+// warning from the containers panel, or by running the command themselves.
 //
 // Only a colima spec pays the probe; anything else returns immediately. The
 // probe that does run bounds itself, so a plan can never hang on it.
@@ -176,7 +177,7 @@ func (r *Runtime) Warnings(ctx context.Context, rt Spec) []string {
 	profile := profiles[i]
 	if !profile.running() {
 		warnings = append(warnings,
-			fmt.Sprintf("Colima profile '%s' は %s です。devhub は profile を起動しないので、`colima start -p %s` を実行してください。", name, profile.Status, name))
+			fmt.Sprintf("Colima profile '%s' は %s です。切り替えでは profile を起動しないので、containers パネルから起動するか `colima start -p %s` を実行してください。", name, profile.Status, name))
 	}
 	// An engine devhub cannot observe is not a mismatch: a stopped profile
 	// reports none, and the warning above already covers that case.

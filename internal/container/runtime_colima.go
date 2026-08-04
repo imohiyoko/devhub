@@ -7,9 +7,11 @@ package container
 // means, and the package and its consumers otherwise speak in Spec, Provider
 // and docker contexts.
 //
-// Everything here is read-only. devhub never starts, stops or reconfigures a
-// profile: that is a slow, resource-reserving operation with effects far
-// outside devhub, so it stays the user's call (plan §13).
+// Everything in this file is read-only, and nothing devhub does on its own
+// starts, stops or reconfigures a profile: that is slow, reserves real
+// resources, and takes down every container in the VM, so it never happens as a
+// side effect (plan §13). Acting on a profile is possible only through an
+// explicit request — see profile.go.
 
 import (
 	"context"
@@ -45,10 +47,11 @@ type ColimaProfile struct {
 	Engine string
 	Arch   string
 	// CPUs, MemoryBytes and DiskBytes are the resources the VM was created
-	// with. devhub reports them and never sets them: colima applies these only
-	// at `colima start`, so changing one means stopping and restarting the VM —
-	// and shrinking the disk means recreating it, losing every image and
-	// container on it. That is the user's call (plan §13).
+	// with. Nothing that merely observes a profile changes them: colima applies
+	// these only at `colima start`, so changing one means stopping and restarting
+	// the VM, and shrinking the disk means recreating it — losing every image and
+	// container on it. Only an explicit resize request does that, and it refuses
+	// the shrink outright (profile.go).
 	CPUs        int
 	MemoryBytes int64
 	DiskBytes   int64
