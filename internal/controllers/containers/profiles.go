@@ -59,7 +59,7 @@ func (c *Controller) createProfile(w http.ResponseWriter, r *http.Request, data 
 	if err != nil {
 		return err
 	}
-	if err := c.admin.Create(r.Context(), spec); err != nil {
+	if err := c.admin.Create(acting(r), spec); err != nil {
 		return profileError(err)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -105,7 +105,7 @@ func (c *Controller) resizeProfile(w http.ResponseWriter, r *http.Request, name 
 		return nil
 	}
 
-	if err := c.admin.Resize(r.Context(), spec); err != nil {
+	if err := c.admin.Resize(acting(r), spec); err != nil {
 		return profileError(err)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -113,6 +113,21 @@ func (c *Controller) resizeProfile(w http.ResponseWriter, r *http.Request, name 
 	})
 	return nil
 }
+
+// acting is the context a VM operation runs under. It deliberately outlives the
+// request.
+//
+// exec.CommandContext kills the process when its context ends, and a request
+// context ends the moment the browser tab closes. For a listing that is the
+// right answer — nobody is waiting for it. For a resize it is not: by then the
+// stop has already run, so killing the start leaves the VM down with neither
+// the old size nor the new one, which is exactly the state the dry run exists
+// to keep the user out of. envs made the same call for compose up and stop
+// (apply.go), and for the same reason.
+//
+// This drops the cancellation, not the deadline: the container package puts
+// profileOpTimeout on the operation, so nothing here can run unbounded.
+func acting(r *http.Request) context.Context { return context.WithoutCancel(r.Context()) }
 
 // decodeSpec reads the request body. Sizes are optional and absent means "leave
 // colima's default" — which the container package turns into an omitted flag,
@@ -155,6 +170,7 @@ func profileError(err error) error {
 	case errors.Is(err, container.ErrProfileMissing):
 		return httpx.Errorf(http.StatusNotFound, "%s", err.Error())
 	case errors.Is(err, container.ErrDiskShrink),
+		errors.Is(err, container.ErrEngineChange),
 		errors.Is(err, container.ErrColimaUnsupportedOS),
 		errors.Is(err, container.ErrColimaMissing):
 		return httpx.Errorf(http.StatusBadRequest, "%s", err.Error())

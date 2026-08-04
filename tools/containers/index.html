@@ -406,7 +406,15 @@ function closeProfileModal() {
 }
 
 function profileBody(confirm) {
-  const num = id => { const v = parseInt($(id).value, 10); return Number.isFinite(v) ? v : undefined; };
+  // Number, not parseInt: parseInt('2.5') is 2, and granting 2 CPUs to someone
+  // who asked for 2.5 answers a question they did not ask. The server refuses a
+  // fractional size and says so — but only if it is the one that sees the 2.5.
+  const num = id => {
+    const raw = $(id).value.trim();
+    if (!raw) return undefined;
+    const v = Number(raw);
+    return Number.isFinite(v) ? v : raw;   // pass junk through; the server names it
+  };
   const body = { cpus: num('pfCpus'), memory_gib: num('pfMemory'), disk_gib: num('pfDisk') };
   if (!resizeTarget) {
     body.name = $('pfName').value.trim();
@@ -441,6 +449,10 @@ async function submitProfile() {
     setStatus('完了', 'ok');
     await load();
   } catch (e) {
+    // The error replaces the stop list, so the confirmation has to go with it:
+    // otherwise the next click runs armed with nothing on screen describing
+    // what it will take down.
+    disarmConfirm();
     $('profileWarn').innerHTML = `<div class="warn">${escapeHtml(e.message)}</div>`;
     setStatus(`エラー: ${e.message}`, 'error');
   } finally {

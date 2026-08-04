@@ -8,7 +8,10 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func testAdmin(runner commandRunner, profiles ProfileLister) *colimaAdmin {
@@ -128,6 +131,168 @@ func TestResizeRefusesADiskShrinkBeforeStopping(t *testing.T) {
 			t.Errorf("%+v: %v", spec, err)
 		}
 	}
+}
+
+// TestResizeRefusesAnEngineChangeBeforeStopping. Unlike a disk shrink this one
+// looks harmless — the VM stops and comes back, nothing is deleted — but the
+// containers live in the runtime's own store, so after the swap they simply
+// stop being there as far as anything asking can tell. That is the one outcome
+// the confirmation cannot describe, because the stop list names what goes down
+// and these do not go down.
+func TestResizeRefusesAnEngineChangeBeforeStopping(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		current string
+		asked   string
+		refuse  bool
+	}{
+		{"docker to containerd", EngineDocker, EngineContainerd, true},
+		// A stopped profile reports no engine, so devhub cannot tell a change
+		// from a restatement — and guessing wrong is the swap itself.
+		{"current unknown", "", EngineContainerd, true},
+		// Restating the engine it already has asks for nothing.
+		{"same engine", EngineDocker, EngineDocker, false},
+		{"omitted", EngineDocker, "", false},
+	} {
+		lister := &fakeColima{profiles: []ColimaProfile{
+			{Name: "dev", Status: "Running", Engine: tc.current, DiskBytes: 100 * gib},
+		}}
+		runner := &fakeRunner{}
+		err := testAdmin(runner, lister).Resize(context.Background(), ProfileSpec{Name: "dev", CPUs: 2, Engine: tc.asked})
+
+		if !tc.refuse {
+			if err != nil {
+				t.Errorf("%s: %v", tc.name, err)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrEngineChange) {
+			t.Errorf("%s: err = %v, want ErrEngineChange", tc.name, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Errorf("%s: ran %v before refusing; the VM was already down by then", tc.name, runner.calls)
+		}
+		// The dry run refuses it too, so the user is never asked to agree to a
+		// resize that cannot happen.
+		if err := testAdmin(&fakeRunner{}, lister).CheckResize(
+			context.Background(), ProfileSpec{Name: "dev", Engine: tc.asked}); !errors.Is(err, ErrEngineChange) {
+			t.Errorf("%s: CheckResize = %v, want ErrEngineChange", tc.name, err)
+		}
+	}
+}
+
+// TestResizeSaysHowToRecoverWhenStartFails. This is the one error where the
+// user ends up with less than they had: the stop ran, so the VM is down and the
+// new size did not take. colima's own message says why it would not start; it
+// does not say that nothing is running now.
+func TestResizeSaysHowToRecoverWhenStartFails(t *testing.T) {
+	runner := &failOn{verb: "start", err: errors.New("boom")}
+	lister := &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Running", DiskBytes: 100 * gib}}}
+
+	err := testAdmin(runner, lister).Resize(context.Background(), ProfileSpec{Name: "dev", CPUs: 2})
+	if err == nil {
+		t.Fatal("start failed but Resize did not")
+	}
+	for _, want := range []string{"停止しています", "colima start --profile dev", "2 CPU"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message %q does not mention %q", err, want)
+		}
+	}
+}
+
+// failOn fails one colima subcommand and lets the rest through.
+type failOn struct {
+	verb string
+	err  error
+}
+
+func (f *failOn) Run(_ context.Context, _, _ string, args ...string) (string, string, error) {
+	if len(args) > 0 && args[0] == f.verb {
+		return "", "", f.err
+	}
+	return "", "", nil
+}
+
+// TestConcurrentCreatesOfOneNameStartItOnce. "Does this profile exist" is only
+// worth as much as the window after it: two tabs, or an agent and a browser,
+// both get "no" and both run colima against the same VM.
+func TestConcurrentCreatesOfOneNameStartItOnce(t *testing.T) {
+	lister := &growingColima{}
+	runner := &startRecorder{lister: lister}
+	admin := testAdmin(runner, lister)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = admin.Create(context.Background(), ProfileSpec{Name: "race", CPUs: 1})
+		}()
+	}
+	wg.Wait()
+
+	if got := runner.started(); got != 1 {
+		t.Errorf("ran colima start %d times for one profile", got)
+	}
+	// One caller made it; the other is told it already exists. Neither is told
+	// something that did not happen.
+	var made, existed int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			made++
+		case errors.Is(err, ErrProfileExists):
+			existed++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+	if made != 1 || existed != 1 {
+		t.Errorf("created=%d, already-exists=%d; want one of each", made, existed)
+	}
+}
+
+// growingColima is a listing that reflects what has been started so far, which
+// is what makes the race above visible: with a static one, the second caller
+// would find nothing whether or not the lock worked.
+type growingColima struct {
+	mu       sync.Mutex
+	profiles []ColimaProfile
+}
+
+func (g *growingColima) Profiles(context.Context) ([]ColimaProfile, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.profiles), nil
+}
+
+// startRecorder makes `colima start` take long enough that a second request
+// arrives while the first is still running, then registers the profile.
+type startRecorder struct {
+	lister *growingColima
+	mu     sync.Mutex
+	starts int
+}
+
+func (s *startRecorder) Run(_ context.Context, _, _ string, args ...string) (string, string, error) {
+	if len(args) < 3 || args[0] != "start" {
+		return "", "", nil
+	}
+	time.Sleep(20 * time.Millisecond)
+	s.mu.Lock()
+	s.starts++
+	s.mu.Unlock()
+	s.lister.mu.Lock()
+	s.lister.profiles = append(s.lister.profiles, ColimaProfile{Name: args[2], Status: "Running"})
+	s.lister.mu.Unlock()
+	return "", "", nil
+}
+
+func (s *startRecorder) started() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.starts
 }
 
 func TestResizeRefusesAMissingProfile(t *testing.T) {
