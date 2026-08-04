@@ -13,12 +13,15 @@ document.getElementById('app').addEventListener('click', e => {
   else if (action === 'delete-process') deleteProcess(Number(btn.dataset.eIdx), Number(btn.dataset.pIdx));
   else if (action === 'switch-scenario') switchToScenario(btn.dataset.envId, btn.dataset.scenarioId, btn.dataset.scenarioName);
   else if (action === 'switch-stop') stopScenarioComponents(btn.dataset.envId);
+  else if (action === 'edit-runtime') openRuntimeModal(Number(btn.dataset.eIdx));
 });
 
 // Init
 fetchWorktrees();
 fetchEnvs();
 fetchLaunches();
-// Component state is fetched once, not polled: see switch.js.
+// Component state and host capabilities are fetched once, not polled: both
+// shell out to container CLIs (see switch.js).
 fetchSwitchState();
+fetchRuntimes();
 setInterval(fetchLaunches, 5000);
