@@ -17,7 +17,9 @@ import (
 
 	"github.com/imohiyoko/devhub/internal/approval"
 	"github.com/imohiyoko/devhub/internal/core"
+	docspkg "github.com/imohiyoko/devhub/internal/docs"
 	"github.com/imohiyoko/devhub/internal/platform"
+	"github.com/imohiyoko/devhub/internal/reqlog"
 	"github.com/imohiyoko/devhub/internal/storage"
 	"github.com/imohiyoko/devhub/internal/tools"
 )
@@ -65,12 +67,30 @@ type Server struct {
 	gateway *core.Gateway
 
 	approvalMgr *approval.Manager
+
+	// instance is a fresh random id minted for this Server. It changes on every
+	// (re)start — including a rebuild that re-execs or spawns a replacement — so
+	// the frontend can detect "the server I'm talking to is a new process" by
+	// comparing /api/info's `instance` against the value it captured before the
+	// rebuild, instead of trying to catch the transient down-window (which a fast
+	// `go run` restart can slip through entirely, leaving the UI polling forever).
+	//
+	// It also labels rlog's entries, which is why it is minted per Server rather
+	// than once per process: seq restarts at 1 with every ring, so two rings
+	// sharing one id would make two different requests indistinguishable in the
+	// archive — and the second would be silently discarded as a duplicate.
+	instance string
+
+	// rlog is this server's request log. It is in-memory and dies with the
+	// process by design (see internal/reqlog); the logs tool is what copies
+	// anything worth keeping into the store.
+	rlog *reqlog.Ring
 }
 
 // New builds a Server: resolves the token (inheriting DEVHUB_API_TOKEN across a
 // restart), the port and host allowlist, builds the tool registry, and injects
 // the token shim into the dashboard and every tool page.
-func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser bool, version string) (*Server, error) {
+func New(store *storage.Store, assets, docsFS fs.FS, settings map[string]any, noBrowser bool, version string) (*Server, error) {
 	s := &Server{store: store, settings: settings, version: version, edition: platform.Edition(version)}
 	s.repoRoot = findRepoRoot()
 
@@ -112,7 +132,19 @@ func New(store *storage.Store, assets fs.FS, settings map[string]any, noBrowser 
 	// Build the registry, then derive everything else from it: each tool's page
 	// is read from the embed FS and token-injected, keyed by tool ID for the
 	// gateway's pageFn. The dashboard root is the one page that is not a tool.
-	reg := tools.Registry(store)
+	// Parsed once at boot, not per request: a malformed doc should stop startup
+	// here rather than surface on the first agent that asks for one.
+	docSet, err := docspkg.Load(docsFS)
+	if err != nil {
+		return nil, fmt.Errorf("load docs: %w", err)
+	}
+	// The instance id scopes archived entries to the run they came from, so a
+	// seq is never ambiguous across restarts. The ring carries it: everything
+	// downstream reads it from there, so there is no second copy to fall out of
+	// step with the counter.
+	s.instance = generateToken()
+	s.rlog = reqlog.New(reqlog.Capacity, s.instance)
+	reg := tools.Registry(store, docSet, s.rlog)
 	script := buildTokenScript(s.token)
 
 	toolPages := map[string][]byte{}

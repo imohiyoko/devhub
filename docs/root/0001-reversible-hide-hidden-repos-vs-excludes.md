@@ -1,3 +1,7 @@
+---
+description: git / workspace でリポジトリを「非表示」にする設定が excludes ではなく hidden_repos である理由。非表示まわりの設定を読み書きするときに参照する。
+---
+
 # 0001. git の「非表示」は excludes ではなく hidden_repos（取り消し可能・フロントフィルタ）を用いる
 
 - **Status**: Accepted (2026-06-16)
