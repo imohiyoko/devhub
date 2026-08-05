@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -13,13 +14,47 @@ import (
 	"github.com/imohiyoko/devhub/internal/httpx"
 )
 
+// approvalTimeout is how long an /ai-api write blocks waiting for the user to
+// decide. It is named because the approval_timeout hint quotes it: the number a
+// caller is told to expect and the number it actually waits must be the same.
+// A var, not a const, only so tests can shorten it — nothing at runtime writes it.
+var approvalTimeout = 60 * time.Second
+
+// baseURL is devhub's own dashboard address, for hints that need to tell a
+// caller where the user should look. It uses the bound port, not the configured
+// one, so it stays right under a DEVHUB_PORT override.
+func (s *Server) baseURL() string { return fmt.Sprintf("http://localhost:%d", s.port) }
+
+// tokenlessAlternative explains, for a path that just failed the token check,
+// what a non-browser caller should do instead.
+//
+// Usually that is the same path under /ai-api. The approval endpoints are the
+// exception, and not an accidental one: they are reachable only with the token,
+// so a caller on /ai-api cannot approve its own pending write. Pointing them at
+// /ai-api/approval/… would send them to a 404 and imply a self-approval route
+// exists, which is exactly what must not exist.
+//
+// The bare /api/approval is matched too. It is not a route, so it reaches the
+// token check like any other unknown path — and a test that required the
+// trailing slash would hand it the generic hint, naming /ai-api/approval: the
+// one string this function exists to never produce.
+func (s *Server) tokenlessAlternative(apiPath string) string {
+	if apiPath == "/api/approval" || strings.HasPrefix(apiPath, "/api/approval/") {
+		return fmt.Sprintf("The approval endpoints require the token that devhub injects into its own pages, and have no /ai-api equivalent — a caller cannot approve its own request. Ask the user to decide at %s.", s.baseURL())
+	}
+	return fmt.Sprintf("/api needs the per-session token that devhub injects into its own pages. A local agent or CLI should call %s instead — same route, no token, though writes wait for the user to approve them.",
+		"/ai-api/"+strings.TrimPrefix(apiPath, "/api/"))
+}
+
 // ServeHTTP is the single security gate (host allowlist + API token). Once a
 // request clears the gate it is handed to the core gateway, which serves all
 // tools (registry-driven) plus GET /api/tools, and falls through to serveSystem
 // for the dashboard root and system endpoints.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.hostAllowed(r) {
-		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden").WithHint(
+			"host_not_allowed",
+			fmt.Sprintf("Address devhub as %s. A Host header naming anything other than localhost/127.0.0.1 on that port is rejected.", s.baseURL())))
 		return
 	}
 
@@ -30,7 +65,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// through a forwarder or a future bind-address change, a remote client
 	// must not receive a page with the API token baked in.
 	if !s.isLoopback(r) {
-		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden").WithHint(
+			"not_loopback",
+			"devhub only answers connections from the same machine (127.0.0.1 / ::1). Run the client on this host; it cannot be reached over the network."))
 		return
 	}
 
@@ -46,7 +83,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Handle AI API endpoints: bypass regular API token validation, but enforce loopback connection.
 	if strings.HasPrefix(r.URL.Path, "/ai-api/") {
 		if !s.isLoopback(r) {
-			httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: loopback connection required"})
+			httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden: loopback connection required").WithHint(
+				"not_loopback",
+				"devhub only answers connections from the same machine (127.0.0.1 / ::1). Run the client on this host; it cannot be reached over the network."))
 			return
 		}
 		// Loopback alone does not prove the caller isn't a browser: a cross-origin
@@ -56,7 +95,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// with Sec-Fetch-Site, so reject those. Legit CLI/agent clients send no
 		// Sec-Fetch-Site and are unaffected.
 		if !sameOriginOrNonBrowser(r) {
-			httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: cross-site request"})
+			httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden: cross-site request").WithHint(
+				"cross_site",
+				"This request carried a cross-site Sec-Fetch-Site header, which is how a web page the user is merely visiting looks. Call /ai-api from a CLI or HTTP client that does not send Sec-Fetch-Site."))
 			return
 		}
 
@@ -94,10 +135,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			if !s.approvalMgr.ShouldAutoApprove(action, detail) {
 				req := s.approvalMgr.Register(action, detail)
-				// Wait up to 60 seconds for approval.
-				decision, err := s.approvalMgr.Wait(req, 60*time.Second)
-				if err != nil || decision != approval.Approved {
-					httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "request rejected or timed out"})
+				decision, err := s.approvalMgr.Wait(req, approvalTimeout)
+				// Rejected and timed out demand opposite responses from a caller —
+				// give up versus try again — so they must not collapse into one
+				// answer. Wait returns an error only on the timeout path, which is
+				// what separates them here.
+				switch {
+				case err != nil:
+					// Wait already flipped the timed-out request to Rejected, so it
+					// is gone from the pending list: there is nothing left on the
+					// dashboard for the user to click. The way through is to send
+					// the request again and have someone waiting to approve it —
+					// telling the caller to "go approve the pending request" would
+					// send it hunting for something that no longer exists.
+					httpx.WriteError(w, httpx.Errorf(http.StatusRequestTimeout, "approval timed out").WithHint(
+						"approval_timeout",
+						fmt.Sprintf("Nobody answered within %s, and the prompt is now gone. Ask the user to open %s and watch for the approval prompt, then send this request again.", approvalTimeout, s.baseURL())))
+					return
+				case decision != approval.Approved:
+					httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "approval rejected").WithHint(
+						"approval_rejected",
+						"The user declined this request. Do not retry it — ask the user what they want done instead."))
 					return
 				}
 			}
@@ -109,7 +167,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		if !s.apiAuthorized(r) {
-			httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			// The token lives in the served pages, so a caller that isn't a browser
+			// has no way to obtain it. Name the surface built for those callers
+			// rather than leaving them to guess that /api is not the only door.
+			httpx.WriteError(w, httpx.Errorf(http.StatusUnauthorized, "unauthorized").WithHint(
+				"missing_token", s.tokenlessAlternative(r.URL.Path)))
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/approval/") {
