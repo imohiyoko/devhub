@@ -152,18 +152,27 @@ func labelEscape(s string) string {
 //
 // A malformed query yields whatever ParseQuery could recover; the unparseable
 // remainder is dropped rather than echoed, because "could not parse it" is not
-// a reason to copy unexamined bytes into a log that gets archived to disk.
+// a reason to copy unexamined bytes into a log that gets archived to disk. The
+// placeholder is hyphenated rather than spaced for the same reason labelEscape
+// escapes spaces: this string sits in the middle of an approval detail, where a
+// space is the boundary a prefix rule anchors on.
 //
-// Known limit: two queries longer than the cap can truncate to the same string,
-// and an always-allow rule on one would then cover the other. No devhub route
-// takes a query that long, so this is recorded rather than solved.
+// Known limits, both of the same shape — distinct queries can share a label, so
+// an always-allow rule on one covers the other:
+//
+//   - Every query ParseQuery cannot recover anything from collapses to the
+//     placeholder, so allowing one broken query allows any broken query to that
+//     route. Deliberate: there is nothing left to distinguish them by that is
+//     safe to echo.
+//   - Two queries longer than the cap can truncate alike. No devhub route takes
+//     a query that long, so this is recorded rather than solved.
 func redactedQuery(u *url.URL) string {
 	if u.RawQuery == "" {
 		return ""
 	}
 	q, _ := url.ParseQuery(u.RawQuery)
 	if len(q) == 0 {
-		return "?(unparseable query)"
+		return "?(unparseable-query)"
 	}
 	var parts []string
 	for _, k := range slices.Sorted(maps.Keys(q)) {
