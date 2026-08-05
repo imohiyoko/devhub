@@ -90,6 +90,12 @@ func TestSplitFrontMatterEdgeCases(t *testing.T) {
 	}{
 		{"quoted", "---\ndescription: \"quoted value\"\n---\nbody", "quoted value", "body"},
 		{"folded onto next line", "---\ndescription: first\n  second\n---\nbody", "first second", "body"},
+		// The key line carries no value. Joining an empty first piece would put
+		// a space in front of the description — invisible in the docs list, and
+		// enough to make an exact-match comparison fail for no stated reason.
+		{"value entirely on the next line", "---\ndescription:\n  folded value\n---\nbody", "folded value", "body"},
+		// And the quotes still come off after the join, not before it.
+		{"folded and quoted", "---\ndescription:\n  \"folded value\"\n---\nbody", "folded value", "body"},
 		{"stops at next key", "---\ndescription: only this\nstatus: Accepted\n---\nbody", "only this", "body"},
 		{"other keys first", "---\nstatus: Accepted\ndescription: after\n---\nbody", "after", "body"},
 		{"unterminated fence keeps body", "---\ndescription: x\nbody with no close", "", "body with no close"},

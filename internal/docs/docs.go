@@ -117,20 +117,31 @@ func splitFrontMatter(src string) (description, body string) {
 	// left after it, so a shown doc starts at its title.
 	body = strings.TrimLeft(body, "\n")
 
+	// started is tracked separately from len(parts) because the two differ for
+	// the shape "description:" followed by an indented block — the key line
+	// contributes nothing, and only empty pieces are dropped. Keying off
+	// len(parts) there would either skip the whole folded value or join a blank
+	// first piece and leave a leading space on the result.
 	var parts []string
+	var started bool
 	for _, line := range strings.Split(block, "\n") {
 		if v, ok := strings.CutPrefix(line, "description:"); ok {
-			parts = append(parts, strings.TrimSpace(v))
+			started = true
+			if v = strings.TrimSpace(v); v != "" {
+				parts = append(parts, v)
+			}
+			continue
+		}
+		if !started {
 			continue
 		}
 		// Continuation lines of a folded description are indented; a new key is
-		// not. Stop at the first new key once we have started collecting.
-		if len(parts) > 0 && strings.HasPrefix(line, " ") {
-			parts = append(parts, strings.TrimSpace(line))
-			continue
-		}
-		if len(parts) > 0 {
+		// not. Stop at the first new key.
+		if !strings.HasPrefix(line, " ") {
 			break
+		}
+		if v := strings.TrimSpace(line); v != "" {
+			parts = append(parts, v)
 		}
 	}
 	return unquote(strings.Join(parts, " ")), body
