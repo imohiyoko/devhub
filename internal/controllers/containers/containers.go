@@ -22,6 +22,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/imohiyoko/devhub/internal/container"
 	"github.com/imohiyoko/devhub/internal/httpx"
@@ -141,8 +142,10 @@ func (p profileAdmin) ProfileTargets(ctx context.Context, name string) ([]contai
 	return p.rt.ProfileTargets(ctx, name)
 }
 
-func (p profileAdmin) Budget(ctx context.Context) (container.Budget, error) {
-	return p.rt.Admin.Budget(ctx)
+func (p profileAdmin) Limits() container.Limits { return p.rt.Admin.Limits() }
+
+func (p profileAdmin) Allocations(ctx context.Context) ([]container.Alloc, error) {
+	return p.rt.Admin.Allocations(ctx)
 }
 
 // HandleGet serves GET /api/containers. The request's context is passed
@@ -151,34 +154,49 @@ func (p profileAdmin) Budget(ctx context.Context) (container.Budget, error) {
 func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 	sources, list := c.runtime.Containers(r.Context())
 	out := inventoryJSON(sources, list)
-	// The budget rides along with the listing rather than living behind a
-	// second endpoint. The panel needs it on every load — a size field with no
-	// limit on screen is a limit the user meets by being refused — and a new
-	// route would be a new line in the execaudit ledger for a payload that
-	// spawns nothing.
-	if c.admin != nil {
-		if b, err := c.admin.Budget(r.Context()); err == nil && b.Detected {
-			out["host"] = budgetJSON(b)
-		}
+	// The limits ride along with the listing rather than living behind a second
+	// endpoint. The panel needs them on every load — a size field with no limit
+	// on screen is a limit the user meets by being refused — and a new route
+	// would be a new line in the execaudit ledger for a payload that spawns
+	// nothing.
+	//
+	// Limits asks colima nothing, and the running totals are summed from the
+	// sources this request already fetched. So the whole budget costs no extra
+	// process: asking the admin for allocations here would run a second
+	// `colima list` for numbers the listing had already reported.
+	if l := c.admin.Limits(); l.Detected {
+		out["host"] = limitsJSON(l, sources)
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 	return nil
 }
 
-// budgetJSON renders the host and its caps. Absent entirely when devhub cannot
+// limitsJSON renders the host and its caps. Absent entirely when devhub cannot
 // measure the machine — a panel showing "0 CPU" would be stating a limit that
 // does not exist, and the caps are not applied in that case either.
-func budgetJSON(b container.Budget) map[string]any {
+func limitsJSON(l container.Limits, sources []container.Source) map[string]any {
+	// Summed from the sources rather than from a fresh `colima list`: a Colima
+	// source carries the profile's size and status already, so this is the same
+	// answer without a second sweep — and it cannot disagree with the rows the
+	// user is looking at, which a separately-timed listing could.
+	var runningCPUs, runningMemGiB int
+	for _, s := range sources {
+		if s.Profile == "" || !strings.EqualFold(s.Status, "Running") {
+			continue
+		}
+		runningCPUs += s.CPUs
+		runningMemGiB += int(s.MemoryBytes / (1 << 30))
+	}
 	return map[string]any{
-		"cpus": b.HostCPUs, "memory_bytes": b.HostMemBytes,
+		"cpus": l.HostCPUs, "memory_bytes": l.HostMemBytes,
 		// Reported so the profile form can show it. Never a limit: Lima's disk
 		// images are sparse, so declaring more than this is legitimate.
-		"free_disk_bytes": b.FreeDiskBytes,
-		"cpu_cap":         b.CPUCap,
-		"memory_cap_gib":  b.MemCapGiB,
-		"reserve":         b.Reserve.JSON(),
-		"running_cpus":    b.RunningCPUs,
-		"running_mem_gib": b.RunningMemGiB,
+		"free_disk_bytes": l.FreeDiskBytes,
+		"cpu_cap":         l.CPUCap,
+		"memory_cap_gib":  l.MemCapGiB,
+		"reserve":         l.Reserve.JSON(),
+		"running_cpus":    runningCPUs,
+		"running_mem_gib": runningMemGiB,
 	}
 }
 

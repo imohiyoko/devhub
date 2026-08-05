@@ -35,23 +35,36 @@ const gibDivisor = 1 << 30
 // rather than at the first create.
 const maxReservePercent = 90
 
-// Amount is one resource's reserve. At most one of Percent and Absolute is
-// non-zero: Percent for a fraction of what the host has, Absolute for a fixed
-// number of cores (CPU) or GiB (memory).
+// Amount is one resource's reserve: a number, and which of the two things that
+// number is.
 //
-// Set is what separates "reserve nothing" from "not configured", and it earns
-// its keep: both are all-zero numbers, and only one of them should be replaced
-// by the default. Without it, a user who deliberately gave the VM the whole
-// machine would silently get 20% held back — and there would be nothing on
-// screen explaining where the missing cores went. It also makes a partially
-// written setting safe: {"cpu": {...}} alone leaves memory on the default.
+// IsPercent is a field rather than "Percent > 0 means it is one", because zero
+// is a value a user can legitimately write in either form and the two are not
+// the same statement. "0%" and "0 cores" work out identically today, but they
+// are answers to different questions, and printing one back where the other was
+// written is the drift this package is otherwise careful to avoid.
+//
+// Set separates "reserve nothing" from "not configured". Both are zero, and
+// only one of them should be replaced by the default — without it, a user who
+// deliberately gave the VM the whole machine would silently get 20% held back,
+// with nothing on screen explaining where the missing cores went. It also makes
+// a partially written setting safe: {"cpu": {...}} alone leaves memory on the
+// default.
 type Amount struct {
-	Percent  int
-	Absolute int
-	Set      bool
+	Value     int
+	IsPercent bool
+	Set       bool
 }
 
 func (a Amount) unset() bool { return !a.Set }
+
+// keepFrom is how much of a host total this amount holds back.
+func (a Amount) keepFrom(total int64) int64 {
+	if a.IsPercent {
+		return total * int64(a.Value) / 100
+	}
+	return int64(a.Value)
+}
 
 // Reserve is the policy for both resources devhub caps. Disk is absent on
 // purpose: Lima's disk images are sparse, so a profile declaring more disk than
@@ -66,8 +79,8 @@ type Reserve struct {
 // wants the VM to have everything can say so.
 func DefaultReserve() Reserve {
 	return Reserve{
-		CPU:    Amount{Percent: 20, Set: true},
-		Memory: Amount{Percent: 20, Set: true},
+		CPU:    Amount{Value: 20, IsPercent: true, Set: true},
+		Memory: Amount{Value: 20, IsPercent: true, Set: true},
 	}
 }
 
@@ -94,10 +107,7 @@ func (r Reserve) CPUCap(hostCPUs int) int {
 		return 0
 	}
 	r = r.withDefaults()
-	keep := r.CPU.Absolute
-	if r.CPU.Percent > 0 {
-		keep = hostCPUs * r.CPU.Percent / 100
-	}
+	keep := int(r.CPU.keepFrom(int64(hostCPUs)))
 	return max(hostCPUs-keep, 1)
 }
 
@@ -110,9 +120,9 @@ func (r Reserve) MemoryCapGiB(hostMemoryBytes int64) int {
 		return 0
 	}
 	r = r.withDefaults()
-	keep := int64(r.Memory.Absolute) * gibDivisor
-	if r.Memory.Percent > 0 {
-		keep = hostMemoryBytes * int64(r.Memory.Percent) / 100
+	keep := r.Memory.keepFrom(hostMemoryBytes)
+	if !r.Memory.IsPercent {
+		keep *= gibDivisor // an absolute memory reserve is written in GiB
 	}
 	return max(int((hostMemoryBytes-keep)/gibDivisor), 1)
 }
@@ -121,10 +131,10 @@ func (r Reserve) MemoryCapGiB(hostMemoryBytes int64) int {
 // A user who set "8 GiB" should not be told about a percentage devhub computed
 // from it — they would go looking for a setting they never touched.
 func (a Amount) describe(unit string) string {
-	if a.Percent > 0 {
-		return fmt.Sprintf("%d%%", a.Percent)
+	if a.IsPercent {
+		return fmt.Sprintf("%d%%", a.Value)
 	}
-	return fmt.Sprintf("%d%s", a.Absolute, unit)
+	return fmt.Sprintf("%d%s", a.Value, unit)
 }
 
 // JSON renders a reserve for the settings document.
@@ -139,10 +149,10 @@ func (r Reserve) JSON() map[string]any {
 // the cores it works out to on this machine would write the current host into
 // the settings document, and the setting would then be wrong on the next one.
 func (a Amount) json(absKey string) map[string]any {
-	if a.Percent > 0 {
-		return map[string]any{"percent": a.Percent}
+	if a.IsPercent {
+		return map[string]any{"percent": a.Value}
 	}
-	return map[string]any{absKey: a.Absolute}
+	return map[string]any{absKey: a.Value}
 }
 
 // NormalizeReserve validates a vm_reserve value from a request and returns what
@@ -216,13 +226,14 @@ func normalizeAmount(v any, field, absKey string) (Amount, error) {
 			return Amount{}, fmt.Errorf("vm_reserve.%s.percent は 0〜%d で指定してください（%d）", field, maxReservePercent, pct)
 		}
 		// Set even at zero: "reserve nothing" is a policy, not an absence, and
-		// the default must not quietly replace it.
-		return Amount{Percent: pct, Set: true}, nil
+		// the default must not quietly replace it. IsPercent likewise survives
+		// a zero, so a 0% reserve is not written back as "0 cores".
+		return Amount{Value: pct, IsPercent: true, Set: true}, nil
 	}
 	if abs < 0 {
 		return Amount{}, fmt.Errorf("vm_reserve.%s.%s は 0 以上で指定してください（%d）", field, absKey, abs)
 	}
-	return Amount{Absolute: abs, Set: true}, nil
+	return Amount{Value: abs, Set: true}, nil
 }
 
 // intField reads a whole number. JSON numbers arrive as float64, and a

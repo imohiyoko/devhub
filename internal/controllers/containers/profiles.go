@@ -25,7 +25,6 @@ package containers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -43,7 +42,8 @@ type admin interface {
 	Start(ctx context.Context, name string) error
 	Stop(ctx context.Context, name string) error
 	ProfileTargets(ctx context.Context, name string) ([]container.Container, error)
-	Budget(ctx context.Context) (container.Budget, error)
+	Limits() container.Limits
+	Allocations(ctx context.Context) ([]container.Alloc, error)
 }
 
 // HandleProfilePost serves /api/containers/profiles and
@@ -76,7 +76,7 @@ func (c *Controller) HandleProfilePost(w http.ResponseWriter, r *http.Request, d
 	case "resize":
 		return c.resizeProfile(w, r, name, data)
 	case "start":
-		return c.startProfile(w, r, name)
+		return c.startProfile(w, r, name, data)
 	case "stop":
 		return c.stopProfile(w, r, name, data)
 	default:
@@ -142,55 +142,111 @@ func (c *Controller) resizeProfile(w http.ResponseWriter, r *http.Request, name 
 	return nil
 }
 
-// startProfile brings an existing profile back up. It is the counterpart to
-// createProfile in the one way that decides the shape of this handler: nothing
-// is running that a start could take down, so there is nothing to warn about
-// and no confirmation step.
+// startProfile brings an existing profile back up.
 //
-// It carries no body at all. A start is not a place to change the VM's size —
-// colima keeps each profile's configuration and this passes no flags — and
-// accepting sizes here would make it a resize wearing another name, without the
-// dry run a resize is required to have.
-func (c *Controller) startProfile(w http.ResponseWriter, r *http.Request, name string) error {
+// Usually it acts on the first call: a start takes nothing down, so there is
+// nothing to be told about. The exception is the one thing a start *can* do
+// that the user cannot see coming — put more memory in play than this machine
+// can back. Nothing on the panel adds the running profiles up, so devhub does
+// the sum, and when the answer is over the line it asks before acting instead
+// of reporting it afterwards. An answer that arrives after the VM is up is a
+// fact about a decision already made; a question is something the user can
+// still say no to.
+//
+// The threshold is the per-VM cap rather than physical memory. That is what
+// makes it early enough to act on: by the time the total passes what the Mac
+// actually has, the swapping has already started.
+//
+// It carries no sizes. A start is not a place to change the VM's size — colima
+// keeps each profile's configuration and this passes no flags — and accepting
+// sizes here would make it a resize wearing another name, without the dry run a
+// resize is required to have.
+func (c *Controller) startProfile(w http.ResponseWriter, r *http.Request, name string, data map[string]any) error {
 	name, err := profileName(name)
 	if err != nil {
 		return err
 	}
-	// Read before the start, so the totals describe the machine the user is
-	// about to add to rather than the one they just changed.
-	budget, _ := c.admin.Budget(r.Context())
+	confirmed, _ := data["confirm"].(bool)
+	if !confirmed {
+		// Allocations is the one colima call on this path, and it answers both
+		// halves of the sum: what is already up, and how big the profile being
+		// started is. A failure here is not fatal — it means devhub cannot do
+		// the arithmetic, not that the start is unsafe — so it falls through
+		// and starts, which is what this endpoint did before it could count.
+		if allocs, err := c.admin.Allocations(r.Context()); err == nil {
+			if over := memoryOversubscription(c.admin.Limits(), allocs, name); over != nil {
+				httpx.WriteJSON(w, http.StatusOK, map[string]any{
+					"ok": false, "confirm_required": true, "action": "start",
+					"profile": name, "memory": over,
+				})
+				return nil
+			}
+		}
+	}
 
 	if err := c.admin.Start(acting(r), name); err != nil {
 		return profileError(err)
 	}
-	out := map[string]any{"ok": true, "action": "start", "profile": name}
-	if w := oversubscribed(budget); w != "" {
-		out["warning"] = w
-	}
-	httpx.WriteJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "action": "start", "profile": name,
+	})
 	return nil
 }
 
-// oversubscribed says when the VMs that are up have between them been promised
-// more memory than devhub would give any single one.
+// memoryOversubscription answers what starting name would bring the total to,
+// or nil when there is nothing to ask about.
 //
-// A warning and not a refusal, deliberately. The cap bounds one VM against what
-// the machine has; this is a different claim — that several VMs together are
-// over the line — and it is one the user may well have meant, because the two
-// are rarely busy at the same moment. What they cannot do is notice it: nothing
-// on the screen adds the profiles up. So devhub says it once and gets out of
-// the way.
+// It is nil whenever the question would be noise: devhub cannot measure the
+// host, the profile is already running (so the start adds nothing), or the
+// projected total fits. A profile devhub cannot find is nil too — Start refuses
+// it a moment later with a better message than this could give.
 //
-// Measured against the cap rather than physical memory, which is what makes it
-// arrive early enough to act on: by the time the total passes what the Mac
-// actually has, the swapping has already started.
-func oversubscribed(b container.Budget) string {
-	if !b.Detected || b.MemCapGiB <= 0 || b.RunningMemGiB <= b.MemCapGiB {
-		return ""
+// It is also nil when the profile is over the per-VM cap by itself, and that
+// case is the important one. Start will refuse such a profile outright, and
+// asking first would put the user through a confirmation for an operation that
+// was never going to run — the same sequence resizeProfile avoids by
+// evaluating CheckResize before it shows the stop list.
+func memoryOversubscription(l container.Limits, allocs []container.Alloc, name string) map[string]any {
+	if !l.Detected || l.MemCapGiB <= 0 {
+		return nil
 	}
-	return fmt.Sprintf(
-		"起動中の VM に割り当てられたメモリの合計が %d GiB になり、1 VM あたりの上限 %d GiB を超えています（実装 %d GiB）。同時に使う場合は、どれかを停止するかサイズを見直してください。",
-		b.RunningMemGiB, b.MemCapGiB, b.HostMemBytes/(1<<30))
+	var running, adding int
+	var found bool
+	others := make([]any, 0, len(allocs))
+	for _, a := range allocs {
+		if a.Name == name {
+			found = true
+			if a.Running {
+				return nil // already up; starting it adds nothing
+			}
+			if a.MemGiB > l.MemCapGiB || (l.CPUCap > 0 && a.CPUs > l.CPUCap) {
+				return nil // Start refuses this one; let it say so
+			}
+			adding = a.MemGiB
+			continue
+		}
+		if a.Running {
+			running += a.MemGiB
+			others = append(others, map[string]any{"name": a.Name, "memory_gib": a.MemGiB})
+		}
+	}
+	if !found {
+		return nil
+	}
+	total := running + adding
+	if total <= l.MemCapGiB {
+		return nil
+	}
+	// Every number the question rests on, so the user is not asked to trust an
+	// arithmetic they cannot check.
+	return map[string]any{
+		"adding_gib":  adding,
+		"running_gib": running,
+		"total_gib":   total,
+		"cap_gib":     l.MemCapGiB,
+		"host_gib":    l.HostMemBytes / (1 << 30),
+		"running_vms": others,
+	}
 }
 
 // stopProfile shuts a profile down, or — without an explicit confirm — reports

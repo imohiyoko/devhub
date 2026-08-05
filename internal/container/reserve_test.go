@@ -22,15 +22,15 @@ func TestCapsOnThisShapeOfHost(t *testing.T) {
 		// in bytes and only the answer is floored to GiB.
 		{"default", DefaultReserve(), 8, 25},
 		{"nothing reserved",
-			Reserve{CPU: Amount{Percent: 0, Set: true}, Memory: Amount{Percent: 0, Set: true}}, 10, 32},
+			Reserve{CPU: Amount{Value: 0, IsPercent: true, Set: true}, Memory: Amount{Value: 0, IsPercent: true, Set: true}}, 10, 32},
 		{"absolute",
-			Reserve{CPU: Amount{Absolute: 4, Set: true}, Memory: Amount{Absolute: 8, Set: true}}, 6, 24},
+			Reserve{CPU: Amount{Value: 4, Set: true}, Memory: Amount{Value: 8, Set: true}}, 6, 24},
 		{"half",
-			Reserve{CPU: Amount{Percent: 50, Set: true}, Memory: Amount{Percent: 50, Set: true}}, 5, 16},
+			Reserve{CPU: Amount{Value: 50, IsPercent: true, Set: true}, Memory: Amount{Value: 50, IsPercent: true, Set: true}}, 5, 16},
 		// An unset half falls back to the default rather than to zero, so a
 		// settings document naming only one resource is still coherent.
 		{"only cpu configured",
-			Reserve{CPU: Amount{Absolute: 1, Set: true}}, 9, 25},
+			Reserve{CPU: Amount{Value: 1, Set: true}}, 9, 25},
 	} {
 		if got := tc.reserve.CPUCap(10); got != tc.wantCPU {
 			t.Errorf("%s: CPUCap = %d, want %d", tc.name, got, tc.wantCPU)
@@ -47,7 +47,7 @@ func TestCapsOnThisShapeOfHost(t *testing.T) {
 // everything is the one answer that cannot be what the user meant, so the floor
 // is one rather than the arithmetic result.
 func TestCapsNeverRefuseEverything(t *testing.T) {
-	r := Reserve{CPU: Amount{Percent: 90, Set: true}, Memory: Amount{Percent: 90, Set: true}}
+	r := Reserve{CPU: Amount{Value: 90, IsPercent: true, Set: true}, Memory: Amount{Value: 90, IsPercent: true, Set: true}}
 	if got := r.CPUCap(2); got != 1 {
 		t.Errorf("CPUCap = %d, want 1", got)
 	}
@@ -55,7 +55,7 @@ func TestCapsNeverRefuseEverything(t *testing.T) {
 		t.Errorf("MemoryCapGiB = %d, want 1", got)
 	}
 	// Absolutes larger than the host are the other way in.
-	huge := Reserve{CPU: Amount{Absolute: 999, Set: true}, Memory: Amount{Absolute: 999, Set: true}}
+	huge := Reserve{CPU: Amount{Value: 999, Set: true}, Memory: Amount{Value: 999, Set: true}}
 	if got := huge.CPUCap(10); got != 1 {
 		t.Errorf("CPUCap = %d, want 1", got)
 	}
@@ -86,22 +86,22 @@ func TestNormalizeReserveAccepts(t *testing.T) {
 		{"percent both", map[string]any{
 			"cpu":    map[string]any{"percent": float64(25)},
 			"memory": map[string]any{"percent": float64(10)},
-		}, Reserve{CPU: Amount{Percent: 25, Set: true}, Memory: Amount{Percent: 10, Set: true}}},
+		}, Reserve{CPU: Amount{Value: 25, IsPercent: true, Set: true}, Memory: Amount{Value: 10, IsPercent: true, Set: true}}},
 		// The two forms mix freely: they answer different questions, so there
 		// is no reason to make a user pick one style for the whole document.
 		{"mixed forms", map[string]any{
 			"cpu":    map[string]any{"cores": float64(2)},
 			"memory": map[string]any{"percent": float64(20)},
-		}, Reserve{CPU: Amount{Absolute: 2, Set: true}, Memory: Amount{Percent: 20, Set: true}}},
+		}, Reserve{CPU: Amount{Value: 2, Set: true}, Memory: Amount{Value: 20, IsPercent: true, Set: true}}},
 		{"only one resource", map[string]any{
 			"cpu": map[string]any{"cores": float64(1)},
-		}, Reserve{CPU: Amount{Absolute: 1, Set: true}, Memory: Amount{Percent: 20, Set: true}}},
+		}, Reserve{CPU: Amount{Value: 1, Set: true}, Memory: Amount{Value: 20, IsPercent: true, Set: true}}},
 		// An explicit zero survives the defaulting pass; that is what Set is
 		// for.
 		{"explicit zero", map[string]any{
 			"cpu":    map[string]any{"percent": float64(0)},
 			"memory": map[string]any{"gib": float64(0)},
-		}, Reserve{CPU: Amount{Percent: 0, Set: true}, Memory: Amount{Absolute: 0, Set: true}}},
+		}, Reserve{CPU: Amount{Value: 0, IsPercent: true, Set: true}, Memory: Amount{Value: 0, Set: true}}},
 	} {
 		got, err := NormalizeReserve(tc.in)
 		if err != nil {
@@ -171,8 +171,13 @@ func TestNormalizeReserveRefuses(t *testing.T) {
 func TestReserveJSONRoundTrips(t *testing.T) {
 	for _, want := range []Reserve{
 		DefaultReserve(),
-		{CPU: Amount{Absolute: 3, Set: true}, Memory: Amount{Absolute: 8, Set: true}},
-		{CPU: Amount{Percent: 50, Set: true}, Memory: Amount{Absolute: 0, Set: true}},
+		{CPU: Amount{Value: 3, Set: true}, Memory: Amount{Value: 8, Set: true}},
+		{CPU: Amount{Value: 50, IsPercent: true, Set: true}, Memory: Amount{Value: 0, Set: true}},
+		// Zero in each form. These work out to the same cap, but they are
+		// answers to different questions, and a round trip that swapped one for
+		// the other would print back something the user did not write.
+		{CPU: Amount{Value: 0, IsPercent: true, Set: true}, Memory: Amount{Value: 0, IsPercent: true, Set: true}},
+		{CPU: Amount{Value: 0, Set: true}, Memory: Amount{Value: 0, Set: true}},
 	} {
 		encoded := want.JSON()
 		// The map has to survive a trip through JSON, where every number

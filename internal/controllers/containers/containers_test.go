@@ -27,7 +27,11 @@ func (f fakeInventory) Containers(context.Context) ([]container.Source, []contai
 func get(t *testing.T, inv fakeInventory) map[string]any {
 	t.Helper()
 	rr := httptest.NewRecorder()
-	c := &Controller{runtime: inv}
+	// An admin is always wired in production (New builds one), so the helper
+	// supplies a double rather than the handler carrying a nil check that only
+	// a test could trip. Its zero Limits is the undetected host, which is what
+	// these payload tests want anyway.
+	c := &Controller{runtime: inv, admin: &fakeAdmin{}}
 	if err := c.HandleGet(rr, httptest.NewRequest(http.MethodGet, "/api/containers", nil)); err != nil {
 		t.Fatalf("HandleGet: %v", err)
 	}
@@ -180,18 +184,27 @@ func TestAliasReachesThePanel(t *testing.T) {
 	}
 }
 
-// TestBudgetRidesWithTheListing. The cap has to be on screen before someone
-// runs into it — a size field with no limit shown is a limit the user meets by
-// being refused — and it arrives with the listing rather than behind a second
+// TestLimitsRideWithTheListing. The cap has to be on screen before someone runs
+// into it — a size field with no limit shown is a limit the user meets by being
+// refused — and it arrives with the listing rather than behind a second
 // endpoint the panel would have to fetch.
-func TestBudgetRidesWithTheListing(t *testing.T) {
+//
+// The running totals are summed from the sources this request already fetched,
+// so the whole budget costs no extra process: asking the admin would run a
+// second `colima list` for numbers the listing had already reported.
+func TestLimitsRideWithTheListing(t *testing.T) {
 	rr := httptest.NewRecorder()
 	c := &Controller{
-		runtime: fakeInventory{},
-		admin: &fakeAdmin{budget: container.Budget{
+		runtime: fakeInventory{sources: []container.Source{
+			{ID: "docker", Label: "Docker", Available: true},
+			{ID: "colima:up", Profile: "up", Status: "Running", Available: true,
+				CPUs: 8, MemoryBytes: 20 << 30},
+			{ID: "colima:down", Profile: "down", Status: "Stopped",
+				CPUs: 6, MemoryBytes: 16 << 30},
+		}},
+		admin: &fakeAdmin{limits: container.Limits{
 			Detected: true, HostCPUs: 10, HostMemBytes: 32 << 30, FreeDiskBytes: 129 << 30,
 			CPUCap: 8, MemCapGiB: 25, Reserve: container.DefaultReserve(),
-			RunningCPUs: 8, RunningMemGiB: 20,
 		}},
 	}
 	if err := c.HandleGet(rr, httptest.NewRequest(http.MethodGet, "/api/containers", nil)); err != nil {
@@ -206,7 +219,9 @@ func TestBudgetRidesWithTheListing(t *testing.T) {
 		t.Fatal("no host budget in the payload")
 	}
 	for k, want := range map[string]float64{
-		"cpus": 10, "cpu_cap": 8, "memory_cap_gib": 25, "running_mem_gib": 20,
+		"cpus": 10, "cpu_cap": 8, "memory_cap_gib": 25,
+		// Only the running profile counts: a stopped one is holding nothing.
+		"running_cpus": 8, "running_mem_gib": 20,
 	} {
 		if host[k] != want {
 			t.Errorf("host[%q] = %v, want %v", k, host[k], want)
@@ -233,21 +248,8 @@ func TestBudgetRidesWithTheListing(t *testing.T) {
 // not exist — and on such a host no cap is applied either, so the panel must
 // not draw one.
 func TestNoBudgetWhenTheHostIsUnknown(t *testing.T) {
-	for _, name := range []string{"undetected", "no admin at all"} {
-		c := &Controller{runtime: fakeInventory{}}
-		if name == "undetected" {
-			c.admin = &fakeAdmin{budget: container.Budget{Detected: false}}
-		}
-		rr := httptest.NewRecorder()
-		if err := c.HandleGet(rr, httptest.NewRequest(http.MethodGet, "/api/containers", nil)); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		var out map[string]any
-		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
-			t.Fatalf("%s: decode: %v", name, err)
-		}
-		if _, found := out["host"]; found {
-			t.Errorf("%s: reported a host budget devhub cannot measure: %v", name, out["host"])
-		}
+	out := get(t, fakeInventory{}) // the helper's admin reports an undetected host
+	if _, found := out["host"]; found {
+		t.Errorf("reported a host budget devhub cannot measure: %v", out["host"])
 	}
 }

@@ -65,7 +65,8 @@ func (fakeAdmin) Resize(context.Context, ProfileSpec) error      { return nil }
 func (fakeAdmin) CheckResize(context.Context, ProfileSpec) error { return nil }
 func (fakeAdmin) Start(context.Context, string) error            { return nil }
 func (fakeAdmin) Stop(context.Context, string) error             { return nil }
-func (fakeAdmin) Budget(context.Context) (Budget, error)         { return Budget{}, nil }
+func (fakeAdmin) Limits() Limits                                 { return Limits{} }
+func (fakeAdmin) Allocations(context.Context) ([]Alloc, error)   { return nil, nil }
 
 type fakeOperator struct{}
 

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -32,8 +31,11 @@ func Detect(dir string) Spec {
 	spec.MemoryBytes = int64(mem)
 
 	if dir != "" {
-		var st syscall.Statfs_t
-		if err := syscall.Statfs(dir, &st); err == nil {
+		// x/sys/unix throughout rather than a mix: syscall is soft-deprecated,
+		// and one package for both calls means one set of type widths to reason
+		// about when this grows a second OS.
+		var st unix.Statfs_t
+		if err := unix.Statfs(dir, &st); err == nil {
 			// Bavail, not Bfree: the blocks a non-root process may actually
 			// use. Reporting the root reserve as free space would overstate
 			// what the user has by a few percent of the volume.

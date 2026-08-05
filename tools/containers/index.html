@@ -203,28 +203,6 @@ main { padding: 16px; overflow-y: auto; }
   margin-bottom: 11px;
 }
 .stop-list { margin: 8px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
-#notice:empty { display: none; }
-.notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  border: 1px solid var(--red);
-  border-radius: 6px;
-  margin: 12px 16px 0;
-  padding: 9px 11px;
-  font-size: 12px;
-  line-height: 1.6;
-}
-.notice button {
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 14px;
-  margin-left: auto;
-  padding: 0 2px;
-}
-.notice button:hover { color: var(--text); }
 /* 上限を超えているあいだだけ赤くする。押す前に分かるのが目的で、保存を止める
    のはサーバの仕事。 */
 .hint.over { color: var(--red); }
@@ -244,10 +222,6 @@ main { padding: 16px; overflow-y: auto; }
   <button class="btn" id="refreshBtn">再読込</button>
   <div class="status" id="status"></div>
 </header>
-
-<!-- 一覧の外。render() は main を丸ごと書き換えるので、中に置くと再読込のたびに
-     消えてしまう — 「起動はしたが注意がある」は、次の一覧より長生きすべき情報。 -->
-<div id="notice"></div>
 
 <main id="main">
   <div class="empty">読み込み中...</div>
@@ -338,6 +312,23 @@ main { padding: 16px; overflow-y: auto; }
     <div class="modal-footer">
       <button class="btn" id="rsCancel">キャンセル</button>
       <button class="btn" id="rsSubmit">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- VM の起動。ふつうは確認なしで走る。訊くのは1つの状況だけ —— 起動すると、
+     このマシンが裏付けられる以上のメモリが同時に約束されるとき。稼働中の
+     profile を足し算している画面はどこにも無いので、devhub が足してから訊く。 -->
+<div class="modal-overlay" id="vmStartOverlay">
+  <div class="modal">
+    <div class="modal-header" id="vmStartTitle">Colima profile を起動</div>
+    <div class="modal-body">
+      <div id="vmStartWarn"></div>
+      <div class="hint">起動自体は失敗しません。同時に動かすと、足りない分は macOS のスワップになります。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="vmStartCancel">キャンセル</button>
+      <button class="btn" id="vmStartSubmit">起動する</button>
     </div>
   </div>
 </div>
@@ -548,9 +539,13 @@ function render() {
 // ディスクには上限を出さない。Lima のイメージは sparse で、空き容量を超えた宣言
 // が正当に成立する（このマシンは 300 GiB 宣言・空き 129 GiB で動いている）。空き
 // は参考として並べるだけ。
+// どちらの形式で書かれたかは、値ではなくキーの有無で決まる。0 は % でも絶対値
+// でも書けて、上限としては同じでも別のことを言っている — 片方をもう片方として
+// 見せると、ユーザーが書いていない値を読ませることになる。
 function describeAmount(a, unit) {
   if (!a) return '?';
-  return a.percent > 0 ? `${a.percent}%` : `${a[unit] ?? 0}${unit === 'cores' ? 'コア' : ' GiB'}`;
+  if ('percent' in a) return `${a.percent}%`;
+  return `${a[unit] ?? 0}${unit === 'cores' ? 'コア' : ' GiB'}`;
 }
 
 function capsText() {
@@ -767,26 +762,6 @@ main.addEventListener('click', e => {
   openProfileModal(btn.dataset.resize);
 });
 
-// renderVMWarning は「実行はされたが、知っておくべきことがある」を出す。拒否では
-// ないので操作の邪魔はせず、閉じるまでは残る — 起動中 VM の合計を足し算している
-// 画面はどこにもないので、一度きりのステータス表示では気づかれない。
-//
-// textContent で入れる。文面はサーバが組み立てたものだが、そこには profile 名と
-// マシンの数値が混ざる。
-function renderVMWarning(text) {
-  const box = document.createElement('div');
-  box.className = 'notice';
-  const msg = document.createElement('span');
-  msg.textContent = text;
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.textContent = '×';
-  close.setAttribute('aria-label', '閉じる');
-  close.addEventListener('click', () => box.remove());
-  box.append(msg, close);
-  $('notice').replaceChildren(box);
-}
-
 // --- 予約の設定 -------------------------------------------------------------
 //
 // 設定できるのは「残す量」だけ。マシンの実装値は devhub が測るので、ここには
@@ -801,7 +776,7 @@ function openReserveModal() {
     cpu: { percent: 20 }, memory: { percent: 20 },
   };
   const fill = (v, unitId, valueId, absKey) => {
-    const isPct = v && v.percent > 0;
+    const isPct = v && 'percent' in v;
     $(unitId).value = isPct ? 'percent' : absKey;
     $(valueId).value = isPct ? v.percent : (v?.[absKey] ?? 0);
   };
@@ -942,35 +917,93 @@ main.addEventListener('click', e => {
   if (btn) openVMStop(btn.dataset.vmStop);
 });
 
-main.addEventListener('click', async e => {
-  const btn = e.target.closest('[data-vm-start]');
-  if (!btn) return;
-  const profile = btn.dataset.vmStart;
-  const was = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '起動中...';
+let vmStartTarget = '';
+
+const vmStartModal = DevhubModal.attach('vmStartOverlay', {
+  labelledBy: 'vmStartTitle',
+  canClose: () => !vmInFlight,
+  initialFocus: () => $('vmStartCancel'),
+  onClose: () => { vmStartTarget = ''; },
+});
+
+// startVM は confirm なしで投げ、サーバが「合計が上限を超える」と答えたときだけ
+// 確認に切り替える。ふつうの起動でモーダルは出ない。
+async function startVM(profile, btn) {
+  const was = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '起動中...'; }
   // colima start はイメージの取得を含むと分単位になる。サーバ側はリクエストの
   // 寿命を離れて走るので、タブを閉じても VM は上がりきる。
   setStatus(`${profile}: VM を起動中...`);
   try {
     const res = await postJson(`/api/containers/profiles/${encodeURIComponent(profile)}/start`, {});
-    const reloaded = await load();
-    // 合計の超過は拒否ではないので、起動は成功として扱ったうえで伝える。ステー
-    // タス行だと次の操作で消えてしまう長さなので、alert ではなく本文に出す。
-    if (res.warning) {
-      renderVMWarning(res.warning);
-      setStatus(`${profile}: 起動しました（注意あり）`, 'error');
-    } else {
-      setStatus(reloaded ? `${profile}: VM を起動しました`
-        : `${profile}: VM を起動しました（一覧を再読込できません）`, reloaded ? 'ok' : 'error');
+    if (res.confirm_required) {
+      renderMemoryQuestion(res.memory || {});
+      vmStartTarget = profile;
+      $('vmStartTitle').textContent = `Colima profile「${profile}」を起動`;
+      vmStartModal.open();
+      setStatus('確認待ち');
+      return;
     }
+    const reloaded = await load();
+    setStatus(reloaded ? `${profile}: VM を起動しました`
+      : `${profile}: VM を起動しました（一覧を再読込できません）`, reloaded ? 'ok' : 'error');
   } catch (err) {
     setStatus(`エラー: ${err.message}`, 'error');
   } finally {
     // load() が表を差し替えた後なら、これらのノードは既に切り離されている。
-    btn.disabled = false;
-    btn.textContent = was;
+    if (btn) { btn.disabled = false; btn.textContent = was; }
   }
+}
+
+// renderMemoryQuestion は足し算をそのまま見せる。ユーザーに検算できない計算を
+// 信じさせないため、依拠している数値を全部出す。
+function renderMemoryQuestion(m) {
+  const vms = (m.running_vms || [])
+    .map(v => `<li>${escapeHtml(v.name)} <span class="sub">${v.memory_gib} GiB</span></li>`).join('');
+  $('vmStartWarn').innerHTML =
+    `<div class="warn">起動すると、動いている VM に割り当てられたメモリの合計が
+      <strong>${m.total_gib} GiB</strong> になります（いま ${m.running_gib} GiB ＋ この VM ${m.adding_gib} GiB）。
+      1 VM あたりの上限 ${m.cap_gib} GiB を超えています（実装 ${m.host_gib} GiB）。
+      ${vms ? `<ul class="stop-list">${vms}</ul>` : ''}</div>`;
+}
+
+async function submitVMStart() {
+  const profile = vmStartTarget;
+  if (!profile) return;
+  const btn = $('vmStartSubmit');
+
+  vmInFlight = true;
+  btn.disabled = true;
+  $('vmStartCancel').disabled = true;
+  btn.textContent = '起動中...';
+  setStatus(`${profile}: VM を起動中...`);
+  try {
+    await postJson(`/api/containers/profiles/${encodeURIComponent(profile)}/start`, { confirm: true });
+    vmInFlight = false;
+    vmStartModal.close();
+    const reloaded = await load();
+    setStatus(reloaded ? `${profile}: VM を起動しました`
+      : `${profile}: VM を起動しました（一覧を再読込できません）`, reloaded ? 'ok' : 'error');
+  } catch (e) {
+    $('vmStartWarn').innerHTML = `<div class="warn">${escapeHtml(e.message)}</div>`;
+    setStatus(`エラー: ${e.message}`, 'error');
+  } finally {
+    vmInFlight = false;
+    btn.disabled = false;
+    btn.textContent = '起動する';
+    $('vmStartCancel').disabled = false;
+  }
+}
+
+$('vmStartCancel').addEventListener('click', () => vmStartModal.close());
+$('vmStartSubmit').addEventListener('click', submitVMStart);
+$('vmStartOverlay').addEventListener('click', e => {
+  if (e.target === $('vmStartOverlay')) vmStartModal.close();
+});
+
+main.addEventListener('click', e => {
+  const btn = e.target.closest('[data-vm-start]');
+  if (btn) startVM(btn.dataset.vmStart, btn);
 });
 
 // Per-container operations. There is no dry run here, unlike a resize: a resize

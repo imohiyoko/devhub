@@ -23,7 +23,8 @@ type fakeAdmin struct {
 	started []string
 	stopped []string
 	targets []container.Container
-	budget  container.Budget
+	limits  container.Limits
+	allocs  []container.Alloc
 	err     error
 	// actCtxErr is the state of the context the operation was handed. A
 	// cancelled one means it would be killed mid-flight.
@@ -70,10 +71,12 @@ func (f *fakeAdmin) ProfileTargets(context.Context, string) ([]container.Contain
 	return f.targets, f.err
 }
 
-// Budget deliberately ignores f.err: it is a read of host facts the caller
-// shows, not one of the operations a test is asserting refusals for.
-func (f *fakeAdmin) Budget(context.Context) (container.Budget, error) {
-	return f.budget, nil
+// Limits and Allocations deliberately ignore f.err: they are reads a caller
+// shows, not the operations a test is asserting refusals for.
+func (f *fakeAdmin) Limits() container.Limits { return f.limits }
+
+func (f *fakeAdmin) Allocations(context.Context) ([]container.Alloc, error) {
+	return f.allocs, nil
 }
 
 func post(t *testing.T, a *fakeAdmin, path string, body map[string]any) (int, map[string]any) {
@@ -420,48 +423,103 @@ func TestOverCapacityIsARefusal(t *testing.T) {
 	}
 }
 
-// TestStartWarnsWhenTheVMsTogetherOversubscribe. A warning, not a refusal: the
-// cap bounds one VM, and two being up at once is something the user may well
-// have meant. What they cannot do is notice it — nothing on the panel adds the
-// profiles up — so the answer says it once.
-func TestStartWarnsWhenTheVMsTogetherOversubscribe(t *testing.T) {
-	a := &fakeAdmin{budget: container.Budget{
-		Detected: true, HostMemBytes: 32 << 30, MemCapGiB: 25, RunningMemGiB: 36,
-	}}
-	code, out := post(t, a, "/api/containers/profiles/dev/start", map[string]any{})
+// TestStartAsksBeforeOversubscribing. This is the one thing a start can do that
+// the user cannot see coming: nothing on the panel adds the running profiles
+// up. So devhub does the sum and asks first — an answer that arrives after the
+// VM is up is a fact about a decision already made.
+//
+// rbl-verify (20 GiB) is running, default (16 GiB) is not, and the cap is 25.
+func TestStartAsksBeforeOversubscribing(t *testing.T) {
+	a := &fakeAdmin{
+		limits: container.Limits{Detected: true, HostMemBytes: 32 << 30, MemCapGiB: 25},
+		allocs: []container.Alloc{
+			{Name: "rbl-verify", MemGiB: 20, Running: true},
+			{Name: "default", MemGiB: 16},
+		},
+	}
+	code, out := post(t, a, "/api/containers/profiles/default/start", map[string]any{})
 
-	if code != http.StatusOK || out["ok"] != true {
-		t.Fatalf("the start was refused: code=%d out=%v", code, out)
+	if code != http.StatusOK {
+		t.Fatalf("code = %d (%v)", code, out)
 	}
-	if len(a.started) != 1 {
-		t.Fatalf("started = %v — the warning must not have blocked it", a.started)
+	if out["ok"] != false || out["confirm_required"] != true {
+		t.Fatalf("out = %v, want a confirmation request", out)
 	}
-	warning, _ := out["warning"].(string)
-	if warning == "" {
-		t.Fatal("no warning for 36 GiB allocated against a 25 GiB cap")
+	if len(a.started) != 0 {
+		t.Fatalf("started without confirmation: %v", a.started)
 	}
-	for _, want := range []string{"36 GiB", "25 GiB", "32 GiB"} {
-		if !strings.Contains(warning, want) {
-			t.Errorf("warning is missing %q:\n%s", want, warning)
+	// Every number the question rests on, so the user is not asked to trust an
+	// arithmetic they cannot check. 36 is the total *after* the start — the
+	// figure the old post-hoc warning could never report.
+	mem, _ := out["memory"].(map[string]any)
+	for k, want := range map[string]float64{
+		"adding_gib": 16, "running_gib": 20, "total_gib": 36, "cap_gib": 25, "host_gib": 32,
+	} {
+		if mem[k] != want {
+			t.Errorf("memory[%q] = %v, want %v", k, mem[k], want)
 		}
+	}
+	// And which VMs are holding the memory, so "stop one of them" is actionable.
+	vms, _ := mem["running_vms"].([]any)
+	if len(vms) != 1 {
+		t.Fatalf("running_vms = %v, want rbl-verify named", mem["running_vms"])
+	}
+	if first, _ := vms[0].(map[string]any); first["name"] != "rbl-verify" {
+		t.Errorf("running_vms = %v", vms)
+	}
+
+	// Confirmed, it acts.
+	b := &fakeAdmin{limits: a.limits, allocs: a.allocs}
+	code, out = post(t, b, "/api/containers/profiles/default/start", map[string]any{"confirm": true})
+	if code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("code=%d out=%v", code, out)
+	}
+	if len(b.started) != 1 {
+		t.Errorf("started = %v", b.started)
 	}
 }
 
-// TestStartIsQuietWhenItFits — and when devhub cannot measure the host at all,
-// since a warning computed from zeros would be about a machine nobody has.
-func TestStartIsQuietWhenItFits(t *testing.T) {
+// TestStartActsWhenThereIsNothingToAsk. The confirmation exists for one
+// situation; everywhere else it would be a dialog with no question in it.
+func TestStartActsWhenThereIsNothingToAsk(t *testing.T) {
+	fits := container.Limits{Detected: true, HostMemBytes: 32 << 30, MemCapGiB: 25}
 	for _, tc := range []struct {
 		name   string
-		budget container.Budget
+		limits container.Limits
+		allocs []container.Alloc
 	}{
-		{"within the cap", container.Budget{Detected: true, MemCapGiB: 25, RunningMemGiB: 20}},
-		{"exactly at the cap", container.Budget{Detected: true, MemCapGiB: 25, RunningMemGiB: 25}},
-		{"host unknown", container.Budget{Detected: false, MemCapGiB: 0, RunningMemGiB: 99}},
+		{"the total fits", fits, []container.Alloc{
+			{Name: "a", MemGiB: 8, Running: true}, {Name: "dev", MemGiB: 16}}},
+		{"exactly at the cap", fits, []container.Alloc{
+			{Name: "a", MemGiB: 9, Running: true}, {Name: "dev", MemGiB: 16}}},
+		// Already up: starting it adds nothing, so there is nothing to weigh.
+		{"already running", fits, []container.Alloc{
+			{Name: "a", MemGiB: 20, Running: true}, {Name: "dev", MemGiB: 16, Running: true}}},
+		// devhub cannot measure the host, so it has no arithmetic to offer.
+		{"host unknown", container.Limits{Detected: false}, []container.Alloc{
+			{Name: "a", MemGiB: 99, Running: true}, {Name: "dev", MemGiB: 99}}},
+		// A profile devhub cannot find: Start refuses it a moment later with a
+		// better message than a confirmation could give.
+		{"unknown profile", fits, []container.Alloc{{Name: "a", MemGiB: 99, Running: true}}},
+		// Over the per-VM cap by itself. Start refuses it outright, so asking
+		// first would put the user through a confirmation for an operation that
+		// was never going to run — the sequence resizeProfile avoids by
+		// evaluating CheckResize before it shows the stop list.
+		{"over the cap alone", fits, []container.Alloc{
+			{Name: "a", MemGiB: 20, Running: true}, {Name: "dev", MemGiB: 64}}},
+		// No colima answer at all — the sum is unavailable, not unsafe.
+		{"no allocations", fits, nil},
 	} {
-		a := &fakeAdmin{budget: tc.budget}
-		_, out := post(t, a, "/api/containers/profiles/dev/start", map[string]any{})
-		if w, _ := out["warning"].(string); w != "" {
-			t.Errorf("%s: warned anyway:\n%s", tc.name, w)
+		a := &fakeAdmin{limits: tc.limits, allocs: tc.allocs}
+		code, out := post(t, a, "/api/containers/profiles/dev/start", map[string]any{})
+		if code != http.StatusOK || out["ok"] != true {
+			t.Errorf("%s: code=%d out=%v", tc.name, code, out)
+		}
+		if out["confirm_required"] == true {
+			t.Errorf("%s: asked with nothing to ask about: %v", tc.name, out)
+		}
+		if len(a.started) != 1 {
+			t.Errorf("%s: started = %v", tc.name, a.started)
 		}
 	}
 }
