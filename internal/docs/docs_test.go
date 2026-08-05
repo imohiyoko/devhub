@@ -89,6 +89,12 @@ func TestSplitFrontMatterEdgeCases(t *testing.T) {
 		name, src, wantDesc, wantBodyHas string
 	}{
 		{"quoted", "---\ndescription: \"quoted value\"\n---\nbody", "quoted value", "body"},
+		// The pair has to wrap the value, not merely bookend it. Trimming the
+		// quote characters from both ends independently ate these.
+		{"apostrophe inside", "---\ndescription: use 'foo'\n---\nbody", "use 'foo'", "body"},
+		{"mismatched quotes", "---\ndescription: \"a'\n---\nbody", "\"a'", "body"},
+		// And only one pair comes off, so a quoted phrase keeps its own quotes.
+		{"doubly quoted", "---\ndescription: \"\"inner\"\"\n---\nbody", "\"inner\"", "body"},
 		{"folded onto next line", "---\ndescription: first\n  second\n---\nbody", "first second", "body"},
 		// The key line carries no value. Joining an empty first piece would put
 		// a space in front of the description — invisible in the docs list, and

@@ -105,7 +105,7 @@ func (c *Controller) HandleArchive(w http.ResponseWriter, r *http.Request) error
 			Instance: c.instance(),
 			Seq:      e.Seq,
 			TS:       storage.FormatLogTime(e.TS),
-			Surface:  e.Surface,
+			Surface:  string(e.Surface),
 			Method:   e.Method,
 			Path:     e.Path,
 			Status:   e.Status,
@@ -170,7 +170,7 @@ func parseFilter(q map[string][]string) (reqlog.Filter, error) {
 	get := func(k string) string { return firstValue(q, k) }
 
 	f := reqlog.Filter{
-		Surface:    get("surface"),
+		Surface:    reqlog.Surface(get("surface")),
 		Method:     get("method"),
 		PathPrefix: get("path"),
 		Approval:   get("approval"),
@@ -216,7 +216,7 @@ func parseArchiveFilter(q map[string][]string) (storage.RequestLogFilter, error)
 		return storage.RequestLogFilter{}, err
 	}
 	f := storage.RequestLogFilter{
-		Surface:    live.Surface,
+		Surface:    string(live.Surface),
 		Method:     live.Method,
 		PathPrefix: live.PathPrefix,
 		Approval:   live.Approval,
@@ -236,7 +236,7 @@ func parseArchiveFilter(q map[string][]string) (storage.RequestLogFilter, error)
 	return f, nil
 }
 
-func validateSurface(s string) error {
+func validateSurface(s reqlog.Surface) error {
 	switch s {
 	case "", reqlog.SurfaceAPI, reqlog.SurfaceAIAPI:
 		return nil

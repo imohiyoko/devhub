@@ -148,9 +148,18 @@ func splitFrontMatter(src string) (description, body string) {
 }
 
 // unquote strips one matching pair of surrounding quotes, the way a YAML scalar
-// is written. Trimming the quote characters from both ends independently would
-// mangle a description that merely contains them: `"a" and "b"` would come back
-// as `a" and "b`, and a value ending in an apostrophe would lose it.
+// is written.
+//
+// Trimming the quote characters from both ends independently — the obvious
+// strings.Trim — eats quotes that are part of the value. A description reading
+// `use 'foo'` came back as `use 'foo`, and `""` around a quoted phrase collapsed
+// to one level, losing the fact that the inner quotes were the value.
+//
+// Note what this does NOT fix: `"a" and "b"` still comes back as `a" and "b`,
+// because its first and last bytes really are a matching pair and nothing here
+// can tell that pair apart from a wrapping one. Writing that description
+// unquoted, or wrapped in single quotes, is the way through — YAML has the same
+// ambiguity, which is why it is written that way there too.
 func unquote(s string) string {
 	if len(s) >= 2 {
 		if q := s[0]; (q == '"' || q == '\'') && s[len(s)-1] == q {

@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
@@ -29,6 +28,12 @@ const (
 	// longer hint would blank the code column for exactly the errors this log
 	// exists to make searchable, and nothing would say why. The excerpt is still
 	// truncated to maxLoggedErrRunes; only the parse sees the rest.
+	//
+	// Raising the ceiling does not remove the failure, only the reach of it: a
+	// body past this cap still parses as nothing and still yields "" with no
+	// explanation. 8 KiB is far above any envelope devhub writes, so the case is
+	// out of reach rather than handled. Whoever lowers this number is walking
+	// back toward it.
 	maxParsedErrBytes = 8192
 )
 
@@ -94,7 +99,7 @@ const maxLoggedQueryRunes = 512
 // exactly or by prefix, and neither matches), but that is a property of the
 // gateway, not of this string, and the two would have to stay in step forever
 // for it to hold. Escaping both sides costs nothing and needs no such promise.
-func requestLabel(r *http.Request) (surface, path, query string) {
+func requestLabel(r *http.Request) (surface reqlog.Surface, path, query string) {
 	path, surface = r.URL.Path, reqlog.SurfaceAPI
 	if rest, ok := strings.CutPrefix(path, "/ai-api/"); ok {
 		surface, path = reqlog.SurfaceAIAPI, "/api/"+rest
@@ -130,13 +135,17 @@ func requestLabel(r *http.Request) (surface, path, query string) {
 // (U+0085 and the rest of C1) are no longer escaped; none of them is a
 // separator here, so none can forge a boundary.
 func labelEscape(s string) string {
+	const hex = "0123456789ABCDEF"
 	var b strings.Builder
 	for i := range len(s) {
-		if c := s[i]; c == '%' || c == '&' || c == '=' || c == '?' || c == ' ' || c < 0x20 || c == 0x7F {
-			fmt.Fprintf(&b, "%%%02X", c)
+		c := s[i]
+		if c == '%' || c == '&' || c == '=' || c == '?' || c == ' ' || c < 0x20 || c == 0x7F {
+			b.WriteByte('%')
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&0x0F])
 			continue
 		}
-		b.WriteByte(s[i])
+		b.WriteByte(c)
 	}
 	return b.String()
 }
