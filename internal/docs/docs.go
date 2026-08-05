@@ -133,5 +133,18 @@ func splitFrontMatter(src string) (description, body string) {
 			break
 		}
 	}
-	return strings.Trim(strings.Join(parts, " "), ` "'`), body
+	return unquote(strings.Join(parts, " ")), body
+}
+
+// unquote strips one matching pair of surrounding quotes, the way a YAML scalar
+// is written. Trimming the quote characters from both ends independently would
+// mangle a description that merely contains them: `"a" and "b"` would come back
+// as `a" and "b`, and a value ending in an apostrophe would lose it.
+func unquote(s string) string {
+	if len(s) >= 2 {
+		if q := s[0]; (q == '"' || q == '\'') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }

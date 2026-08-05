@@ -1,7 +1,6 @@
 package reqlog
 
 import (
-	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -165,18 +164,16 @@ func TestLimitTakesTheNewest(t *testing.T) {
 	}
 }
 
-func TestBeginClassifiesSurface(t *testing.T) {
-	for _, tc := range []struct{ path, want string }{
-		{"/api/ports", SurfaceAPI},
-		{"/ai-api/ports", SurfaceAIAPI},
-	} {
-		e := Begin(httptest.NewRequest("GET", tc.path, nil))
-		if e.Surface != tc.want {
-			t.Errorf("Begin(%q).Surface = %q, want %q", tc.path, e.Surface, tc.want)
-		}
-		if e.TS.IsZero() {
-			t.Errorf("Begin(%q) left TS unset", tc.path)
-		}
+// Begin records what it is handed and stamps the arrival time. Deciding the
+// surface, and what the recorded path should say, is the server's job
+// (requestLabel) — tested there, where the redaction lives.
+func TestBeginRecordsWhatItIsGiven(t *testing.T) {
+	e := Begin(SurfaceAIAPI, "POST", "/api/open?path=%2Ftmp")
+	if e.Surface != SurfaceAIAPI || e.Method != "POST" || e.Path != "/api/open?path=%2Ftmp" {
+		t.Errorf("Begin = %+v", e)
+	}
+	if e.TS.IsZero() {
+		t.Error("Begin left TS unset")
 	}
 }
 
@@ -184,7 +181,7 @@ func TestBeginClassifiesSurface(t *testing.T) {
 // no entry, and only Add makes one visible.
 func TestBeginDoesNotRecord(t *testing.T) {
 	rg := New(4, "run-1")
-	e := Begin(httptest.NewRequest("GET", "/api/x", nil))
+	e := Begin(SurfaceAPI, "GET", "/api/x")
 	if rg.Len() != 0 {
 		t.Fatal("Begin wrote to the ring")
 	}

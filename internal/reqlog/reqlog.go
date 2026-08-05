@@ -16,7 +16,6 @@ package reqlog
 
 import (
 	"cmp"
-	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -112,12 +111,14 @@ func (rg *Ring) Instance() string { return rg.instance }
 // Begin starts an entry for an arriving request. It does not touch the ring —
 // nothing is recorded until Add — so a handler that panics leaves no half-built
 // entry behind.
-func Begin(r *http.Request) *Entry {
-	surface := SurfaceAPI
-	if strings.HasPrefix(r.URL.Path, "/ai-api/") {
-		surface = SurfaceAIAPI
-	}
-	return &Entry{TS: time.Now(), Surface: surface, Method: r.Method, Path: r.URL.Path}
+//
+// It takes the pieces rather than the *http.Request because deciding what the
+// recorded path should say is not this package's call: the caller normalizes
+// the surface prefix away and redacts the query string before handing it over
+// (see the server's requestLabel). Keeping that here would put secret-key
+// heuristics inside the data structure.
+func Begin(surface, method, path string) *Entry {
+	return &Entry{TS: time.Now(), Surface: surface, Method: method, Path: path}
 }
 
 // Finish records the outcome. errExcerpt should be empty for a success; the
