@@ -78,6 +78,10 @@ func TestRequestLabel(t *testing.T) {
 		// sent — these two must not render alike.
 		{"/api/x%3Fa=1", reqlog.SurfaceAPI, "/api/x%3Fa%3D1"},
 		{"/api/x?a=1", reqlog.SurfaceAPI, "/api/x?a=1"},
+		// Nothing recoverable: the bytes are dropped rather than echoed into a
+		// log that gets archived, and the placeholder standing in for them
+		// carries no space — it sits mid-detail, where a space is a boundary.
+		{"/api/x?%zz", reqlog.SurfaceAPI, "/api/x?(unparseable-query)"},
 	} {
 		surface, path, query := requestLabel(httptest.NewRequest(http.MethodGet, tc.in, nil))
 		if got := path + query; surface != tc.wantSurface || got != tc.wantLabel {
