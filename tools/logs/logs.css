@@ -1,0 +1,125 @@
+/* logs — app shell + header chrome come from shared/ui/shell.css and
+   components.css; only what is specific to the log table lives here. */
+
+.status {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  min-width: 150px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status.ok { color: var(--green); }
+.status.error { color: var(--red); }
+
+.source-switch { display: flex; gap: 4px; }
+.source-switch .btn.active { border-color: var(--accent); color: var(--accent); }
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: rgba(22, 27, 34, 0.72);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.filters .spacer { flex: 1; }
+
+.filters input,
+.filters select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+  padding: 5px 8px;
+  outline: none;
+}
+.filters input:focus,
+.filters select:focus { border-color: var(--accent); }
+.filters input::placeholder { color: var(--muted); }
+.f-text { flex: 1 1 220px; min-width: 140px; }
+.f-path { flex: 0 1 190px; min-width: 120px; }
+.f-num { width: 92px; }
+
+main { flex: 1; overflow: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 12px;
+}
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+tbody td {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+  vertical-align: top;
+}
+tbody tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+.c-time { white-space: nowrap; width: 1%; }
+/* Date recedes, time leads: within one session every row shares a date, so the
+   clock is what distinguishes them. */
+.t-date { color: var(--muted); opacity: 0.65; }
+.t-time { color: var(--muted); }
+.c-surface, .c-method, .c-status, .c-dur, .c-approval { white-space: nowrap; width: 1%; }
+.c-dur { text-align: right; }
+/* The path is the column worth reading, so it takes the slack and truncates
+   rather than wrapping every row to two lines. */
+.c-path {
+  max-width: 0;
+  width: 34%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.c-detail { color: var(--muted); word-break: break-all; }
+
+.sf {
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+/* ai-api is the surface an agent uses, so it is the one to spot at a glance. */
+.sf-ai-api { background: rgba(88, 166, 255, 0.16); color: var(--accent); }
+.sf-api { background: var(--border); color: var(--muted); }
+
+.st-ok { color: var(--green); }
+.st-4xx { color: var(--yellow, #d29922); }
+.st-5xx { color: var(--red); }
+.code { color: var(--muted); font-size: 11px; }
+
+.ap {
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+}
+/* auto is the entry that exists nowhere else: an always-allow rule matched, so
+   nothing was shown and nobody was asked. Give it the strongest badge. */
+.ap-auto { background: rgba(210, 153, 34, 0.18); color: var(--yellow, #d29922); }
+.ap-manual { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+.ap-rejected { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+.ap-timeout { background: rgba(248, 81, 73, 0.15); color: var(--red); }
+
+.d-body { color: var(--text); opacity: 0.75; }
+.d-err { color: var(--red); opacity: 0.85; }
+
+.empty { padding: 28px 16px; text-align: center; }

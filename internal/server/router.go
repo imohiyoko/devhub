@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -11,15 +12,106 @@ import (
 
 	"github.com/imohiyoko/devhub/internal/approval"
 	"github.com/imohiyoko/devhub/internal/httpx"
+	"github.com/imohiyoko/devhub/internal/reqlog"
 )
 
-// ServeHTTP is the single security gate (host allowlist + API token). Once a
+// approvalTimeout is how long an /ai-api write blocks waiting for the user to
+// decide. It is named because the approval_timeout hint quotes it: the number a
+// caller is told to expect and the number it actually waits must be the same.
+// A var, not a const, only so tests can shorten it — nothing at runtime writes it.
+var approvalTimeout = 60 * time.Second
+
+// baseURL is devhub's own dashboard address, for hints that need to tell a
+// caller where the user should look. It uses the bound port, not the configured
+// one, so it stays right under a DEVHUB_PORT override.
+func (s *Server) baseURL() string { return fmt.Sprintf("http://localhost:%d", s.port) }
+
+// tokenlessAlternative explains, for a path that just failed the token check,
+// what a non-browser caller should do instead.
+//
+// Usually that is the same path under /ai-api. The approval endpoints are the
+// exception, and not an accidental one: they are reachable only with the token,
+// so a caller on /ai-api cannot approve its own pending write. Pointing them at
+// /ai-api/approval/… would send them to a 404 and imply a self-approval route
+// exists, which is exactly what must not exist.
+//
+// The bare /api/approval is matched too. It is not a route, so it reaches the
+// token check like any other unknown path — and a test that required the
+// trailing slash would hand it the generic hint, naming /ai-api/approval: the
+// one string this function exists to never produce.
+func (s *Server) tokenlessAlternative(apiPath string) string {
+	if apiPath == "/api/approval" || strings.HasPrefix(apiPath, "/api/approval/") {
+		return fmt.Sprintf("The approval endpoints require the token that devhub injects into its own pages, and have no /ai-api equivalent — a caller cannot approve its own request. Ask the user to decide at %s.", s.baseURL())
+	}
+	return fmt.Sprintf("/api needs the per-session token that devhub injects into its own pages. A local agent or CLI should call %s instead — same route, no token, though writes wait for the user to approve them.",
+		"/ai-api/"+strings.TrimPrefix(apiPath, "/api/"))
+}
+
+// markApproval records how an approval-gated request was decided. e is nil for
+// a request that is not being logged, which is the normal case for the log's own
+// endpoints — so this tolerates it rather than making every call site check.
+func markApproval(e *reqlog.Entry, outcome string) {
+	if e != nil {
+		e.Approval = outcome
+	}
+}
+
+// captureBody reads a request body, restores it for the downstream handler, and
+// returns a redacted single-line summary. The summary also lands on the log
+// entry, so the approval prompt and the log always show the same text and a body
+// is read and redacted exactly once.
+//
+// Redaction is summarizeApprovalBody's, unchanged: secret-bearing keys become
+// "***" before the value reaches either destination.
+func (s *Server) captureBody(r *http.Request, e *reqlog.Entry) string {
+	if r.Body == nil {
+		return ""
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes))
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	summary := summarizeApprovalBody(body)
+	if e != nil {
+		e.Body = summary
+	}
+	return summary
+}
+
+// ServeHTTP records the request, then serves it. Everything about how a request
+// is handled lives in serve; this wrapper only observes, so a change to the
+// security gate below cannot accidentally bypass the log.
+//
+// The entry is added after serve returns rather than deferred, because serve is
+// synchronous and a panic should not leave a half-finished entry claiming a
+// status the caller never received.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !loggablePath(r.URL.Path) {
+		s.serve(w, r, nil)
+		return
+	}
+	start := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	e := reqlog.Begin(r)
+
+	s.serve(rec, r, e)
+
+	e.Finish(rec.status, rec.bytes, rec.errExcerpt(), time.Since(start))
+	e.Code = rec.errCode()
+	s.rlog.Add(e)
+}
+
+// serve is the single security gate (host allowlist + API token). Once a
 // request clears the gate it is handed to the core gateway, which serves all
 // tools (registry-driven) plus GET /api/tools, and falls through to serveSystem
 // for the dashboard root and system endpoints.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+//
+// e is the log entry being built for this request, or nil when the request is
+// not logged. Only the approval outcome is recorded here — it is knowable
+// nowhere else — via markApproval, which tolerates a nil entry.
+func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) {
 	if !s.hostAllowed(r) {
-		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden").WithHint(
+			"host_not_allowed",
+			fmt.Sprintf("Address devhub as %s. A Host header naming anything other than localhost/127.0.0.1 on that port is rejected.", s.baseURL())))
 		return
 	}
 
@@ -30,7 +122,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// through a forwarder or a future bind-address change, a remote client
 	// must not receive a page with the API token baked in.
 	if !s.isLoopback(r) {
-		httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+		httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden").WithHint(
+			"not_loopback",
+			"devhub only answers connections from the same machine (127.0.0.1 / ::1). Run the client on this host; it cannot be reached over the network."))
 		return
 	}
 
@@ -46,7 +140,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Handle AI API endpoints: bypass regular API token validation, but enforce loopback connection.
 	if strings.HasPrefix(r.URL.Path, "/ai-api/") {
 		if !s.isLoopback(r) {
-			httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: loopback connection required"})
+			httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden: loopback connection required").WithHint(
+				"not_loopback",
+				"devhub only answers connections from the same machine (127.0.0.1 / ::1). Run the client on this host; it cannot be reached over the network."))
 			return
 		}
 		// Loopback alone does not prove the caller isn't a browser: a cross-origin
@@ -56,7 +152,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// with Sec-Fetch-Site, so reject those. Legit CLI/agent clients send no
 		// Sec-Fetch-Site and are unaffected.
 		if !sameOriginOrNonBrowser(r) {
-			httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: cross-site request"})
+			httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden: cross-site request").WithHint(
+				"cross_site",
+				"This request carried a cross-site Sec-Fetch-Site header, which is how a web page the user is merely visiting looks. Call /ai-api from a CLI or HTTP client that does not send Sec-Fetch-Site."))
 			return
 		}
 
@@ -74,31 +172,53 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Include a redacted preview of the request body so the approval
 			// prompt — and any always-allow rule derived from it — reflects WHAT
 			// is being written (e.g. setting `editor` to a shell command), not
-			// just the endpoint. Read then restore the body so the downstream
-			// handler still sees it; secret-bearing fields are masked so they
-			// never reach the prompt or a persisted rule.
-			if r.Body != nil {
-				body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes))
-				r.Body = io.NopCloser(bytes.NewReader(body))
+			// just the endpoint. The same summary is what the log stores, so a
+			// body is read, restored and redacted exactly once per request.
+			if summary := s.captureBody(r, e); summary != "" {
+				detail += " " + summary
+			} else {
 				// Always record a body component so the detail — and any always-allow
 				// rule derived from it — is specific to WHAT is written. A bodyless
 				// write must not collapse to a bare "METHOD /path" pattern that, under
 				// prefix matching, would then auto-approve a later write of ANY body to
 				// the same path (e.g. setting `editor` to a shell command).
-				if summary := summarizeApprovalBody(body); summary != "" {
-					detail += " " + summary
-				} else {
-					detail += " (no request body)"
-				}
+				detail += " (no request body)"
 			}
 
-			if !s.approvalMgr.ShouldAutoApprove(action, detail) {
+			if s.approvalMgr.ShouldAutoApprove(action, detail) {
+				// The rule matched, so nothing is shown and nobody is asked. Before
+				// this was logged it was devhub's one truly invisible operation:
+				// after a single "always allow", every later call through the rule
+				// happened with no record anywhere.
+				markApproval(e, reqlog.ApprovalAuto)
+			} else {
 				req := s.approvalMgr.Register(action, detail)
-				// Wait up to 60 seconds for approval.
-				decision, err := s.approvalMgr.Wait(req, 60*time.Second)
-				if err != nil || decision != approval.Approved {
-					httpx.WriteJSON(w, http.StatusForbidden, map[string]any{"error": "request rejected or timed out"})
+				decision, err := s.approvalMgr.Wait(req, approvalTimeout)
+				// Rejected and timed out demand opposite responses from a caller —
+				// give up versus try again — so they must not collapse into one
+				// answer. Wait returns an error only on the timeout path, which is
+				// what separates them here.
+				switch {
+				case err != nil:
+					// Wait already flipped the timed-out request to Rejected, so it
+					// is gone from the pending list: there is nothing left on the
+					// dashboard for the user to click. The way through is to send
+					// the request again and have someone waiting to approve it —
+					// telling the caller to "go approve the pending request" would
+					// send it hunting for something that no longer exists.
+					markApproval(e, reqlog.ApprovalTimeout)
+					httpx.WriteError(w, httpx.Errorf(http.StatusRequestTimeout, "approval timed out").WithHint(
+						"approval_timeout",
+						fmt.Sprintf("Nobody answered within %s, and the prompt is now gone. Ask the user to open %s and watch for the approval prompt, then send this request again.", approvalTimeout, s.baseURL())))
 					return
+				case decision != approval.Approved:
+					markApproval(e, reqlog.ApprovalRejected)
+					httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "approval rejected").WithHint(
+						"approval_rejected",
+						"The user declined this request. Do not retry it — ask the user what they want done instead."))
+					return
+				default:
+					markApproval(e, reqlog.ApprovalManual)
 				}
 			}
 		}
@@ -109,8 +229,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		if !s.apiAuthorized(r) {
-			httpx.WriteJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+			// The token lives in the served pages, so a caller that isn't a browser
+			// has no way to obtain it. Name the surface built for those callers
+			// rather than leaving them to guess that /api is not the only door.
+			httpx.WriteError(w, httpx.Errorf(http.StatusUnauthorized, "unauthorized").WithHint(
+				"missing_token", s.tokenlessAlternative(r.URL.Path)))
 			return
+		}
+		// Writes on this surface never reach the approval path, so this is the
+		// only chance to capture their body for the log. Without it the dashboard's
+		// own edits would appear in the log as a bare method and path.
+		if e != nil && !isRead(r.Method) {
+			s.captureBody(r, e)
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/approval/") {
 			s.handleApproval(w, r)

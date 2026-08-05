@@ -1,3 +1,7 @@
+---
+description: devhub env list / env stop がサーバー停止中でも動く理由（HTTP ではなく共有 SQLite の直読みと OS ポート kill）。CLI で環境を止めるときに読む。
+---
+
 # 0002. CLI からの環境停止は DB 直読み + OS kill で行う（HTTP を経由しない）
 
 - **Status**: Accepted (2026-07-05)

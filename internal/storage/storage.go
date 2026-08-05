@@ -97,6 +97,21 @@ func (s *Store) initSchema() error {
 		`CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT)`,
 		`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
 		`CREATE TABLE IF NOT EXISTS launches (launch_id TEXT PRIMARY KEY, data TEXT NOT NULL, launched_at TEXT)`,
+		// Archived request-log entries. The live log is in memory and dies with
+		// the process (internal/reqlog); only what a user explicitly keeps lands
+		// here, which is why nothing writes this table on the request path.
+		// UNIQUE(instance, seq) is what makes archiving idempotent.
+		`CREATE TABLE IF NOT EXISTS request_log_archive (
+			id INTEGER PRIMARY KEY,
+			instance TEXT NOT NULL,
+			seq INTEGER NOT NULL,
+			ts TEXT, surface TEXT, method TEXT, path TEXT,
+			status INTEGER, dur_ms INTEGER, bytes INTEGER,
+			approval TEXT, code TEXT, body TEXT, err TEXT,
+			archived_at TEXT,
+			UNIQUE(instance, seq)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_request_log_archive_ts ON request_log_archive (ts DESC)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
