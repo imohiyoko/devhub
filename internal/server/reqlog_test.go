@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -177,7 +180,9 @@ func TestLogMutationsAreRefusedOnAiAPI(t *testing.T) {
 		if m := decodeBodyMap(t, rr); m["code"] != "no_ai_api_route" {
 			t.Errorf("%s: code = %v, want no_ai_api_route", path, m["code"])
 		}
-		// The refusal must not have run the handler on the way to saying no.
+		// The handler must not have run on the way to saying no, and its effect
+		// is the only way to observe that: had clear run, the entry from the
+		// setup request above would be gone and only this refusal would remain.
 		if n := srv.rlog.Len(); n < 2 {
 			t.Errorf("%s: ring holds %d entries — the request was served, not refused", path, n)
 		}
@@ -245,6 +250,35 @@ func TestFlusherReachesHandlersThroughServeHTTP(t *testing.T) {
 
 	if !sawFlusher {
 		t.Error("the handler did not see an http.Flusher")
+	}
+}
+
+// hijackableWriter is a ResponseWriter that can be hijacked, which httptest's
+// recorder cannot. Without it the test below would pass for the wrong reason:
+// the controller would report ErrNotSupported because nothing underneath
+// supports hijacking, rather than because statusRecorder refuses to hand the
+// connection over.
+type hijackableWriter struct{ http.ResponseWriter }
+
+func (hijackableWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) { return nil, nil, nil }
+
+// The counterpart to the two above: Flush is forwarded on purpose, Hijack is
+// withheld on purpose.
+//
+// Forwarding it — by giving statusRecorder an Unwrap method, which is all it
+// would take — reads like harmless future-proofing. It is not. A hijacked
+// connection leaves this recorder behind: no WriteHeader, no Write, and the
+// ring ends up holding "200, 0 bytes" for a request that did something else
+// entirely. ErrNotSupported stops whoever adds streaming and makes them say
+// what the log should record; a fabricated entry stops no one, because nothing
+// about it looks wrong.
+//
+// This test fails the moment an Unwrap method appears. That is its purpose.
+func TestHijackIsRefusedRatherThanUnlogged(t *testing.T) {
+	rec := &statusRecorder{ResponseWriter: hijackableWriter{httptest.NewRecorder()}, status: http.StatusOK}
+
+	if _, _, err := http.NewResponseController(rec).Hijack(); !errors.Is(err, http.ErrNotSupported) {
+		t.Errorf("Hijack() error = %v, want http.ErrNotSupported — a hijacked request would be logged as a clean 200", err)
 	}
 }
 
