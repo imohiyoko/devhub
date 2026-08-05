@@ -162,6 +162,13 @@ Notes:
   match the shipped tools' conventions. API routes are declared explicitly in
   `Routes()`, so they may differ from the id (e.g. db-table serves `/api/db/*`).
 - An API-only tool (no `Page`) is valid — it simply has no dashboard card.
+- Every API route has to be classified against the exec ledger: list it in the
+  `Callers` of each `internal/execaudit` Surface it can reach, or in
+  `execFreeEndpoints` (`internal/execaudit/callers_test.go`) with the reason it
+  spawns nothing. `go test ./internal/execaudit` fails until one of the two is
+  true — that is the point. `Surface.Trigger` used to carry this as prose and
+  went stale twice; the field and the guard exist so the decision is recorded
+  rather than assumed.
 - Give each tool its own storage namespace with `core.Namespace(store, id)` so
   tools never collide on keys.
 
