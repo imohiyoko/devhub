@@ -96,7 +96,7 @@ func startServer(args []string) int {
 		return 1
 	}
 
-	srv, err := server.New(store, devhub.Assets, settings, *noBrowser, version)
+	srv, err := server.New(store, devhub.Assets, devhub.Docs, settings, *noBrowser, version)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "devhub:", err)
 		return 1
@@ -110,6 +110,11 @@ func startServer(args []string) int {
 
 // printVersion prints the stamped version/edition, shared by the -version
 // flag and the `version` subcommand.
+//
+// It closes with the docs pointer because -version is often the first (and
+// sometimes only) thing an agent runs against an unfamiliar binary — it skips
+// help entirely. One extra line is cheap next to an agent that never discovers
+// the documentation exists.
 func printVersion() {
 	fmt.Println("devhub", version)
 	fmt.Println("  edition:", platform.Edition(version))
@@ -119,4 +124,6 @@ func printVersion() {
 	if date != "" {
 		fmt.Println("  built: ", date)
 	}
+	fmt.Println()
+	fmt.Println(docsHint)
 }
