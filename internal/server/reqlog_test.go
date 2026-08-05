@@ -55,7 +55,11 @@ func TestLoggablePath(t *testing.T) {
 // one path filter covers both surfaces — the surface column already says which
 // door was used.
 func TestRequestLabel(t *testing.T) {
-	for _, tc := range []struct{ in, wantSurface, wantLabel string }{
+	for _, tc := range []struct {
+		in          string
+		wantSurface reqlog.Surface
+		wantLabel   string
+	}{
 		{"/api/ports", reqlog.SurfaceAPI, "/api/ports"},
 		{"/ai-api/git/status", reqlog.SurfaceAIAPI, "/api/git/status"},
 		// The case the log existed for and could not answer — and the reason the
@@ -509,5 +513,57 @@ func TestTwoServersOverOneStoreArchiveSeparately(t *testing.T) {
 	}
 	if len(got.Entries) != 2 {
 		t.Errorf("archive holds %d entries, want 2 — one server's request was swallowed", len(got.Entries))
+	}
+}
+
+// The approval detail is the string a user actually reads before deciding, and
+// the one an "always allow" rule is then stored from. It is assembled in
+// serve() — labelEscape(origPath) + redactedQuery — not by requestLabel, which
+// is what TestRequestLabel covers.
+//
+// The two share redactedQuery today, which makes this look like a restatement
+// of that test. It is not: nothing forces them to keep sharing it, and if they
+// ever diverge, the copy that matters is this one. A token echoed into a prompt
+// is a token echoed into a persisted rule.
+//
+// The path stays on /ai-api here rather than being normalized, because which
+// door a request came through is part of what is being approved.
+func TestApprovalDetailCarriesTheQueryWithSecretsMasked(t *testing.T) {
+	srv := newTestServer(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.do(http.MethodGet, "/ai-api/open?token=abc&path=%2Ftmp%2Fx", goodHost, "", "", nil)
+	}()
+
+	var detail string
+	deadline := time.Now().Add(2 * time.Second)
+	for detail == "" && time.Now().Before(deadline) {
+		for _, req := range srv.approvalMgr.ListPending() {
+			detail = req.Detail
+			if err := srv.approvalMgr.Respond(req.ID, approval.Rejected); err != nil {
+				t.Errorf("Respond: %v", err)
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	<-done
+
+	if detail == "" {
+		t.Fatal("no approval request appeared")
+	}
+	// Readable, not percent-encoded: this is the whole reason labelEscape is
+	// minimal rather than url.Values.Encode.
+	if !strings.Contains(detail, "?path=/tmp/x&") {
+		t.Errorf("detail lost the query or over-encoded it: %q", detail)
+	}
+	if !strings.Contains(detail, "token=***") {
+		t.Errorf("detail did not mask the token: %q", detail)
+	}
+	if strings.Contains(detail, "abc") {
+		t.Errorf("detail leaked the secret value: %q", detail)
+	}
+	if !strings.HasPrefix(detail, "GET /ai-api/open?") {
+		t.Errorf("detail should keep the surface it arrived on: %q", detail)
 	}
 }
