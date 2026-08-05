@@ -2,20 +2,24 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/imohiyoko/devhub/internal/reqlog"
 	"github.com/imohiyoko/devhub/internal/sanitize"
 )
 
 const (
-	// maxLoggedErrBytes caps how much of a failing response is kept in the log
+	// maxLoggedErrRunes caps how much of a failing response is kept in the log
 	// as readable text. A devhub error body is a small JSON envelope, so this is
 	// generous for the case it exists to serve; successful responses are never
 	// captured at all, because they include things like whole git diffs.
-	maxLoggedErrBytes = 512
+	maxLoggedErrRunes = 512
 
 	// maxParsedErrBytes caps how much is buffered for errCode to parse. It is
 	// larger than the display cap on purpose, and the two are separate on
@@ -25,16 +29,19 @@ const (
 	// Tying that to the display cap made the failure mode absurd — writing one
 	// longer hint would blank the code column for exactly the errors this log
 	// exists to make searchable, and nothing would say why. The excerpt is still
-	// truncated to maxLoggedErrBytes; only the parse sees the rest.
+	// truncated to maxLoggedErrRunes; only the parse sees the rest.
 	maxParsedErrBytes = 8192
 )
 
-// loggablePath reports whether a request should be recorded.
+// loggablePath reports whether a request should be recorded. It takes the
+// normalized path from requestLabel, so an /ai-api route arrives here already
+// rewritten to /api — every rule below is written once instead of twice, and a
+// rule added later cannot cover one surface while missing the other.
 //
-// Only the two API surfaces are logged. Page and asset requests are left out
-// deliberately: they are the bulk of the traffic, they say nothing about what
-// was done to the machine, and at a fixed ring size every one of them would
-// evict something that does.
+// Only the API is logged. Page and asset requests are left out deliberately:
+// they are the bulk of the traffic, they say nothing about what was done to the
+// machine, and at a fixed ring size every one of them would evict something
+// that does.
 //
 // Reading the log is excluded — searching it would otherwise fill it with
 // records of the searching, and each poll from an open /logs page would push
@@ -47,13 +54,13 @@ const (
 // emptied ring still holds the one line saying who emptied it.
 func loggablePath(path string) bool {
 	switch path {
-	case "/api/logs/clear", "/api/logs/archive", "/ai-api/logs/clear", "/ai-api/logs/archive":
+	case "/api/logs/clear", "/api/logs/archive":
 		return true
 	}
 	switch {
-	case strings.HasPrefix(path, "/api/logs"), strings.HasPrefix(path, "/ai-api/logs"):
+	case strings.HasPrefix(path, "/api/logs"):
 		return false
-	case strings.HasPrefix(path, "/api/"), strings.HasPrefix(path, "/ai-api/"):
+	case strings.HasPrefix(path, "/api/"):
 		return true
 	}
 	return false
@@ -78,13 +85,44 @@ const maxLoggedQueryRunes = 512
 // blind spot: the side-effecting GETs put their arguments there, so
 // "GET /api/open?path=/etc" was recorded as "GET /api/open" and the one fact
 // worth auditing — what was opened — was the one fact missing.
-func requestLabel(r *http.Request) (surface, label string) {
-	path := r.URL.Path
-	surface = reqlog.SurfaceAPI
+// The query is returned separately from the path so loggablePath can match on
+// the route alone; the recorded label is the two concatenated.
+func requestLabel(r *http.Request) (surface, path, query string) {
+	path, surface = r.URL.Path, reqlog.SurfaceAPI
 	if rest, ok := strings.CutPrefix(path, "/ai-api/"); ok {
 		surface, path = reqlog.SurfaceAIAPI, "/api/"+rest
 	}
-	return surface, path + redactedQuery(r.URL)
+	return surface, path, redactedQuery(r.URL)
+}
+
+// queryEscape percent-escapes only what would otherwise make two different
+// queries render as the same string: the separators, the escape character
+// itself, and anything unprintable.
+//
+// url.Values.Encode is the obvious choice and the wrong one here. This string's
+// primary reader is a human deciding whether to approve a request, and Encode
+// turns "path=/Users/me/work" into "path=%2FUsers%2Fme%2Fwork" and a Japanese
+// path into nine bytes per character — unreadable in the prompt, and unmatchable
+// by the log's free-text filter, which searches the stored text literally. What
+// the encoding has to guarantee is injectivity, not URL-safety: nothing parses
+// this back.
+//
+// Space is escaped for a reason beyond legibility. The detail this feeds is
+// matched by detailMatchesPattern, which anchors a rule at a space, so a value
+// containing a space could otherwise manufacture the boundary that lets one
+// always-allow rule cover a request the user never saw.
+func queryEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == '%' || r == '&' || r == '=' || r == ' ' || unicode.IsControl(r) {
+			for _, c := range []byte(string(r)) {
+				fmt.Fprintf(&b, "%%%02X", c)
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // redactedQuery renders a URL's query with secret-looking values masked, or ""
@@ -92,13 +130,17 @@ func requestLabel(r *http.Request) (surface, label string) {
 //
 // Values are masked by the same key heuristic the body summary uses, so a token
 // passed as a query parameter is hidden the same way one passed in a body is.
-// Re-encoding through url.Values sorts the keys, which also makes the string
-// deterministic — it is used as an approval detail, and a rule must not depend
-// on the order a client happened to send its parameters in.
+// Keys are sorted, which makes the string deterministic — it is used as an
+// approval detail, and a rule must not depend on the order a client happened to
+// send its parameters in.
 //
 // A malformed query yields whatever ParseQuery could recover; the unparseable
 // remainder is dropped rather than echoed, because "could not parse it" is not
 // a reason to copy unexamined bytes into a log that gets archived to disk.
+//
+// Known limit: two queries longer than the cap can truncate to the same string,
+// and an always-allow rule on one would then cover the other. No devhub route
+// takes a query that long, so this is recorded rather than solved.
 func redactedQuery(u *url.URL) string {
 	if u.RawQuery == "" {
 		return ""
@@ -107,14 +149,16 @@ func redactedQuery(u *url.URL) string {
 	if len(q) == 0 {
 		return "?(unparseable query)"
 	}
-	for k, vs := range q {
-		if sanitize.IsSecretKey(k) {
-			for i := range vs {
-				vs[i] = "***"
+	var parts []string
+	for _, k := range slices.Sorted(maps.Keys(q)) {
+		for _, v := range q[k] {
+			if sanitize.IsSecretKey(k) {
+				v = "***"
 			}
+			parts = append(parts, queryEscape(k)+"="+queryEscape(v))
 		}
 	}
-	return "?" + truncateRunes(q.Encode(), maxLoggedQueryRunes)
+	return "?" + truncateRunes(strings.Join(parts, "&"), maxLoggedQueryRunes)
 }
 
 // statusRecorder wraps a ResponseWriter to observe what was sent back: the
@@ -176,12 +220,14 @@ func (rec *statusRecorder) Unwrap() http.ResponseWriter { return rec.ResponseWri
 
 // errExcerpt returns the captured failure body as a single line, truncated to
 // the display cap, or "" for a success.
+//
+// The cut is by rune, not by byte. Error bodies carry messages from git, the
+// database drivers and the shell, so multibyte text is ordinary here — a byte
+// cut would leave a partial sequence that becomes U+FFFD on the way to SQLite.
+// truncateRunes also marks the cut, so a reader can tell the message ended from
+// one that was trimmed.
 func (rec *statusRecorder) errExcerpt() string {
-	s := strings.Join(strings.Fields(string(rec.errBody)), " ")
-	if len(s) > maxLoggedErrBytes {
-		s = s[:maxLoggedErrBytes]
-	}
-	return s
+	return truncateRunes(strings.Join(strings.Fields(string(rec.errBody)), " "), maxLoggedErrRunes)
 }
 
 // errCode pulls the stable error code out of a captured failure body. Reading it
