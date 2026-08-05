@@ -20,18 +20,25 @@ const (
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	t.Setenv("DEVHUB_API_TOKEN", testToken)
-	t.Setenv("DEVHUB_PORT", "")
 	st, err := storage.Open(t.TempDir(), devhub.Assets)
 	if err != nil {
 		t.Fatalf("storage.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	return newTestServerOn(t, st)
+}
+
+// newTestServerOn builds a server over a store the caller owns, so a test can
+// point two servers at the same one.
+func newTestServerOn(t *testing.T, st *storage.Store) *Server {
+	t.Helper()
+	t.Setenv("DEVHUB_API_TOKEN", testToken)
+	t.Setenv("DEVHUB_PORT", "")
 	settings, err := st.LoadSettings()
 	if err != nil {
 		t.Fatalf("LoadSettings: %v", err)
 	}
-	srv, err := New(st, devhub.Assets, settings, true, "test")
+	srv, err := New(st, devhub.Assets, devhub.Docs, settings, true, "test")
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
 	}

@@ -1,3 +1,7 @@
+---
+description: devhub コマンドの登録先が 1 つだけで最後の install が勝つ理由と、devhub doctor / status / stop がそれを可視化する仕組み。「どの devhub が動いているのか分からない」ときに読む。
+---
+
 # 0002. コマンドスロットは 1 つのまま、CLI（status/stop/doctor）で見える化する
 
 - **Status**: Accepted (2026-07-05)

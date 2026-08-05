@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>logs — devhub</title>
+<script src="/shared/rebuild-reload.js"></script>
+<script src="/shared/dom.js"></script>
+<script src="/shared/net.js"></script>
+<link rel="stylesheet" href="/shared/theme.css">
+<link rel="stylesheet" href="/shared/ui/shell.css">
+<link rel="stylesheet" href="/shared/ui/components.css">
+<link rel="stylesheet" href="/tools/logs/logs.css">
+</head>
+<body>
+
+<header>
+  <a href="/" class="hub-link">← Hub</a>
+  <div class="divider"></div>
+  <h1>logs</h1>
+  <div class="spacer"></div>
+  <div class="source-switch" role="group" aria-label="表示するログ">
+    <button class="btn btn-sm active" id="srcLive" aria-pressed="true">live</button>
+    <button class="btn btn-sm" id="srcArchive" aria-pressed="false">archive</button>
+  </div>
+  <button class="btn" id="refreshBtn">再読込</button>
+  <div class="status" id="status"></div>
+</header>
+
+<div class="filters">
+  <input class="f-text" id="fq" type="text" autocomplete="off" placeholder="パス / ボディ / エラーを検索">
+  <input class="f-path" id="fpath" type="text" autocomplete="off" placeholder="パス前方一致 (/api/git)">
+  <select id="fsurface">
+    <option value="">surface: すべて</option>
+    <option value="ai-api">ai-api（エージェント）</option>
+    <option value="api">api（devhub の画面）</option>
+  </select>
+  <select id="fmethod">
+    <option value="">method: すべて</option>
+    <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
+  </select>
+  <select id="fstatus">
+    <option value="">status: すべて</option>
+    <option value="200:399">2xx–3xx</option>
+    <option value="400:499">4xx</option>
+    <option value="500:599">5xx</option>
+    <option value="400:0">4xx 以上</option>
+  </select>
+  <select id="fapproval">
+    <option value="">approval: すべて</option>
+    <option value="auto">auto（無確認で通過）</option>
+    <option value="manual">manual</option>
+    <option value="rejected">rejected</option>
+    <option value="timeout">timeout</option>
+  </select>
+  <input class="f-num" id="fcode" type="text" autocomplete="off" placeholder="code">
+  <select id="fsince">
+    <option value="">期間: すべて</option>
+    <option value="-5m">直近 5 分</option>
+    <option value="-15m">直近 15 分</option>
+    <option value="-1h">直近 1 時間</option>
+    <option value="-6h">直近 6 時間</option>
+  </select>
+  <input class="f-num" id="fdur" type="text" autocomplete="off" placeholder="最小 ms">
+  <div class="spacer"></div>
+  <button class="btn btn-sm btn-primary" id="archiveBtn">この結果をアーカイブ</button>
+  <button class="btn btn-sm btn-danger" id="clearBtn">消去</button>
+</div>
+
+<main>
+  <table id="table">
+    <thead>
+      <tr>
+        <th class="c-time">時刻</th>
+        <th class="c-surface">surface</th>
+        <th class="c-method">method</th>
+        <th class="c-path">パス</th>
+        <th class="c-status">status</th>
+        <th class="c-dur">ms</th>
+        <th class="c-approval">approval</th>
+        <th class="c-detail">ボディ / エラー</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" hidden></div>
+</main>
+
+<script>
+// The live log is this process's ring buffer: it starts empty at every launch
+// and holds only the most recent entries. Anything worth keeping is copied to
+// the archive explicitly, which is the only part that survives a restart.
+let source = 'live';
+
+const el = id => document.getElementById(id);
+const statusEl = el('status');
+
+function setStatus(msg, kind) {
+  statusEl.textContent = msg;
+  statusEl.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+// filterParams reads the controls into the query string the API expects. The
+// same parameters work for both sources, so switching live/archive keeps the
+// current filter.
+function filterParams() {
+  const p = new URLSearchParams({ source });
+  const put = (k, v) => { if (v) p.set(k, v); };
+
+  put('q', el('fq').value.trim());
+  put('path', el('fpath').value.trim());
+  put('surface', el('fsurface').value);
+  put('method', el('fmethod').value);
+  put('approval', el('fapproval').value);
+  put('code', el('fcode').value.trim());
+  put('since', el('fsince').value);
+
+  const dur = el('fdur').value.trim();
+  if (dur) put('min_dur_ms', dur);
+
+  const [lo, hi] = (el('fstatus').value || '').split(':');
+  if (lo && lo !== '0') put('status_min', lo);
+  if (hi && hi !== '0') put('status_max', hi);
+
+  return p;
+}
+
+// The date matters as much as the time. Live entries are all from the current
+// run so they tend to share one day, but the archive accumulates across days and
+// restarts — a bare clock time there is ambiguous. The date is rendered muted so
+// the time still reads first when scanning a burst of requests.
+function fmtTime(ts) {
+  const d = new Date(ts);
+  if (isNaN(d)) return `<span class="t-time">${escapeHtml(ts)}</span>`;
+  const p = n => String(n).padStart(2, '0');
+  const date = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const time = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
+  return `<span class="t-date">${date}</span> <span class="t-time">${time}</span>`;
+}
+
+function statusClass(s) {
+  if (s >= 500) return 'st-5xx';
+  if (s >= 400) return 'st-4xx';
+  return 'st-ok';
+}
+
+// auto is highlighted because it is the case a user cannot otherwise see: an
+// always-allow rule matched, so nothing was shown and nobody was asked.
+function approvalCell(a) {
+  if (!a) return '';
+  return `<span class="ap ap-${escapeHtml(a)}">${escapeHtml(a)}</span>`;
+}
+
+// The stored excerpt is the raw failure body, which for a devhub error is the
+// whole {error, code, hint} envelope. Only the message belongs in the table:
+// the code already has its own column, and the hint is advice addressed to the
+// caller, not a fact about what happened — printed in full it buries every
+// error row under four lines of prose.
+function errText(raw) {
+  try {
+    const env = JSON.parse(raw);
+    if (env && typeof env.error === 'string') return env.error;
+  } catch { /* not JSON (truncated, or not from devhub): show it as-is */ }
+  return raw;
+}
+
+function detailCell(e) {
+  const parts = [];
+  if (e.body) parts.push(`<span class="d-body">${escapeHtml(e.body)}</span>`);
+  if (e.err) parts.push(`<span class="d-err" title="${escapeHtml(e.err)}">${escapeHtml(errText(e.err))}</span>`);
+  return parts.join(' ');
+}
+
+function render(entries) {
+  const rows = el('rows');
+  const empty = el('empty');
+
+  if (!entries.length) {
+    rows.innerHTML = '';
+    empty.textContent = source === 'live'
+      ? '記録がありません。devhub の API を叩くとここに並びます（ページ表示とアセット配信は記録しません）。'
+      : 'アーカイブは空です。live で絞り込んで「この結果をアーカイブ」を押すと残せます。';
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+
+  rows.innerHTML = entries.map(e => `
+    <tr>
+      <td class="c-time">${fmtTime(e.ts)}</td>
+      <td class="c-surface"><span class="sf sf-${escapeHtml(e.surface)}">${escapeHtml(e.surface)}</span></td>
+      <td class="c-method">${escapeHtml(e.method)}</td>
+      <td class="c-path" title="${escapeHtml(e.path)}">${escapeHtml(e.path)}</td>
+      <td class="c-status ${statusClass(e.status)}">${escapeHtml(e.status)}${
+        e.code ? ` <span class="code">${escapeHtml(e.code)}</span>` : ''}</td>
+      <td class="c-dur">${escapeHtml(e.dur_ms)}</td>
+      <td class="c-approval">${approvalCell(e.approval)}</td>
+      <td class="c-detail">${detailCell(e)}</td>
+    </tr>`).join('');
+}
+
+async function load() {
+  try {
+    setStatus('読み込み中…');
+    const data = await apiJson('/api/logs?' + filterParams());
+    render(data.entries || []);
+    const n = (data.entries || []).length;
+    setStatus(source === 'live'
+      ? `${n} 件表示 / 保持 ${data.total ?? 0} 件`
+      : `${n} 件`, 'ok');
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+async function archive() {
+  try {
+    const r = await postJson('/api/logs/archive?' + filterParams(), {});
+    const skipped = r.skipped ? `（${r.skipped} 件は登録済み）` : '';
+    setStatus(`${r.archived} 件をアーカイブしました${skipped}`, 'ok');
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+// The two sources delete different amounts, and the difference is not visible
+// from the button: live clears the whole ring regardless of the filter (it is a
+// ring — there is no partial reset), while archive deletes only what the filter
+// selects. Say which one is about to happen, in those words; "表示中" would read
+// as "the rows I can see" and be wrong in the direction that loses data.
+async function clear() {
+  const msg = source === 'live'
+    ? 'live ログを全件消去します（絞り込みは無視されます）。アーカイブ済みの分は残ります。'
+    : '絞り込み条件に一致するアーカイブを削除します。元に戻せません。';
+  if (!confirm(msg)) return;
+  try {
+    const r = await postJson('/api/logs/clear?' + filterParams(), {});
+    setStatus(source === 'live' ? '消去しました' : `${r.deleted} 件を削除しました`, 'ok');
+    load();
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+function setSource(next) {
+  source = next;
+  for (const [id, val] of [['srcLive', 'live'], ['srcArchive', 'archive']]) {
+    const b = el(id);
+    b.classList.toggle('active', val === next);
+    b.setAttribute('aria-pressed', String(val === next));
+  }
+  el('archiveBtn').disabled = next !== 'live';
+  load();
+}
+
+// Typing re-queries after a pause; the selects act immediately.
+let debounce;
+for (const id of ['fq', 'fpath', 'fcode', 'fdur']) {
+  el(id).addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(load, 250);
+  });
+}
+for (const id of ['fsurface', 'fmethod', 'fstatus', 'fapproval', 'fsince']) {
+  el(id).addEventListener('change', load);
+}
+el('srcLive').addEventListener('click', () => setSource('live'));
+el('srcArchive').addEventListener('click', () => setSource('archive'));
+el('refreshBtn').addEventListener('click', load);
+el('archiveBtn').addEventListener('click', archive);
+el('clearBtn').addEventListener('click', clear);
+
+load();
+</script>
+</body>
+</html>

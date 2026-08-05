@@ -1,3 +1,7 @@
+---
+description: 引数なしの devhub がサーバーを起動せずヘルプを表示する理由。devhub を実行したのに起動しない、と感じたときに読む。
+---
+
 # 0003. サーバー起動は明示的な `devhub start` にし、bare `devhub` はヘルプにする
 
 - **Status**: Accepted (2026-07-05)
