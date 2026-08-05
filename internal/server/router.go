@@ -84,14 +84,15 @@ func (s *Server) captureBody(r *http.Request, e *reqlog.Entry) string {
 // synchronous and a panic should not leave a half-finished entry claiming a
 // status the caller never received.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !loggablePath(r.URL.Path) {
+	// Normalize first, so loggablePath states each rule once for both surfaces.
+	surface, path, query := requestLabel(r)
+	if !loggablePath(path) {
 		s.serve(w, r, nil)
 		return
 	}
 	start := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	surface, path := requestLabel(r)
-	e := reqlog.Begin(surface, r.Method, path)
+	e := reqlog.Begin(surface, r.Method, path+query)
 
 	s.serve(rec, r, e)
 

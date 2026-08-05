@@ -15,13 +15,17 @@ import (
 	"github.com/imohiyoko/devhub/internal/storage"
 )
 
+// loggablePath sees the normalized path, so /ai-api never reaches it as such —
+// that is the point of normalizing before the check, and why each rule below
+// appears once rather than twice. TestRequestLabel covers the normalization
+// itself; TestAssetsAndLogEndpointAreNotLogged covers the two ends together.
 func TestLoggablePath(t *testing.T) {
 	for _, tc := range []struct {
 		path string
 		want bool
 	}{
 		{"/api/ports", true},
-		{"/ai-api/git/status", true},
+		{"/api/git/status", true},
 		// Not the API: pages and assets are the bulk of the traffic and say
 		// nothing about what was done to the machine.
 		{"/", false},
@@ -31,14 +35,11 @@ func TestLoggablePath(t *testing.T) {
 		// Reading the log is excluded, or searching would fill the log with
 		// records of the searching and evict what the page exists to show.
 		{"/api/logs", false},
-		{"/ai-api/logs", false},
 		// Changing it is not excluded. These are the two operations that alter
 		// the record itself, and leaving them out let a wipe pass for a quiet
 		// hour.
 		{"/api/logs/clear", true},
 		{"/api/logs/archive", true},
-		{"/ai-api/logs/clear", true},
-		{"/ai-api/logs/archive", true},
 	} {
 		if got := loggablePath(tc.path); got != tc.want {
 			t.Errorf("loggablePath(%q) = %v, want %v", tc.path, got, tc.want)
@@ -51,22 +52,79 @@ func TestLoggablePath(t *testing.T) {
 // one path filter covers both surfaces — the surface column already says which
 // door was used.
 func TestRequestLabel(t *testing.T) {
-	for _, tc := range []struct{ in, wantSurface, wantPath string }{
+	for _, tc := range []struct{ in, wantSurface, wantLabel string }{
 		{"/api/ports", reqlog.SurfaceAPI, "/api/ports"},
 		{"/ai-api/git/status", reqlog.SurfaceAIAPI, "/api/git/status"},
-		// The case the log existed for and could not answer.
-		{"/ai-api/open?path=%2Fetc", reqlog.SurfaceAIAPI, "/api/open?path=%2Fetc"},
+		// The case the log existed for and could not answer — and the reason the
+		// escaping is minimal: this is what a human reads in the prompt.
+		{"/ai-api/open?path=%2Fetc", reqlog.SurfaceAIAPI, "/api/open?path=/etc"},
+		{"/ai-api/open?path=%2FUsers%2Fme%2F%E4%BB%95%E4%BA%8B", reqlog.SurfaceAIAPI, "/api/open?path=/Users/me/仕事"},
 		// Sorted, so an always-allow rule cannot depend on send order.
 		{"/api/ls?b=2&a=1", reqlog.SurfaceAPI, "/api/ls?a=1&b=2"},
-		// Same key heuristic as the body summary: a token in the query is not a
-		// token the log gets to keep.
-		{"/api/x?token=abc&q=1", reqlog.SurfaceAPI, "/api/x?q=1&token=%2A%2A%2A"},
+		// Same key heuristic as the body summary — and the mask stays legible,
+		// so "show me the redacted ones" is a search rather than a guess.
+		{"/api/x?token=abc&q=1", reqlog.SurfaceAPI, "/api/x?q=1&token=***"},
+		// Injectivity: the separators and the escape character must not survive
+		// as themselves, or two different queries could render identically.
+		{"/api/x?a=1%26b=2", reqlog.SurfaceAPI, "/api/x?a=1%26b%3D2"},
+		{"/api/x?a=100%25", reqlog.SurfaceAPI, "/api/x?a=100%25"},
+		// A space would otherwise manufacture the boundary detailMatchesPattern
+		// anchors on, letting one rule cover a request the user never saw.
+		{"/api/x?a=b+c", reqlog.SurfaceAPI, "/api/x?a=b%20c"},
 	} {
-		surface, path := requestLabel(httptest.NewRequest(http.MethodGet, tc.in, nil))
-		if surface != tc.wantSurface || path != tc.wantPath {
-			t.Errorf("requestLabel(%q) = %q %q, want %q %q", tc.in, surface, path, tc.wantSurface, tc.wantPath)
+		surface, path, query := requestLabel(httptest.NewRequest(http.MethodGet, tc.in, nil))
+		if got := path + query; surface != tc.wantSurface || got != tc.wantLabel {
+			t.Errorf("requestLabel(%q) = %q %q, want %q %q", tc.in, surface, got, tc.wantSurface, tc.wantLabel)
 		}
 	}
+}
+
+// Recording the query only tightens anything if an always-allow rule cannot
+// reach across it. Two separate mechanisms hold that up, and they fail in
+// different ways, so both are asserted here through the real matcher.
+func TestARuleDoesNotReachAcrossAQueryString(t *testing.T) {
+	const action = "api_write"
+
+	// 1. A rule stored before queries were part of a detail. It diverges from a
+	// query-bearing detail at the character after the path — "(" against "?" —
+	// so it is not even a prefix of one.
+	t.Run("pre-existing rule", func(t *testing.T) {
+		srv := newTestServer(t)
+		srv.approvalMgr.AddAlwaysAllowRule(action, "GET /ai-api/open (no request body)")
+
+		for _, detail := range []string{
+			"GET /ai-api/open?path=/a (no request body)",
+			"GET /ai-api/open?path=/b (no request body)",
+		} {
+			if srv.approvalMgr.ShouldAutoApprove(action, detail) {
+				t.Errorf("still auto-approves %q", detail)
+			}
+		}
+		if !srv.approvalMgr.ShouldAutoApprove(action, "GET /ai-api/open (no request body)") {
+			t.Error("the rule no longer matches its own request")
+		}
+	})
+
+	// 2. A pattern that ends inside the query. Here prefix matching alone would
+	// say yes — "?path=/a" is a prefix of "?path=/abc" — and the only thing
+	// saying no is the space anchor in detailMatchesPattern. Approving one
+	// directory would otherwise approve every directory whose name extends it.
+	//
+	// This is also why the query escaping masks spaces: a value allowed to
+	// contain one could manufacture the boundary the anchor looks for.
+	t.Run("pattern ending inside the query", func(t *testing.T) {
+		srv := newTestServer(t)
+		srv.approvalMgr.AddAlwaysAllowRule(action, "GET /ai-api/open?path=/a")
+
+		for _, detail := range []string{
+			"GET /ai-api/open?path=/abc (no request body)",
+			"GET /ai-api/open?path=/a%20b (no request body)",
+		} {
+			if srv.approvalMgr.ShouldAutoApprove(action, detail) {
+				t.Errorf("a rule for /a reaches %q", detail)
+			}
+		}
+	})
 }
 
 // Clearing and archiving the log are withheld from /ai-api outright, not merely
