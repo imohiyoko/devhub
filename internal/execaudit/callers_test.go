@@ -79,9 +79,25 @@ package execaudit
 //     is 24 hand-written git entries — and it is why prefix claims are used only
 //     where the whole prefix genuinely shares one surface.
 //
+//   - Anything an execFreeEndpoints entry covers under a whole prefix — the
+//     same hole as above, inverted and more dangerous, because a new route
+//     lands pre-classified as inert rather than pre-classified as spawning.
+//     /api/db/* used to be one entry and would have absorbed a /api/db/backup
+//     that shelled out to mysqldump; it is now its six literal paths, and
+//     /api/approval/ likewise. The two prefixes left carry an identifier in the
+//     path and cannot be enumerated: /api/settings/tool/* and
+//     /api/approval/rules/*. Both name one handler, so the trade is small — but
+//     it is the same trade, and it is the reason a prefix here needs a reason.
+//
 //   - Non-HTTP callers. The "startup:" and "cli:" entries are free text and are
 //     checked for shape only; nothing verifies that the boot sequence or the CLI
 //     still reaches the surface.
+//
+//   - A phantom endpoint. isRequestPath treats any identifier spelled `path` as
+//     the request path, so an unrelated local compared against an "/api/…"
+//     literal would be scanned as a route. The failure is loud rather than
+//     silent — the phantom shows up as unaccounted and demands a
+//     classification — but the message would name an endpoint nobody serves.
 
 import (
 	"fmt"
@@ -109,21 +125,30 @@ import (
 // Callers or to this list — which is the whole point: the decision cannot be
 // skipped, only recorded.
 var execFreeEndpoints = map[string]string{
-	"/api/approval/*":           "the approval queue: lists, answers and stores pending requests. It gates the surfaces, it is not one.",
-	"/api/config":               "the git tool's repo/exclude configuration document, read and written through the store.",
-	"/api/db/*":                 "SQL against a configured MySQL/SQLite database. internal/controllers/database reaches no exec seam — it drives sql.DB.",
-	"/api/envs":                 "the environment definitions document, read and written through the store. Launching one is /api/envs/launch.",
-	"/api/envs/launches/remove": "drops a launch row from the registry. It explicitly never touches worktrees and never kills anything (see removeLaunch).",
-	"/api/info":                 "version, pid and build provenance, all held in memory.",
-	"/api/ls":                   "directory listing via os.ReadDir; the workspace annotations come from the store, not from git.",
-	"/api/ports/label":          "a per-port label kept in the store.",
-	"/api/ports/protected":      "the protected-port set kept in the store.",
-	"/api/rebuild/status":       "reads the outcome the last POST /api/rebuild recorded.",
-	"/api/repos":                "the configured repository list from the store (AllRepos), with no git invocation.",
-	"/api/settings":             "the settings document, read and written through the store.",
-	"/api/settings/tool/*":      "a tool's own namespaced settings document.",
-	"/api/tools":                "the dashboard nav, rendered by the gateway from the registry's Metas.",
-	"/api/update/status":        "asks GitHub whether a newer release exists. Network, not exec — the exec is in the apply.",
+	"/api/approval/always-allow": "records a standing answer for the approval queue. It gates the surfaces, it is not one.",
+	"/api/approval/pending":      "lists the requests waiting for an answer.",
+	"/api/approval/respond":      "answers one waiting request.",
+	"/api/approval/rules":        "lists the standing answers.",
+	"/api/approval/rules/*":      "deletes one standing answer by id. A prefix because the id is in the path.",
+	"/api/config":                "the git tool's repo/exclude configuration document, read and written through the store.",
+	"/api/db/delete":             "DELETE against a configured database. internal/controllers/database reaches no exec seam — it drives sql.DB.",
+	"/api/db/insert":             "INSERT against a configured database, through sql.DB.",
+	"/api/db/rows":               "SELECT against a configured database, through sql.DB.",
+	"/api/db/search":             "SELECT against a configured database, through sql.DB.",
+	"/api/db/tables":             "the table list of a configured database, through sql.DB.",
+	"/api/db/update":             "UPDATE against a configured database, through sql.DB.",
+	"/api/envs":                  "the environment definitions document, read and written through the store. Launching one is /api/envs/launch.",
+	"/api/envs/launches/remove":  "drops a launch row from the registry. It explicitly never touches worktrees and never kills anything (see removeLaunch).",
+	"/api/info":                  "version, pid and build provenance, all held in memory.",
+	"/api/ls":                    "directory listing via os.ReadDir; the workspace annotations come from the store, not from git.",
+	"/api/ports/label":           "a per-port label kept in the store.",
+	"/api/ports/protected":       "the protected-port set kept in the store.",
+	"/api/rebuild/status":        "reads the outcome the last POST /api/rebuild recorded.",
+	"/api/repos":                 "the configured repository list from the store (AllRepos), with no git invocation.",
+	"/api/settings":              "the settings document, read and written through the store.",
+	"/api/settings/tool/*":       "a tool's own namespaced settings document.",
+	"/api/tools":                 "the dashboard nav, rendered by the gateway from the registry's Metas.",
+	"/api/update/status":         "asks GitHub whether a newer release exists. Network, not exec — the exec is in the apply.",
 }
 
 // containerSeamPackage is the package whose exec seams share a precondition, and
@@ -136,7 +161,6 @@ const (
 
 // caller is one parsed Callers entry.
 type caller struct {
-	raw    string
 	method string // "" for startup:/cli: entries
 	path   string // without the trailing "*"
 	prefix bool
@@ -338,22 +362,73 @@ func declarationIsCurrent(key string, paths map[string]string, routes []endpoint
 // a decision instead of hiding one. The fix then is to give the key a method,
 // not to delete the check.
 func TestNoEndpointIsBothClaimedAndExecFree(t *testing.T) {
-	var both []string
-	for claim, surface := range claimedPaths(t) {
-		// Callers are "METHOD /path"; execFreeEndpoints is bare paths.
-		path := claim
-		if _, rest, found := strings.Cut(claim, " "); found {
-			path = strings.TrimSuffix(rest, "*")
-		}
-		if matchesAny(execFreeEndpoints, path) {
-			both = append(both, claim+"  (claimed by "+surface+")")
-		}
-	}
-	if len(both) > 0 {
-		slices.Sort(both)
+	if both := overlappingClaims(claimedPaths(t), execFreeEndpoints); len(both) > 0 {
 		t.Errorf("endpoint(s) both claimed by a Surface and declared exec-free:\n  %s\n"+
 			"An endpoint that reaches an exec seam is not exec-free. Drop the execFreeEndpoints entry.",
 			strings.Join(both, "\n  "))
+	}
+}
+
+// overlappingClaims is the comparison itself, separated from the scan so it can
+// be driven with fixtures. The first version of this could not be: it read the
+// real registry, found nothing, and passed — which it also did with the bug
+// TestOverlapDetectionSeesPrefixClaims now pins down.
+func overlappingClaims(claimed map[string][]string, execFree map[string]string) []string {
+	var both []string
+	for claim, surfaces := range claimed {
+		// A prefix claim is written "/api/x*", and execFree keys are bare
+		// paths, so the marker has to come off before they can be compared.
+		// Claims carry no method: claimedPaths keys on caller.key().
+		if !matchesAny(execFree, strings.TrimSuffix(claim, "*")) {
+			continue
+		}
+		list := slices.Clone(surfaces)
+		slices.Sort(list)
+		both = append(both, claim+"  (claimed by "+strings.Join(list, ", ")+")")
+	}
+	slices.Sort(both)
+	return both
+}
+
+// TestOverlapDetectionSeesPrefixClaims is a regression case for the comparison
+// above, which used to strip the "*" only inside a branch that could never run:
+// it split the claim on a space to drop a method that claimed keys do not carry.
+// Exact claims still matched, so the test passed — for the wrong reason, and
+// blind to exactly the shape it was added to catch.
+func TestOverlapDetectionSeesPrefixClaims(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		claimed  map[string][]string
+		execFree map[string]string
+		want     bool
+	}{
+		{"prefix claim over an exact exec-free path",
+			map[string][]string{"/api/containers/profiles*": {"colima-profile"}},
+			map[string]string{"/api/containers/profiles": "pretend"}, true},
+		{"exact claim over an exact exec-free path",
+			map[string][]string{"/api/info": {"rebuild"}},
+			map[string]string{"/api/info": "pretend"}, true},
+		{"exact claim under an exec-free prefix",
+			map[string][]string{"/api/db/backup": {"database"}},
+			map[string]string{"/api/db/*": "pretend"}, true},
+		{"no overlap",
+			map[string][]string{"/api/ports/kill": {"ports-kill"}},
+			map[string]string{"/api/info": "pretend"}, false},
+	} {
+		got := overlappingClaims(tc.claimed, tc.execFree)
+		if (len(got) > 0) != tc.want {
+			t.Errorf("%s: overlap = %v, want detected=%v", tc.name, got, tc.want)
+		}
+	}
+
+	// Every surface claiming an endpoint is named, not just whichever the map
+	// iteration reached last: an error that under-reports who is involved sends
+	// the reader to one of several ledgers at random.
+	got := overlappingClaims(
+		map[string][]string{"/api/containers/logs": {"containers-list", "container-runtime"}},
+		map[string]string{"/api/containers/logs": "pretend"})
+	if len(got) != 1 || !strings.Contains(got[0], "container-runtime, containers-list") {
+		t.Errorf("attribution = %v, want both surfaces named in sorted order", got)
 	}
 }
 
@@ -469,16 +544,23 @@ func servedPaths(routes, system []endpoint, literals map[string]bool) map[string
 	return paths
 }
 
-func claimedPaths(t *testing.T) map[string]string {
+// claimedPaths maps each claimed endpoint to every Surface that claims it.
+//
+// A slice rather than one ID because endpoints routinely have several: an
+// operation on a container reaches containers-control for what it spawns
+// itself, containers-list for the sweep that resolves it, and container-runtime
+// for the profile probe underneath that. Keeping only the last one seen would
+// make an error message point at one of them at random.
+func claimedPaths(t *testing.T) map[string][]string {
 	t.Helper()
-	out := map[string]string{}
+	out := map[string][]string{}
 	for _, s := range Registry {
 		for _, raw := range s.Callers {
 			c, err := parseCaller(raw)
 			if err != nil || !c.http {
 				continue
 			}
-			out[c.key()] = s.ID
+			out[c.key()] = append(out[c.key()], s.ID)
 		}
 	}
 	return out
@@ -486,7 +568,10 @@ func claimedPaths(t *testing.T) map[string]string {
 
 // matchesAny reports whether path is covered by one of the keys, where a key
 // ending in "*" covers everything with that prefix.
-func matchesAny(keys map[string]string, path string) bool {
+// matchesAny is generic in the value because it only ever reads keys, and the
+// two maps it is asked about carry different values: a reason for exec-free
+// paths, a list of surfaces for claims.
+func matchesAny[V any](keys map[string]V, path string) bool {
 	for k := range keys {
 		if pre, ok := strings.CutSuffix(k, "*"); ok {
 			if strings.HasPrefix(path, pre) {
@@ -529,7 +614,7 @@ func matchEndpoint(served []endpoint, c caller) (exact, viaPrefix bool) {
 // parseCaller parses one Callers entry. See the Callers doc comment in
 // registry.go for the grammar.
 func parseCaller(raw string) (caller, error) {
-	c := caller{raw: raw}
+	c := caller{}
 	switch {
 	case strings.HasPrefix(raw, "startup:"), strings.HasPrefix(raw, "cli:"):
 		_, rest, _ := strings.Cut(raw, ":")
@@ -641,19 +726,41 @@ func methodComparison(e ast.Expr) (string, bool) {
 // pathComparison matches `path == "/api/..."` or `r.URL.Path == "/api/..."` and
 // returns the literal.
 func pathComparison(e ast.Expr) (string, bool) {
-	bin, ok := e.(*ast.BinaryExpr)
-	if !ok || bin.Op != token.EQL {
+	if bin, ok := e.(*ast.BinaryExpr); ok && bin.Op == token.EQL {
+		for _, pair := range [2][2]ast.Expr{{bin.X, bin.Y}, {bin.Y, bin.X}} {
+			if !isRequestPath(pair[0]) {
+				continue
+			}
+			if s, ok := apiStringLit(pair[1]); ok {
+				return s, true
+			}
+		}
 		return "", false
 	}
-	for _, pair := range [2][2]ast.Expr{{bin.X, bin.Y}, {bin.Y, bin.X}} {
-		if !isRequestPath(pair[0]) {
-			continue
-		}
-		if s, ok := apiStringLit(pair[1]); ok {
-			return s, true
-		}
+	// The other spelling: strings.HasPrefix(path, "/api/…"), which is how a
+	// route carrying an identifier in the path is dispatched — DELETE
+	// /api/approval/rules/{id}. Reported with the trailing slash it matched on,
+	// so a declaration covering the prefix can find it.
+	return hasPrefixPath(e)
+}
+
+// hasPrefixPath matches `strings.HasPrefix(<request path>, "/api/…")`.
+func hasPrefixPath(e ast.Expr) (string, bool) {
+	call, ok := e.(*ast.CallExpr)
+	if !ok || len(call.Args) != 2 {
+		return "", false
 	}
-	return "", false
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "HasPrefix" {
+		return "", false
+	}
+	if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "strings" {
+		return "", false
+	}
+	if !isRequestPath(call.Args[0]) {
+		return "", false
+	}
+	return apiStringLit(call.Args[1])
 }
 
 // isRequestPath matches the two spellings the codebase uses for the request
