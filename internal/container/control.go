@@ -1,7 +1,7 @@
 package container
 
 // The operating half of the inventory: reading one container's logs, stopping
-// it, restarting it.
+// it, starting it again, restarting it.
 //
 // This is a third seam rather than more calls under inventory.go or
 // runtime_docker.go, and the reason is the same one that split those two — an
@@ -44,10 +44,10 @@ import (
 // container returns what is already on disk and exits.
 const logsTimeout = 20 * time.Second
 
-// controlOpTimeout bounds a stop or a restart. Long enough to cover a container
-// that uses its full stop grace period and then some, short enough that a
-// wedged daemon does not hold the request open indefinitely. A restart is one
-// command, so this covers the whole of it.
+// controlOpTimeout bounds a stop, a start or a restart. Long enough to cover a
+// container that uses its full stop grace period and then some, short enough
+// that a wedged daemon does not hold the request open indefinitely. A restart
+// is one command, so this covers the whole of it.
 const controlOpTimeout = 3 * time.Minute
 
 // maxLogTail caps how much history one request may ask for. Logs go into a JSON
@@ -82,7 +82,7 @@ var containerIDRe = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
 // ValidContainerID reports whether s can name a container.
 func ValidContainerID(s string) bool { return containerIDRe.MatchString(s) }
 
-// Operator runs the three operations the panel offers on one container.
+// Operator runs the operations the panel offers on one container.
 // Implementations bound themselves, as everything else in this package does:
 // the caller sets no deadline.
 type Operator interface {
@@ -91,6 +91,12 @@ type Operator interface {
 	// will, which is more useful than an error about a number.
 	Logs(ctx context.Context, src Source, id string, tail int) (string, error)
 	Stop(ctx context.Context, src Source, id string) error
+	// Start is the way back from Stop, and the reason Stop can be offered at
+	// all: a panel that only takes things down leaves the user in a terminal to
+	// undo it. It cannot create anything — the resolve ahead of it only names a
+	// container the engine is already reporting, which for a stopped one means
+	// a container that still exists on disk.
+	Start(ctx context.Context, src Source, id string) error
 	Restart(ctx context.Context, src Source, id string) error
 }
 
@@ -160,6 +166,10 @@ func (c *cliControl) Logs(ctx context.Context, src Source, id string, tail int) 
 
 func (c *cliControl) Stop(ctx context.Context, src Source, id string) error {
 	return c.act(ctx, src, "stop", id)
+}
+
+func (c *cliControl) Start(ctx context.Context, src Source, id string) error {
+	return c.act(ctx, src, "start", id)
 }
 
 func (c *cliControl) Restart(ctx context.Context, src Source, id string) error {

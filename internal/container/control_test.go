@@ -32,6 +32,9 @@ func TestControlArgv(t *testing.T) {
 		{"docker stop", dockerSrc(),
 			func(c *cliControl) error { return c.Stop(context.Background(), dockerSrc(), realID) },
 			[]string{"stop", realID}},
+		{"docker start", dockerSrc(),
+			func(c *cliControl) error { return c.Start(context.Background(), dockerSrc(), realID) },
+			[]string{"start", realID}},
 		{"docker restart", dockerSrc(),
 			func(c *cliControl) error { return c.Restart(context.Background(), dockerSrc(), realID) },
 			[]string{"restart", realID}},
@@ -51,6 +54,9 @@ func TestControlArgv(t *testing.T) {
 		{"containerd stop", containerdSrc(),
 			func(c *cliControl) error { return c.Stop(context.Background(), containerdSrc(), realID) },
 			[]string{"nerdctl", "--profile", "dev", "--", "stop", realID}},
+		{"containerd start", containerdSrc(),
+			func(c *cliControl) error { return c.Start(context.Background(), containerdSrc(), realID) },
+			[]string{"nerdctl", "--profile", "dev", "--", "start", realID}},
 	} {
 		runner := &fakeRunner{}
 		if err := tc.call(testControl(runner)); err != nil {

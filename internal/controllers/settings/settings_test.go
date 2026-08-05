@@ -63,3 +63,66 @@ func TestToolSettingsSeam(t *testing.T) {
 		t.Errorf("absent tool GET = %q, want empty object", got)
 	}
 }
+
+// TestVMReserveIsValidatedAtSaveTime. The value only matters later, when a
+// profile size is judged — so a malformed one that was accepted here would be a
+// saved setting the screen shows and the machine quietly ignores. It is stored
+// canonically for the same reason: the reader must not have to guess which of
+// two spellings was meant.
+func TestVMReserveIsValidatedAtSaveTime(t *testing.T) {
+	st, err := storage.Open(t.TempDir(), devhub.Assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c := New(st, core.Namespace(st, "tool"))
+
+	save := func(v any) error {
+		return c.HandlePost(httptest.NewRecorder(),
+			httptest.NewRequest("POST", "/api/settings", nil),
+			map[string]any{"vm_reserve": v})
+	}
+
+	if err := save(map[string]any{
+		"cpu":    map[string]any{"percent": float64(25)},
+		"memory": map[string]any{"gib": float64(8)},
+	}); err != nil {
+		t.Fatalf("a valid reserve was refused: %v", err)
+	}
+	settings, err := st.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := json.Marshal(settings["vm_reserve"])
+	if want := `{"cpu":{"percent":25},"memory":{"gib":8}}`; string(got) != want {
+		t.Errorf("stored = %s\nwant     %s", got, want)
+	}
+
+	for _, tc := range []struct {
+		name string
+		in   any
+	}{
+		{"both forms at once", map[string]any{
+			"cpu": map[string]any{"percent": float64(20), "cores": float64(2)}}},
+		{"percent out of range", map[string]any{
+			"cpu": map[string]any{"percent": float64(99)}}},
+		{"misspelled key", map[string]any{
+			"memory": map[string]any{"gigabytes": float64(8)}}},
+		{"not an object", "20%"},
+	} {
+		if err := save(tc.in); err == nil {
+			t.Errorf("%s: accepted", tc.name)
+		}
+	}
+
+	// A refused save must leave the previous value alone — otherwise a typo
+	// silently loosens the cap.
+	settings, err = st.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = json.Marshal(settings["vm_reserve"])
+	if want := `{"cpu":{"percent":25},"memory":{"gib":8}}`; string(got) != want {
+		t.Errorf("a rejected save changed the stored value: %s", got)
+	}
+}

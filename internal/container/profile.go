@@ -8,18 +8,21 @@ package container
 // aimed: nothing devhub does *on its own* moves a VM. A switch does not, a
 // status read does not, a page load does not — those all continue to report a
 // stopped profile and hand the user the command. What is new is an explicit
-// door, a request whose entire purpose is to create or resize a profile, and
-// nothing walks through it as a side effect of something else.
+// door, a request whose entire purpose is to move a profile, and nothing walks
+// through it as a side effect of something else.
 //
-// The distinction matters because the two operations here are not equally
+// The distinction matters because the operations here are not equally
 // dangerous:
 //
-//   - Create makes a VM that did not exist. There is nothing on it to lose, so
-//     the blast radius is zero.
+//   - Create makes a VM that did not exist, and Start brings an existing one
+//     back up. There is nothing on either to lose, so the blast radius is zero.
+//   - Stop takes down every container in the VM, including any belonging to
+//     environments that merely share the profile. Callers are expected to show
+//     the user what will stop before asking. It is recoverable — Start is the
+//     way back, which is the reason it exists.
 //   - Resize cannot be done to a running VM — Colima applies sizes at start —
-//     so it means stop and start, and every container in that VM goes down,
-//     including any belonging to environments that merely share the profile.
-//     Callers are expected to show the user what will stop before asking.
+//     so it is a Stop and a Start with the same blast radius as the Stop, and
+//     the same expectation of the caller.
 
 import (
 	"context"
@@ -32,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/imohiyoko/devhub/internal/hostspec"
 	"github.com/imohiyoko/devhub/internal/platform"
 )
 
@@ -65,7 +69,9 @@ var (
 	// exactly the way that matters — one can destroy running containers — so
 	// devhub will not silently upgrade one into the other.
 	ErrProfileExists = errors.New("その名前の Colima profile は既にあります")
-	// ErrProfileMissing is a resize aimed at nothing.
+	// ErrProfileMissing is an operation aimed at nothing. Start refuses with it
+	// rather than creating the profile: Create is the door for a VM that does
+	// not exist, and it takes a size.
 	ErrProfileMissing = errors.New("その Colima profile はありません")
 	// ErrDiskShrink is refused outright. Colima cannot shrink a disk in place;
 	// doing it means recreating the VM, which destroys every image and
@@ -79,6 +85,15 @@ var (
 	// names what goes down, and these do not go down, they stop existing as far
 	// as anything asking can tell.
 	ErrEngineChange = errors.New("engine の変更はできません（profile を作り直してください）")
+	// ErrOverHostCapacity is a size this machine cannot back. It is a refusal
+	// that only exists because devhub can now see the host (internal/hostspec);
+	// before that it passed the request through and colima failed — which for a
+	// resize means failing after the stop, leaving the VM down with neither the
+	// old size nor the new one.
+	//
+	// Disk is deliberately not part of it. Lima's images are sparse, so a
+	// profile declaring more disk than the volume has free is not a mistake.
+	ErrOverHostCapacity = errors.New("この Mac の容量を超えています")
 )
 
 // ProfileSpec is a profile devhub is being asked to create or resize. Sizes are
@@ -92,9 +107,9 @@ type ProfileSpec struct {
 	Engine    string // EngineDocker | EngineContainerd; "" means colima's default
 }
 
-// ProfileManager creates and resizes Colima profiles. It is an interface for
-// the same reason every other seam here is: so tests can assert the argv
-// without a machine that boots a VM in response.
+// ProfileManager creates, resizes, starts and stops Colima profiles. It is an
+// interface for the same reason every other seam here is: so tests can assert
+// the argv without a machine that boots a VM in response.
 type ProfileManager interface {
 	Create(ctx context.Context, spec ProfileSpec) error
 	Resize(ctx context.Context, spec ProfileSpec) error
@@ -103,6 +118,19 @@ type ProfileManager interface {
 	// anything: being told "the disk cannot shrink" after consenting to stop a
 	// VM full of containers is a worse sequence than being told first.
 	CheckResize(ctx context.Context, spec ProfileSpec) error
+	// Start brings an existing profile up at the size it already has. No spec,
+	// deliberately: a start is not a place to change anything, and colima keeps
+	// each profile's configuration, so passing no size flags is what makes the
+	// VM come back as it was rather than as whatever a caller happened to send.
+	Start(ctx context.Context, name string) error
+	// Stop shuts a profile down. Every container in the VM goes with it —
+	// including containers belonging to environments that merely share the
+	// profile — so callers are expected to show the user that list first, the
+	// same way they do for a resize.
+	Stop(ctx context.Context, name string) error
+	// Budget reports what the host has and what devhub will let one VM take, so
+	// a caller can show the cap before someone runs into it.
+	Budget(ctx context.Context) (Budget, error)
 }
 
 // adminRunner spawns the two commands that move a VM. It is its own seam, not
@@ -131,6 +159,17 @@ type colimaAdmin struct {
 	// know the name is free, resize must know the profile exists and how big it
 	// is now.
 	profiles ProfileLister
+	// host and reserve are the two halves of the capacity cap, kept apart
+	// because one is a fact and the other is a policy. host is what the machine
+	// physically has; reserve is how much of it the user wants left alone.
+	// Injected the way lookPath and darwin are, so a test can state a host
+	// without one.
+	//
+	// Both are funcs rather than values: the reserve is a live setting a user
+	// can change between two requests, and reading it at construction would
+	// mean the cap in force is the one that existed when devhub booted.
+	host    func() hostspec.Spec
+	reserve func() Reserve
 	// locks serialises operations naming the same profile. Without it two
 	// requests — two tabs, or an agent and a browser — both pass "does this
 	// exist" before either has started anything, and both then run colima
@@ -156,10 +195,18 @@ func (a *colimaAdmin) lock(name string) func() {
 	return mu.Unlock
 }
 
-func newColimaAdmin(profiles ProfileLister) *colimaAdmin {
+func newColimaAdmin(profiles ProfileLister, reserve func() Reserve) *colimaAdmin {
+	if reserve == nil {
+		reserve = DefaultReserve
+	}
 	return &colimaAdmin{
 		runner: adminRunner{}, lookPath: exec.LookPath,
 		darwin: platform.IsDarwin(), profiles: profiles,
+		// Detected once. The machine's cores and memory do not change while
+		// devhub is running, and re-running the syscalls per request would buy
+		// nothing but a chance to disagree with the figure already on screen.
+		host:    sync.OnceValue(func() hostspec.Spec { return hostspec.Detect(hostspec.ColimaDir()) }),
+		reserve: reserve,
 	}
 }
 
@@ -170,13 +217,16 @@ func (a *colimaAdmin) Create(ctx context.Context, spec ProfileSpec) error {
 	if err := a.check(spec); err != nil {
 		return err
 	}
+	if err := a.checkCapacity(spec.CPUs, spec.MemoryGiB); err != nil {
+		return err
+	}
 	defer a.lock(spec.Name)()
 	if _, found, err := a.find(ctx, spec.Name); err != nil {
 		return err
 	} else if found {
 		return ErrProfileExists
 	}
-	return a.start(ctx, spec)
+	return a.runStart(ctx, spec)
 }
 
 // Resize applies a new size to an existing profile. Colima only reads sizes at
@@ -199,11 +249,11 @@ func (a *colimaAdmin) Resize(ctx context.Context, spec ProfileSpec) error {
 		return err
 	}
 	if current.running() {
-		if err := a.stop(ctx, spec.Name); err != nil {
+		if err := a.runStop(ctx, spec.Name); err != nil {
 			return err
 		}
 	}
-	if err := a.start(ctx, spec); err != nil {
+	if err := a.runStart(ctx, spec); err != nil {
 		// The stop already happened, so this is the state the user is left in:
 		// nothing running, and the new size not applied. Whatever colima said
 		// about why, that is the part they need, along with the way back.
@@ -213,10 +263,187 @@ func (a *colimaAdmin) Resize(ctx context.Context, spec ProfileSpec) error {
 	return nil
 }
 
+// Budget is what the host has, what devhub will let one VM take, and what the
+// VMs that are already up have been given. Read-only: it is the answer a panel
+// needs to show a cap before someone runs into it, and the answer the sum
+// warning is computed from.
+//
+// Detected false means devhub cannot see this host, and every number below it
+// is meaningless. Callers show nothing rather than showing zeros.
+type Budget struct {
+	Detected      bool
+	HostCPUs      int
+	HostMemBytes  int64
+	FreeDiskBytes int64
+	CPUCap        int
+	MemCapGiB     int
+	Reserve       Reserve
+	// RunningCPUs and RunningMemGiB total what the currently running profiles
+	// were given. They can exceed the cap and often will: the cap bounds one VM,
+	// and nothing stops two from being up at once.
+	RunningCPUs   int
+	RunningMemGiB int
+}
+
+// Budget reports the host, the caps and what is already allocated.
+func (a *colimaAdmin) Budget(ctx context.Context) (Budget, error) {
+	b := a.budget()
+	list, err := a.profiles.Profiles(ctx)
+	if err != nil {
+		// The host half still stands — it came from syscalls, not from colima —
+		// and it is the half the caps are made of. A panel that lost the whole
+		// budget because colima was busy would stop showing the limit that is
+		// still in force.
+		return b, nil //nolint:nilerr // the host half is independent of colima
+	}
+	for _, p := range list {
+		if !p.running() {
+			continue
+		}
+		b.RunningCPUs += p.CPUs
+		b.RunningMemGiB += int(p.MemoryBytes / gibDivisor)
+	}
+	return b, nil
+}
+
+// budget is the host-and-policy half, with no colima call in it. Every refusal
+// below is computed from this.
+func (a *colimaAdmin) budget() Budget {
+	spec := a.hostSpec()
+	res := a.reserveOrDefault()
+	b := Budget{
+		Detected: spec.Detected, HostCPUs: spec.CPUs, HostMemBytes: spec.MemoryBytes,
+		FreeDiskBytes: spec.FreeDiskBytes, Reserve: res,
+	}
+	if spec.Detected {
+		b.CPUCap = res.CPUCap(spec.CPUs)
+		b.MemCapGiB = res.MemoryCapGiB(spec.MemoryBytes)
+	}
+	return b
+}
+
+func (a *colimaAdmin) hostSpec() hostspec.Spec {
+	if a.host == nil {
+		return hostspec.Spec{}
+	}
+	return a.host()
+}
+
+func (a *colimaAdmin) reserveOrDefault() Reserve {
+	if a.reserve == nil {
+		return DefaultReserve()
+	}
+	return a.reserve()
+}
+
+// checkCapacity refuses a size this machine cannot back. cpus and memGiB are
+// what the VM would end up with; zero means "not being set", which on a create
+// leaves colima's own default and on a start means the value was not reported.
+//
+// Deliberately not called from check(). check() also gates Stop, and a cap that
+// blocked stopping an over-sized VM would be the worst possible failure: the
+// user would be unable to reclaim the very memory the cap is protecting.
+func (a *colimaAdmin) checkCapacity(cpus, memGiB int) error {
+	b := a.budget()
+	if !b.Detected {
+		// devhub cannot see this host, so it has nothing to refuse with. The
+		// absolute limits in check() still apply.
+		return nil
+	}
+	var over []string
+	if cpus > b.CPUCap {
+		over = append(over, fmt.Sprintf("CPU %d（上限 %d / 実装 %d・予約 %s）",
+			cpus, b.CPUCap, b.HostCPUs, b.Reserve.CPU.describe("コア")))
+	}
+	if memGiB > b.MemCapGiB {
+		over = append(over, fmt.Sprintf("メモリ %d GiB（上限 %d GiB / 実装 %d GiB・予約 %s）",
+			memGiB, b.MemCapGiB, b.HostMemBytes/gibDivisor, b.Reserve.Memory.describe(" GiB")))
+	}
+	if len(over) == 0 {
+		return nil
+	}
+	// Both ways out, named. Raising the reserve can put an existing VM out of
+	// reach of this panel, and a refusal that does not say how to undo itself
+	// leaves the user stuck with a machine they can see and cannot start.
+	return fmt.Errorf("%w: %s\n（設定の予約を減らすか、端末の `colima start` を使ってください）",
+		ErrOverHostCapacity, strings.Join(over, " / "))
+}
+
 // CheckResize runs every refusal Resize would, and nothing else.
 func (a *colimaAdmin) CheckResize(ctx context.Context, spec ProfileSpec) error {
 	_, err := a.checkResize(ctx, spec)
 	return err
+}
+
+// Start brings an existing profile up. It passes no size flags at all, which is
+// what makes it a start rather than a resize: colima keeps each profile's
+// configuration, so an omitted flag means "the value this profile already has".
+//
+// A profile that is already running is left alone rather than restarted. The
+// caller asked for it to be up, it is up, and `colima start` on a running VM is
+// not free — treating this as "make it so" is the reading that cannot surprise
+// anyone with a stop they did not ask for.
+func (a *colimaAdmin) Start(ctx context.Context, name string) error {
+	spec := ProfileSpec{Name: name}
+	if err := a.check(spec); err != nil {
+		return err
+	}
+	defer a.lock(name)()
+
+	current, found, err := a.find(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		// Refused rather than created. Create is the door for a VM that does not
+		// exist, and it takes a size; starting a name that happens to be free
+		// would make a default-sized VM out of a typo.
+		return ErrProfileMissing
+	}
+	if current.running() {
+		return nil
+	}
+	// The size to judge is the profile's own, not the spec's — a start carries
+	// no sizes. This is the check the user asked for by name: a VM whose
+	// declared size no longer fits inside the cap does not come up from here.
+	//
+	// It runs after the "already running" answer above, so raising the reserve
+	// can never make a running VM look like something devhub must refuse.
+	if err := a.checkCapacity(current.CPUs, int(current.MemoryBytes/gibDivisor)); err != nil {
+		return err
+	}
+	return a.runStart(ctx, spec)
+}
+
+// Stop shuts a profile down, taking every container in it with it. Callers are
+// expected to have shown the user that list — Runtime.ProfileTargets answers
+// it — for the same reason a resize does: the containers that go down may
+// belong to an environment that merely shares the profile and is nowhere on the
+// screen the user is looking at.
+//
+// Unlike a resize this is recoverable by pressing the other button, which is
+// why there is no refusal here beyond "that profile does not exist": the VM's
+// disk, images and containers all survive a stop.
+func (a *colimaAdmin) Stop(ctx context.Context, name string) error {
+	if err := a.check(ProfileSpec{Name: name}); err != nil {
+		return err
+	}
+	defer a.lock(name)()
+
+	current, found, err := a.find(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrProfileMissing
+	}
+	if !current.running() {
+		// Already where the caller wanted it. Spawning `colima stop` against a
+		// stopped VM would only turn a satisfied request into an error message
+		// about a state nobody needs to fix.
+		return nil
+	}
+	return a.runStop(ctx, name)
 }
 
 // checkResize returns the profile as it stands, or the reason the resize is
@@ -224,6 +451,12 @@ func (a *colimaAdmin) CheckResize(ctx context.Context, spec ProfileSpec) error {
 // what is allowed — which is the whole point of offering a dry run.
 func (a *colimaAdmin) checkResize(ctx context.Context, spec ProfileSpec) (ColimaProfile, error) {
 	if err := a.check(spec); err != nil {
+		return ColimaProfile{}, err
+	}
+	// Before the lookup, and therefore long before the stop. A resize that
+	// colima was always going to reject must not get as far as taking the VM
+	// down — that is the state this whole refusal exists to prevent.
+	if err := a.checkCapacity(spec.CPUs, spec.MemoryGiB); err != nil {
 		return ColimaProfile{}, err
 	}
 	current, found, err := a.find(ctx, spec.Name)
@@ -330,10 +563,14 @@ func (a *colimaAdmin) find(ctx context.Context, name string) (ColimaProfile, boo
 	return ColimaProfile{}, false, nil
 }
 
-// start runs `colima start` with the requested size. Sizes are only passed when
-// asked for: omitting a flag leaves colima's own value, which on a resize means
-// the profile keeps what it had.
-func (a *colimaAdmin) start(ctx context.Context, spec ProfileSpec) error {
+// runStart runs `colima start` with the requested size. Sizes are only passed
+// when asked for: omitting a flag leaves colima's own value, which on a resize
+// means the profile keeps what it had.
+//
+// Named apart from the exported Start so the two cannot be confused at a
+// glance: this one takes a spec and does no checking, Start takes a name and
+// does all of it.
+func (a *colimaAdmin) runStart(ctx context.Context, spec ProfileSpec) error {
 	args := []string{"start", "--profile", spec.Name}
 	if spec.CPUs > 0 {
 		// `--cpus`, not `--cpu`: colima also has `--cpu-type`, so the short
@@ -352,10 +589,10 @@ func (a *colimaAdmin) start(ctx context.Context, spec ProfileSpec) error {
 	return a.run(ctx, args...)
 }
 
-// stop shuts the VM down gracefully. --force is deliberately not passed: it
+// runStop shuts the VM down gracefully. --force is deliberately not passed: it
 // skips the guest's shutdown, and the whole point of showing the user what will
 // stop is that those containers get a chance to exit cleanly.
-func (a *colimaAdmin) stop(ctx context.Context, name string) error {
+func (a *colimaAdmin) runStop(ctx context.Context, name string) error {
 	return a.run(ctx, "stop", "--profile", name)
 }
 

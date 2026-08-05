@@ -103,6 +103,7 @@ curl -s http://localhost:8765/ai-api/ports
 | POST | `/ai-api/git/...` | commit / push / worktree など | **要** |
 | POST | `/ai-api/ports/kill` | プロセスを kill | **要** |
 | POST | `/ai-api/containers/stop` | コンテナを停止 | **要** |
+| POST | `/ai-api/containers/profiles/{name}/stop` | Colima VM を停止（中のコンテナは全部落ちる） | **要** |
 | POST | `/ai-api/settings` | 設定を書き換え | **要** |
 
 ## サーバーが起動していないとき
