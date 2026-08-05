@@ -128,9 +128,14 @@ type ProfileManager interface {
 	// profile — so callers are expected to show the user that list first, the
 	// same way they do for a resize.
 	Stop(ctx context.Context, name string) error
-	// Budget reports what the host has and what devhub will let one VM take, so
-	// a caller can show the cap before someone runs into it.
-	Budget(ctx context.Context) (Budget, error)
+	// Limits reports what the host has and what devhub will let one VM take, so
+	// a caller can show the cap before someone runs into it. It asks colima
+	// nothing, so it costs nothing to call on a path that has already listed.
+	Limits() Limits
+	// Allocations reports the size each profile was given. Separate from Limits
+	// because it needs a `colima list` and Limits does not — a caller that only
+	// wants the cap should not pay for a sweep of the machine.
+	Allocations(ctx context.Context) ([]Alloc, error)
 }
 
 // adminRunner spawns the two commands that move a VM. It is its own seam, not
@@ -263,14 +268,15 @@ func (a *colimaAdmin) Resize(ctx context.Context, spec ProfileSpec) error {
 	return nil
 }
 
-// Budget is what the host has, what devhub will let one VM take, and what the
-// VMs that are already up have been given. Read-only: it is the answer a panel
-// needs to show a cap before someone runs into it, and the answer the sum
-// warning is computed from.
+// Limits is what the host has and what devhub will let one VM take. It is
+// derived from syscalls and a setting — nothing in it comes from colima — which
+// is why it is answerable without asking anything and why a caller can hold it
+// while colima is busy.
 //
 // Detected false means devhub cannot see this host, and every number below it
-// is meaningless. Callers show nothing rather than showing zeros.
-type Budget struct {
+// is meaningless. Callers show nothing rather than showing zeros, and no cap is
+// enforced.
+type Limits struct {
 	Detected      bool
 	HostCPUs      int
 	HostMemBytes  int64
@@ -278,48 +284,49 @@ type Budget struct {
 	CPUCap        int
 	MemCapGiB     int
 	Reserve       Reserve
-	// RunningCPUs and RunningMemGiB total what the currently running profiles
-	// were given. They can exceed the cap and often will: the cap bounds one VM,
-	// and nothing stops two from being up at once.
-	RunningCPUs   int
-	RunningMemGiB int
 }
 
-// Budget reports the host, the caps and what is already allocated.
-func (a *colimaAdmin) Budget(ctx context.Context) (Budget, error) {
-	b := a.budget()
-	list, err := a.profiles.Profiles(ctx)
-	if err != nil {
-		// The host half still stands — it came from syscalls, not from colima —
-		// and it is the half the caps are made of. A panel that lost the whole
-		// budget because colima was busy would stop showing the limit that is
-		// still in force.
-		return b, nil //nolint:nilerr // the host half is independent of colima
-	}
-	for _, p := range list {
-		if !p.running() {
-			continue
-		}
-		b.RunningCPUs += p.CPUs
-		b.RunningMemGiB += int(p.MemoryBytes / gibDivisor)
-	}
-	return b, nil
+// Alloc is one profile and the size it was given. Reported per profile rather
+// than pre-totalled because callers want different sums: the panel wants what
+// is running, and a start wants that plus the one profile it is about to bring
+// up.
+type Alloc struct {
+	Name    string
+	CPUs    int
+	MemGiB  int
+	Running bool
 }
 
-// budget is the host-and-policy half, with no colima call in it. Every refusal
-// below is computed from this.
-func (a *colimaAdmin) budget() Budget {
+// Limits reports the caps. No context, because there is nothing to cancel.
+func (a *colimaAdmin) Limits() Limits {
 	spec := a.hostSpec()
 	res := a.reserveOrDefault()
-	b := Budget{
+	l := Limits{
 		Detected: spec.Detected, HostCPUs: spec.CPUs, HostMemBytes: spec.MemoryBytes,
 		FreeDiskBytes: spec.FreeDiskBytes, Reserve: res,
 	}
 	if spec.Detected {
-		b.CPUCap = res.CPUCap(spec.CPUs)
-		b.MemCapGiB = res.MemoryCapGiB(spec.MemoryBytes)
+		l.CPUCap = res.CPUCap(spec.CPUs)
+		l.MemCapGiB = res.MemoryCapGiB(spec.MemoryBytes)
 	}
-	return b
+	return l
+}
+
+// Allocations reports what each profile was given. One `colima list`, and the
+// caller decides what to add up.
+func (a *colimaAdmin) Allocations(ctx context.Context) ([]Alloc, error) {
+	list, err := a.profiles.Profiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Alloc, 0, len(list))
+	for _, p := range list {
+		out = append(out, Alloc{
+			Name: p.Name, CPUs: p.CPUs,
+			MemGiB: int(p.MemoryBytes / gibDivisor), Running: p.running(),
+		})
+	}
+	return out, nil
 }
 
 func (a *colimaAdmin) hostSpec() hostspec.Spec {
@@ -344,7 +351,7 @@ func (a *colimaAdmin) reserveOrDefault() Reserve {
 // blocked stopping an over-sized VM would be the worst possible failure: the
 // user would be unable to reclaim the very memory the cap is protecting.
 func (a *colimaAdmin) checkCapacity(cpus, memGiB int) error {
-	b := a.budget()
+	b := a.Limits()
 	if !b.Detected {
 		// devhub cannot see this host, so it has nothing to refuse with. The
 		// absolute limits in check() still apply.
@@ -453,18 +460,26 @@ func (a *colimaAdmin) checkResize(ctx context.Context, spec ProfileSpec) (Colima
 	if err := a.check(spec); err != nil {
 		return ColimaProfile{}, err
 	}
-	// Before the lookup, and therefore long before the stop. A resize that
-	// colima was always going to reject must not get as far as taking the VM
-	// down — that is the state this whole refusal exists to prevent.
-	if err := a.checkCapacity(spec.CPUs, spec.MemoryGiB); err != nil {
-		return ColimaProfile{}, err
-	}
 	current, found, err := a.find(ctx, spec.Name)
 	if err != nil {
 		return ColimaProfile{}, err
 	}
 	if !found {
 		return ColimaProfile{}, ErrProfileMissing
+	}
+	// The size to judge is what the VM would end up with, not what the request
+	// named. An omitted size on a resize means "keep what this profile has" —
+	// the flag is simply not passed to `colima start` — so judging the request
+	// alone would let a 64 GiB VM be restarted at 64 GiB by asking only for a
+	// CPU change. Start refuses that same profile by its own size; the two
+	// paths have to agree.
+	//
+	// Still before the stop: Resize calls this first, and nothing below it runs
+	// a command. A resize that could never work must not get as far as taking
+	// the VM down.
+	if err := a.checkCapacity(sizeOr(spec.CPUs, current.CPUs),
+		sizeOr(spec.MemoryGiB, int(current.MemoryBytes/gibDivisor))); err != nil {
+		return current, err
 	}
 	if spec.DiskGiB > 0 {
 		// Refused when the current size is unknown, the same way the engine is
@@ -495,6 +510,21 @@ func (a *colimaAdmin) checkResize(ctx context.Context, spec ProfileSpec) (Colima
 		return current, fmt.Errorf("%w（現在 %s）", ErrEngineChange, have)
 	}
 	return current, nil
+}
+
+// sizeOr resolves what a resize would leave in place. Zero in a spec means the
+// flag is omitted, and colima then keeps the profile's own value — so the
+// current one is the honest answer, not zero.
+//
+// A current of zero (colima did not report it) yields zero, which checkCapacity
+// reads as "not being set" and lets through. That is the right way to fail
+// here: this refusal is recoverable by starting the profile again, unlike the
+// disk shrink above, which refuses outright when the current size is unknown.
+func sizeOr(asked, current int) int {
+	if asked > 0 {
+		return asked
+	}
+	return current
 }
 
 const gib = 1 << 30

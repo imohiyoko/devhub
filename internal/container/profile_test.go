@@ -631,7 +631,7 @@ func TestCapMessageNamesTheWayOut(t *testing.T) {
 // user who set "4 cores" must not be told about a percentage devhub computed,
 // because they would go looking for a setting they never touched.
 func TestCapUsesTheReserveAsWritten(t *testing.T) {
-	res := Reserve{CPU: Amount{Absolute: 4, Set: true}, Memory: Amount{Absolute: 8, Set: true}}
+	res := Reserve{CPU: Amount{Value: 4, Set: true}, Memory: Amount{Value: 8, Set: true}}
 	err := cappedAdmin(&fakeRunner{}, noProfiles(), res).
 		Create(context.Background(), ProfileSpec{Name: "big", CPUs: 7})
 	if err == nil {
@@ -710,41 +710,91 @@ func TestNoHostNoCap(t *testing.T) {
 	}
 }
 
-// TestBudgetTotalsTheRunningVMs. The sum can exceed the cap and often will —
-// the cap bounds one VM, and nothing stops two from being up — which is exactly
-// why a caller wants the figure.
-func TestBudgetTotalsTheRunningVMs(t *testing.T) {
+// TestAllocationsReportPerProfile. Not pre-totalled, because callers want
+// different sums: the panel wants what is running, and a start wants that plus
+// the one profile it is about to bring up.
+func TestAllocationsReportPerProfile(t *testing.T) {
 	lister := &fakeColima{profiles: []ColimaProfile{
 		{Name: "a", Status: "Running", CPUs: 8, MemoryBytes: 20 * gibDivisor},
-		{Name: "b", Status: "Running", CPUs: 6, MemoryBytes: 16 * gibDivisor},
-		{Name: "c", Status: "Stopped", CPUs: 4, MemoryBytes: 8 * gibDivisor},
+		{Name: "b", Status: "Stopped", CPUs: 6, MemoryBytes: 16 * gibDivisor},
 	}}
-	b, err := cappedAdmin(&fakeRunner{}, lister, DefaultReserve()).Budget(context.Background())
+	got, err := cappedAdmin(&fakeRunner{}, lister, DefaultReserve()).Allocations(context.Background())
 	if err != nil {
-		t.Fatalf("Budget: %v", err)
+		t.Fatalf("Allocations: %v", err)
 	}
-	if !b.Detected || b.CPUCap != 8 || b.MemCapGiB != 25 {
-		t.Errorf("budget = %+v, want the caps for a 10-core / 32 GiB host", b)
+	want := []Alloc{
+		{Name: "a", CPUs: 8, MemGiB: 20, Running: true},
+		{Name: "b", CPUs: 6, MemGiB: 16, Running: false},
 	}
-	// A stopped profile is allocated nothing: it is holding no memory.
-	if b.RunningCPUs != 14 || b.RunningMemGiB != 36 {
-		t.Errorf("running = %d CPU / %d GiB, want 14 / 36", b.RunningCPUs, b.RunningMemGiB)
+	if !slices.Equal(got, want) {
+		t.Errorf("allocations = %+v\nwant %+v", got, want)
 	}
 }
 
-// TestBudgetSurvivesAColimaFailure: the host half comes from syscalls, not from
-// colima, and it is the half the caps are made of. A panel that lost the limit
-// because colima was busy would stop showing a rule that is still in force.
-func TestBudgetSurvivesAColimaFailure(t *testing.T) {
+// TestLimitsAskColimaNothing is the property that lets the listing endpoint
+// carry the caps for free: Limits is syscalls and a setting, so a caller that
+// has already swept the machine pays nothing to add the limits to its answer.
+func TestLimitsAskColimaNothing(t *testing.T) {
 	lister := &fakeColima{err: ErrColimaMissing}
-	b, err := cappedAdmin(&fakeRunner{}, lister, DefaultReserve()).Budget(context.Background())
-	if err != nil {
-		t.Fatalf("Budget: %v", err)
+	l := cappedAdmin(&fakeRunner{}, lister, DefaultReserve()).Limits()
+	if !l.Detected || l.CPUCap != 8 || l.MemCapGiB != 25 {
+		t.Errorf("limits = %+v, want the caps for a 10-core / 32 GiB host even with colima broken", l)
 	}
-	if !b.Detected || b.CPUCap != 8 {
-		t.Errorf("budget = %+v, want the host half intact", b)
+}
+
+// TestResizeJudgesTheResultingSize, not the request. An omitted size on a
+// resize is not "colima's default" — the flag is simply not passed, so the
+// profile keeps what it has. Judging the request alone let a 64 GiB VM be
+// restarted at 64 GiB by asking only for a CPU change, while Start refused the
+// same profile by its own size. The two paths have to agree.
+func TestResizeJudgesTheResultingSize(t *testing.T) {
+	// 64 GiB against a 25 GiB cap, and the request never mentions memory.
+	lister := &fakeColima{profiles: []ColimaProfile{
+		{Name: "hog", Status: "Running", CPUs: 4, MemoryBytes: 64 * gibDivisor, DiskBytes: 100 * gib},
+	}}
+	runner := &fakeRunner{}
+	err := cappedAdmin(runner, lister, DefaultReserve()).
+		Resize(context.Background(), ProfileSpec{Name: "hog", CPUs: 2})
+
+	if !errors.Is(err, ErrOverHostCapacity) {
+		t.Fatalf("err = %v, want ErrOverHostCapacity", err)
 	}
-	if b.RunningCPUs != 0 {
-		t.Errorf("running = %d, want 0 when colima could not be asked", b.RunningCPUs)
+	if len(runner.calls) != 0 {
+		t.Fatalf("ran %v — the VM was taken down for a resize that leaves it over the cap", runner.calls)
+	}
+	// The dry run refuses it too, so the user is never shown a stop list for a
+	// resize that cannot happen.
+	if err := cappedAdmin(&fakeRunner{}, lister, DefaultReserve()).
+		CheckResize(context.Background(), ProfileSpec{Name: "hog", CPUs: 2}); !errors.Is(err, ErrOverHostCapacity) {
+		t.Errorf("dry run: err = %v, want ErrOverHostCapacity", err)
+	}
+
+	// Shrinking into the cap is the way out, and it must still work — otherwise
+	// an over-sized VM could never be brought back under the limit.
+	runner2 := &fakeRunner{}
+	if err := cappedAdmin(runner2, lister, DefaultReserve()).
+		Resize(context.Background(), ProfileSpec{Name: "hog", MemoryGiB: 20}); err != nil {
+		t.Errorf("could not resize down into the cap: %v", err)
+	}
+	if len(runner2.calls) != 2 {
+		t.Errorf("calls = %v, want stop then start", runner2.calls)
+	}
+}
+
+// TestResizeLetsAnUnknownCurrentSizeThrough. colima not reporting a size is
+// not evidence the VM is too big, and this refusal is recoverable by starting
+// the profile again — unlike the disk shrink, which refuses outright when the
+// current size is unknown because it is not.
+func TestResizeLetsAnUnknownCurrentSizeThrough(t *testing.T) {
+	lister := &fakeColima{profiles: []ColimaProfile{
+		{Name: "dev", Status: "Stopped", DiskBytes: 100 * gib}, // no CPUs, no memory
+	}}
+	runner := &fakeRunner{}
+	if err := cappedAdmin(runner, lister, DefaultReserve()).
+		Resize(context.Background(), ProfileSpec{Name: "dev", CPUs: 2}); err != nil {
+		t.Fatalf("refused on a size colima did not report: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Errorf("calls = %v, want the start", runner.calls)
 	}
 }
