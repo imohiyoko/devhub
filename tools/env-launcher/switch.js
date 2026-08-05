@@ -10,6 +10,14 @@ let switchState = { environments: [] };
 // set of stops and have another one run.
 let pendingSwitch = null;
 
+// onClose に置くのが要点。閉じる経路は「閉じる」ボタンだけではなく Escape も
+// あるので、pendingSwitch の破棄を close 関数の側に書くと Escape で確認済みの
+// プランが残り、次に開いた画面と食い違ったまま適用できてしまう。
+const switchModal = DevhubModal.attach('switchModalOverlay', {
+  labelledBy: 'switchModalTitle',
+  onClose: () => { pendingSwitch = null; },
+});
+
 // State is fetched on load and after an apply, never polled: probing a
 // compose_service shells out to `docker compose ps`, so a background poll
 // would spawn processes forever.
@@ -89,12 +97,11 @@ function showSwitchPlan(plan, title) {
   apply.disabled = !stops.length && !starts.length;
   apply.textContent = stops.length ? `${stops.length}件を停止して切り替える` : '起動する';
   apply.className = stops.length ? 'btn btn-danger' : 'btn btn-success';
-  document.getElementById('switchModalOverlay').classList.add('open');
+  switchModal.open();
 }
 
 function closeSwitchModal() {
-  document.getElementById('switchModalOverlay').classList.remove('open');
-  pendingSwitch = null;
+  switchModal.close();
 }
 
 // --- apply ---

@@ -100,6 +100,9 @@ function unitsOf(env) {
   return isV2Document() ? componentsOf(env) : (Array.isArray(env && env.processes) ? env.processes : []);
 }
 
+// Escape・Tab の閉じ込め・フォーカス復帰・role/aria は shared/modal.js が持つ。
+const processModal = DevhubModal.attach('processModalOverlay', { labelledBy: 'processModalTitle' });
+
 async function openProcessModal(envIndex, procIndex = -1) {
   currentEnvIndex = envIndex;
   currentProcIndex = procIndex;
@@ -147,11 +150,11 @@ async function openProcessModal(envIndex, procIndex = -1) {
   document.getElementById('bulkEnvArea').style.display = 'none';
   document.getElementById('bulkEnvText').value = '';
   renderEnvVars();
-  document.getElementById('processModalOverlay').classList.add('open');
+  processModal.open();
 }
 
 function closeProcessModal() {
-  document.getElementById('processModalOverlay').classList.remove('open');
+  processModal.close();
 }
 
 // readHostProcessFields validates and collects everything a host process needs.

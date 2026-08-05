@@ -7,6 +7,7 @@
 <script src="/shared/rebuild-reload.js"></script>
 <script src="/shared/dom.js"></script>
 <script src="/shared/net.js"></script>
+<script src="/shared/modal.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <link rel="stylesheet" href="/shared/ui/shell.css">
 <link rel="stylesheet" href="/shared/ui/components.css">
@@ -223,7 +224,9 @@ main { padding: 16px; overflow-y: auto; }
 </main>
 
 <div class="modal-overlay" id="logsOverlay">
-  <div class="modal logs-modal" role="dialog" aria-modal="true" aria-labelledby="logsTitle">
+  <!-- role / aria-modal / aria-labelledby are applied by DevhubModal.attach
+       (shared/modal.js), which owns the dialog contract for every devhub modal. -->
+  <div class="modal logs-modal">
     <div class="modal-header" id="logsTitle"></div>
     <pre class="logs-body" id="logsBody" tabindex="0"></pre>
     <div class="modal-footer"><button class="btn" id="logsClose">閉じる</button></div>
@@ -231,7 +234,7 @@ main { padding: 16px; overflow-y: auto; }
 </div>
 
 <div class="modal-overlay" id="profileModalOverlay">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
+  <div class="modal">
     <div class="modal-header" id="profileModalTitle">Colima profile を作成</div>
     <div class="modal-body">
       <div id="profileWarn"></div>
@@ -426,6 +429,18 @@ function render() {
 let resizeTarget = '';   // '' なら作成、profile 名ならサイズ変更
 let inFlight = false;    // VM を動かしている最中。閉じても止まらないので閉じさせない
 
+// canClose が「操作中は閉じない」の唯一の判断になる。Escape・キャンセルボタン・
+// 背景クリックはどれも close() を通るので、経路ごとに同じ条件を書き直す必要が
+// なく、片方だけ抜け道になることもない。
+const profileModal = DevhubModal.attach('profileModalOverlay', {
+  labelledBy: 'profileModalTitle',
+  canClose: () => !inFlight,
+  // 作成時だけ名前欄へ。サイズ変更では名前欄は disabled なので、共通ヘルパの
+  // 既定（最初の操作できる要素）に任せる。
+  initialFocus: () => (resizeTarget ? null : $('pfName')),
+  onClose: () => { resizeTarget = ''; },
+});
+
 function openProfileModal(profile) {
   resizeTarget = profile || '';
   const src = profile ? sources.find(s => s.profile === profile) : null;
@@ -457,14 +472,11 @@ function openProfileModal(profile) {
   $('profileHint').textContent = profile
     ? 'colima はサイズを起動時にしか読まないので、VM の停止と再起動になります。ディスクの縮小はできません（VM の作り直しになるため）。'
     : '空欄は colima の既定値のままにします。';
-  $('profileModalOverlay').classList.add('open');
-  if (!profile) $('pfName').focus();
+  profileModal.open();
 }
 
 function closeProfileModal() {
-  if (inFlight) return;
-  $('profileModalOverlay').classList.remove('open');
-  resizeTarget = '';
+  profileModal.close();
 }
 
 function profileBody(confirm) {
@@ -631,29 +643,24 @@ main.addEventListener('click', async e => {
   }
 });
 
-// returnFocus is what had focus before a modal opened, so closing puts the user
-// back where they were rather than at the top of the document — on this panel
-// that means the row they were working on, in a table that can be 90 rows long.
-let returnFocus = null;
+// 開く前の要素へフォーカスを戻すのは共通ヘルパの仕事。このパネルでは戻り先が
+// 「操作していた行」で、テーブルは 90 行になることもあるので効き目が大きい。
+const logsModal = DevhubModal.attach('logsOverlay', {
+  labelledBy: 'logsTitle',
+  initialFocus: () => $('logsClose'),
+});
 
 function showLogs(target, text) {
-  returnFocus = document.activeElement;
   $('logsTitle').textContent = `${target.name}${target.project ? ` (${target.project})` : ''}`;
   // textContent, not innerHTML: this is a container's own output, which is the
   // least trustworthy string on the page.
   $('logsBody').textContent = text || '（出力はありません）';
-  $('logsOverlay').classList.add('open');
+  logsModal.open();
   $('logsBody').scrollTop = $('logsBody').scrollHeight;
-  // Focus moves into the dialog, so the next Tab or Escape is about the logs
-  // and not about the table behind them.
-  $('logsClose').focus();
 }
 
 function closeLogs() {
-  if (!$('logsOverlay').classList.contains('open')) return;
-  $('logsOverlay').classList.remove('open');
-  returnFocus?.focus?.();
-  returnFocus = null;
+  logsModal.close();
 }
 
 $('logsClose').addEventListener('click', closeLogs);
@@ -661,19 +668,8 @@ $('logsOverlay').addEventListener('click', e => {
   if (e.target === $('logsOverlay')) closeLogs();
 });
 
-// Escape closes whichever modal is open, matching the rest of devhub
-// (tools/git/repo-switcher.js). The profile modal refuses while an operation is
-// in flight, for the same reason its cancel button is disabled then: closing
-// would not stop the VM coming up, so offering the exit would promise a
-// cancellation that does not exist.
-document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
-  if ($('logsOverlay').classList.contains('open')) {
-    closeLogs();
-  } else if ($('profileModalOverlay').classList.contains('open')) {
-    closeProfileModal();
-  }
-});
+// Escape・Tab の閉じ込め・フォーカス復帰は shared/modal.js が持つ。profile モーダル
+// が操作中に閉じないのも、そちらへ渡した canClose の結果。
 
 $('refreshBtn').addEventListener('click', load);
 searchEl.addEventListener('input', render);
