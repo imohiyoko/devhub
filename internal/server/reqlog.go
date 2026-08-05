@@ -170,9 +170,12 @@ func labelEscape(s string) string {
 //     the truncation marker verbatim and match a query that was cut at that
 //     point. No devhub route takes a query that long, so this is recorded rather
 //     than solved.
-//   - "?a" and "?a=" both parse to {"a": [""]}. This one grants nothing: the
-//     handlers read the query with the same parser, so they cannot tell the two
-//     apart either.
+//   - "?a" and "?a=" both parse to {"a": [""]}.
+//   - A query ParseQuery recovers only part of drops the rest, so "?a=1&%zz"
+//     renders as "?a=1".
+//
+// The last two grant nothing: the handlers read the query with the same parser,
+// so what is missing from the label is also missing from what they acted on.
 func redactedQuery(u *url.URL) string {
 	if u.RawQuery == "" {
 		return ""
