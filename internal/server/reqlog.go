@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/imohiyoko/devhub/internal/reqlog"
 	"github.com/imohiyoko/devhub/internal/sanitize"
@@ -87,17 +86,25 @@ const maxLoggedQueryRunes = 512
 // worth auditing — what was opened — was the one fact missing.
 // The query is returned separately from the path so loggablePath can match on
 // the route alone; the recorded label is the two concatenated.
+//
+// The path goes through the same escaping as the query. r.URL.Path is already
+// percent-decoded, so a request for "/ai-api/x%20y" arrives with a space in it —
+// the one character the query escaping exists to keep out of a detail. Nothing
+// reaches a handler through such a path today (the gateway matches routes
+// exactly or by prefix, and neither matches), but that is a property of the
+// gateway, not of this string, and the two would have to stay in step forever
+// for it to hold. Escaping both sides costs nothing and needs no such promise.
 func requestLabel(r *http.Request) (surface, path, query string) {
 	path, surface = r.URL.Path, reqlog.SurfaceAPI
 	if rest, ok := strings.CutPrefix(path, "/ai-api/"); ok {
 		surface, path = reqlog.SurfaceAIAPI, "/api/"+rest
 	}
-	return surface, path, redactedQuery(r.URL)
+	return surface, labelEscape(path), redactedQuery(r.URL)
 }
 
-// queryEscape percent-escapes only what would otherwise make two different
-// queries render as the same string: the separators, the escape character
-// itself, and anything unprintable.
+// labelEscape percent-escapes only what would otherwise let two different
+// requests render as the same label: the characters this format uses as
+// structure, the escape character itself, and the ASCII control range.
 //
 // url.Values.Encode is the obvious choice and the wrong one here. This string's
 // primary reader is a human deciding whether to approve a request, and Encode
@@ -107,20 +114,29 @@ func requestLabel(r *http.Request) (surface, path, query string) {
 // the encoding has to guarantee is injectivity, not URL-safety: nothing parses
 // this back.
 //
-// Space is escaped for a reason beyond legibility. The detail this feeds is
-// matched by detailMatchesPattern, which anchors a rule at a space, so a value
-// containing a space could otherwise manufacture the boundary that lets one
-// always-allow rule cover a request the user never saw.
-func queryEscape(s string) string {
+// Space is escaped for a reason beyond legibility. The label feeds an approval
+// detail, and detailMatchesPattern anchors a rule at a space — a value holding
+// one could otherwise manufacture the boundary that lets a rule cover a request
+// the user never saw. "?" is escaped for the same kind of reason: the path and
+// the query are joined with it, so a path containing one (r.URL.Path is already
+// percent-decoded, so "%3F" arrives here as "?") could imitate a query that was
+// never sent.
+//
+// The loop is over bytes, not runes, and that is load-bearing. Ranging over a
+// string yields U+FFFD for every byte of invalid UTF-8, so "?a=%FF" and
+// "?a=%FE" would collapse to the same label — and an always-allow rule for one
+// would cover the other. Valid UTF-8 passes through byte by byte unchanged, so
+// nothing legible is lost. The trade is that non-ASCII control characters
+// (U+0085 and the rest of C1) are no longer escaped; none of them is a
+// separator here, so none can forge a boundary.
+func labelEscape(s string) string {
 	var b strings.Builder
-	for _, r := range s {
-		if r == '%' || r == '&' || r == '=' || r == ' ' || unicode.IsControl(r) {
-			for _, c := range []byte(string(r)) {
-				fmt.Fprintf(&b, "%%%02X", c)
-			}
+	for i := range len(s) {
+		if c := s[i]; c == '%' || c == '&' || c == '=' || c == '?' || c == ' ' || c < 0x20 || c == 0x7F {
+			fmt.Fprintf(&b, "%%%02X", c)
 			continue
 		}
-		b.WriteRune(r)
+		b.WriteByte(s[i])
 	}
 	return b.String()
 }
@@ -155,7 +171,7 @@ func redactedQuery(u *url.URL) string {
 			if sanitize.IsSecretKey(k) {
 				v = "***"
 			}
-			parts = append(parts, queryEscape(k)+"="+queryEscape(v))
+			parts = append(parts, labelEscape(k)+"="+labelEscape(v))
 		}
 	}
 	return "?" + truncateRunes(strings.Join(parts, "&"), maxLoggedQueryRunes)
