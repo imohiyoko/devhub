@@ -1,0 +1,304 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	devhub "github.com/imohiyoko/devhub"
+	"github.com/imohiyoko/devhub/internal/approval"
+	"github.com/imohiyoko/devhub/internal/httpx"
+	"github.com/imohiyoko/devhub/internal/reqlog"
+	"github.com/imohiyoko/devhub/internal/storage"
+)
+
+func TestLoggablePath(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"/api/ports", true},
+		{"/ai-api/git/status", true},
+		// Not the API: pages and assets are the bulk of the traffic and say
+		// nothing about what was done to the machine.
+		{"/", false},
+		{"/git", false},
+		{"/shared/net.js", false},
+		{"/tools/git/git.css", false},
+		// The log's own endpoints, or searching would fill the log with records
+		// of the searching and evict what the page exists to show.
+		{"/api/logs", false},
+		{"/api/logs/archive", false},
+		{"/ai-api/logs", false},
+	} {
+		if got := loggablePath(tc.path); got != tc.want {
+			t.Errorf("loggablePath(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+// Wrapping the ResponseWriter must not hide the interfaces handlers reach for.
+// /api/restart, /api/rebuild and /api/update/apply flush their acknowledgement
+// through a w.(http.Flusher) assertion and then replace the process, so a
+// wrapper without Flush loses the reply entirely.
+func TestStatusRecorderStaysAFlusher(t *testing.T) {
+	rec := &statusRecorder{ResponseWriter: httptest.NewRecorder()}
+
+	f, ok := any(rec).(http.Flusher)
+	if !ok {
+		t.Fatal("statusRecorder is not an http.Flusher; handlers that flush before re-exec will silently stop flushing")
+	}
+	f.Flush() // must not panic when the wrapped writer flushes
+}
+
+// The same guard from the outside: the handler must observe a Flusher through
+// the real serving path, not just when constructed directly.
+func TestFlusherReachesHandlersThroughServeHTTP(t *testing.T) {
+	srv := newTestServer(t)
+	var sawFlusher bool
+
+	// A recorder is an http.Flusher, so if the wrapper forwards the capability
+	// the handler sees one.
+	srv.gateway.Next = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, sawFlusher = w.(http.Flusher)
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+	srv.do(http.MethodGet, "/api/does-not-exist", goodHost, testToken, "", nil)
+
+	if !sawFlusher {
+		t.Error("the handler did not see an http.Flusher")
+	}
+}
+
+func TestRequestIsLoggedWithOutcome(t *testing.T) {
+	srv := newTestServer(t)
+	srv.do(http.MethodGet, "/api/ports", goodHost, testToken, "", nil)
+
+	entries := srv.rlog.Query(reqlog.Filter{})
+	if len(entries) != 1 {
+		t.Fatalf("logged %d entries, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.Method != "GET" || e.Path != "/api/ports" {
+		t.Errorf("method/path = %s %s", e.Method, e.Path)
+	}
+	if e.Surface != reqlog.SurfaceAPI {
+		t.Errorf("surface = %q, want api", e.Surface)
+	}
+	if e.Status != http.StatusOK {
+		t.Errorf("status = %d, want 200", e.Status)
+	}
+	if e.Bytes == 0 {
+		t.Error("bytes not counted")
+	}
+	if e.TS.IsZero() {
+		t.Error("timestamp not set")
+	}
+}
+
+func TestAssetsAndLogEndpointAreNotLogged(t *testing.T) {
+	srv := newTestServer(t)
+	for _, target := range []string{"/", "/shared/net.js", "/api/logs"} {
+		srv.do(http.MethodGet, target, goodHost, testToken, "", nil)
+	}
+	if n := srv.rlog.Len(); n != 0 {
+		t.Errorf("logged %d entries, want 0: %+v", n, srv.rlog.Query(reqlog.Filter{}))
+	}
+}
+
+// A failing response must carry its stable code into the log, so "show me every
+// approval timeout" is a filter rather than a substring hunt.
+func TestFailureRecordsCodeAndExcerpt(t *testing.T) {
+	srv := newTestServer(t)
+	srv.do(http.MethodGet, "/api/ports", goodHost, "", "", nil) // no token → 401
+
+	entries := srv.rlog.Query(reqlog.Filter{})
+	if len(entries) != 1 {
+		t.Fatalf("logged %d entries, want 1", len(entries))
+	}
+	if entries[0].Code != "missing_token" {
+		t.Errorf("code = %q, want missing_token", entries[0].Code)
+	}
+	if !strings.Contains(entries[0].Err, "unauthorized") {
+		t.Errorf("err excerpt = %q", entries[0].Err)
+	}
+}
+
+// A successful response must NOT be captured: the API returns things like whole
+// git diffs, and keeping them would blow the ring's memory budget.
+func TestSuccessBodyIsNotCaptured(t *testing.T) {
+	srv := newTestServer(t)
+	srv.do(http.MethodGet, "/api/info", goodHost, testToken, "", nil)
+
+	e := srv.rlog.Query(reqlog.Filter{})[0]
+	if e.Err != "" {
+		t.Errorf("captured a successful response body: %q", e.Err)
+	}
+	if e.Bytes == 0 {
+		t.Error("byte count should still be recorded for a success")
+	}
+}
+
+// The whole point of the log is that a user can see what an agent did. A secret
+// in a request body must not become the price of that visibility.
+func TestLoggedBodyIsRedacted(t *testing.T) {
+	srv := newTestServer(t)
+	srv.do(http.MethodPost, "/api/settings", goodHost, testToken, "",
+		strings.NewReader(`{"editor":"code","token":"s3cr3t-value"}`))
+
+	e := srv.rlog.Query(reqlog.Filter{})[0]
+	if strings.Contains(e.Body, "s3cr3t-value") {
+		t.Fatalf("secret leaked into the request log: %q", e.Body)
+	}
+	if !strings.Contains(e.Body, "***") {
+		t.Errorf("body = %q, want the secret masked", e.Body)
+	}
+	if !strings.Contains(e.Body, "editor") {
+		t.Errorf("body = %q, want non-secret fields kept so it stays searchable", e.Body)
+	}
+}
+
+// The reason this package exists: an always-allow rule short-circuits before a
+// request is even registered, so before the log this call happened with no
+// record anywhere.
+func TestAutoApprovedWriteIsRecorded(t *testing.T) {
+	srv := newTestServer(t)
+	body := `{"port":3000,"label":"x"}`
+
+	// First call: approve manually and note the detail the rule will match.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.do(http.MethodPost, "/ai-api/ports/label", goodHost, "", "", strings.NewReader(body))
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	var detail string
+	for time.Now().Before(deadline) && detail == "" {
+		for _, req := range srv.approvalMgr.ListPending() {
+			detail = req.Detail
+			srv.approvalMgr.AddAlwaysAllowRule(req.Action, req.Detail)
+			_ = srv.approvalMgr.Respond(req.ID, approval.Approved)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	<-done
+	if detail == "" {
+		t.Fatal("no approval request appeared")
+	}
+
+	// Second, identical call: the rule matches, so nothing is prompted.
+	srv.do(http.MethodPost, "/ai-api/ports/label", goodHost, "", "", strings.NewReader(body))
+
+	auto := srv.rlog.Query(reqlog.Filter{Approval: reqlog.ApprovalAuto})
+	if len(auto) != 1 {
+		t.Fatalf("auto-approved entries = %d, want 1; log: %+v", len(auto), srv.rlog.Query(reqlog.Filter{}))
+	}
+	if auto[0].Surface != reqlog.SurfaceAIAPI {
+		t.Errorf("surface = %q, want ai-api", auto[0].Surface)
+	}
+
+	manual := srv.rlog.Query(reqlog.Filter{Approval: reqlog.ApprovalManual})
+	if len(manual) != 1 {
+		t.Errorf("manual entries = %d, want 1", len(manual))
+	}
+}
+
+func TestApprovalOutcomesAreRecorded(t *testing.T) {
+	t.Run("rejected", func(t *testing.T) {
+		srv := newTestServer(t)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			srv.do(http.MethodPost, "/ai-api/ports/label", goodHost, "", "",
+				strings.NewReader(`{"port":3000,"label":"x"}`))
+		}()
+		approve(t, srv, approval.Rejected)
+		<-done
+
+		if got := srv.rlog.Query(reqlog.Filter{Approval: reqlog.ApprovalRejected}); len(got) != 1 {
+			t.Fatalf("rejected entries = %d, want 1", len(got))
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		srv := newTestServer(t)
+		orig := approvalTimeout
+		approvalTimeout = 10 * time.Millisecond
+		t.Cleanup(func() { approvalTimeout = orig })
+
+		srv.do(http.MethodPost, "/ai-api/ports/label", goodHost, "", "",
+			strings.NewReader(`{"port":3000,"label":"x"}`))
+
+		got := srv.rlog.Query(reqlog.Filter{Approval: reqlog.ApprovalTimeout})
+		if len(got) != 1 {
+			t.Fatalf("timeout entries = %d, want 1", len(got))
+		}
+		if got[0].Code != "approval_timeout" {
+			t.Errorf("code = %q, want approval_timeout", got[0].Code)
+		}
+	})
+}
+
+// The body has to survive being read for the log, or every write would reach its
+// handler empty.
+func TestCaptureBodyRestoresItForTheHandler(t *testing.T) {
+	srv := newTestServer(t)
+	rr := srv.do(http.MethodPost, "/api/ports/label", goodHost, testToken, "",
+		strings.NewReader(`{"port":3000,"label":"kept"}`))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	rr = srv.do(http.MethodGet, "/api/settings", goodHost, testToken, "", nil)
+	if !strings.Contains(rr.Body.String(), "kept") {
+		t.Error("the label never reached the handler — the body was consumed by logging")
+	}
+}
+
+// Every ring numbers its entries from 1, so seq only identifies a request when
+// paired with an id no other ring uses. Two servers sharing one id would make
+// their first requests indistinguishable in the archive, and INSERT OR IGNORE
+// would drop the second — reported as "already archived", not as a loss.
+//
+// Nothing in devhub builds two servers in one process today (startServer runs
+// once and a restart re-execs), which is precisely why this is worth pinning:
+// if that ever changes, no other test would notice the archive going quiet.
+func TestTwoServersOverOneStoreArchiveSeparately(t *testing.T) {
+	st, err := storage.Open(t.TempDir(), devhub.Assets)
+	if err != nil {
+		t.Fatalf("storage.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	a, b := newTestServerOn(t, st), newTestServerOn(t, st)
+	if a.instance == b.instance {
+		t.Fatal("both servers minted the same instance id")
+	}
+
+	for i, srv := range []*Server{a, b} {
+		srv.do(http.MethodGet, "/api/ports", goodHost, testToken, "", nil)
+		// The premise: both rings hand out seq 1, so only the id separates them.
+		if entries := srv.rlog.Query(reqlog.Filter{}); len(entries) != 1 || entries[0].Seq != 1 {
+			t.Fatalf("server %d: want one entry with seq 1, got %+v", i, entries)
+		}
+		if rr := srv.do(http.MethodPost, "/api/logs/archive", goodHost, testToken, "", nil); rr.Code != http.StatusOK {
+			t.Fatalf("server %d: archive = %d: %s", i, rr.Code, rr.Body.String())
+		}
+	}
+
+	rr := a.do(http.MethodGet, "/api/logs?source=archive", goodHost, testToken, "", nil)
+	var got struct {
+		Entries []struct {
+			Seq int64 `json:"seq"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode archive: %v (%s)", err, rr.Body.String())
+	}
+	if len(got.Entries) != 2 {
+		t.Errorf("archive holds %d entries, want 2 — one server's request was swallowed", len(got.Entries))
+	}
+}

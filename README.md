@@ -15,6 +15,7 @@
 | **db-table** | `/db-table` | SQLite / MySQL / MariaDB の接続管理、表表示、テーブル/横断カラム/横断要素検索、TSV/CSVコピー、列コピー、セル編集 |
 | **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、保護対象設定、LISTEN プロセスの kill |
 | **containers** | `/containers` | Docker context と Colima profile を横断したコンテナ一覧（宣言外・停止済みも表示）。logs / stop / restart と Colima profile の作成・サイズ変更 |
+| **logs** | `/logs` | この起動中に処理した API リクエストの記録。承認結果・ステータス・パス・ボディで絞り込み、残したい分だけアーカイブ |
 
 `db-table` の MySQL / MariaDB パスワードは保存されません。接続時に必要に応じて入力してください。  
 デフォルトでは外部DBホストへの接続は禁止され、`localhost` / `127.0.0.1` / `::1` のみ接続できます。
@@ -31,6 +32,8 @@ devhub doctor               # 「何が起動するか / 何が動いている�
 devhub env list             # env-launcher の環境一覧と稼働中ポート
 devhub env start <env-id>   # 環境を起動（worktree 解決・依存順・offset 採番も UI と同一）
 devhub env stop <env-id>    # その環境のポートで LISTEN 中のプロセスを kill
+devhub docs list            # 同梱ドキュメントの一覧（JSON）
+devhub docs show <name>     # ドキュメント本文を表示
 devhub version / help
 ```
 
@@ -41,6 +44,11 @@ devhub version / help
 「新しい起動が勝つ」（devhub という名前のプロセスに限り reclaim）ようになりました。
 詳細は [docs/env-launcher/0002](docs/env-launcher/0002-cli-env-stop.md) と
 [docs/root/0002](docs/root/0002-single-command-slot-and-cli.md)。
+
+ドキュメントはバイナリに同梱されているため、チェックアウトもネットワークも不要で
+`devhub docs` から読めます。コーディングエージェントに devhub を操作させる場合は
+`devhub docs show agent/ai-api`（HTTP 面）と `agent/troubleshooting`（エラー対処）が
+出発点です。
 
 `devhub start` は**起動元を選べます**: `devhub start binary|homebrew|code`
 （リリースバイナリ / Homebrew 版 / 手元ソースの `go run`）。コマンドスロットや

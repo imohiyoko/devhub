@@ -5,10 +5,13 @@ import (
 	databasectl "github.com/imohiyoko/devhub/internal/controllers/database"
 	envsctl "github.com/imohiyoko/devhub/internal/controllers/envs"
 	gitctl "github.com/imohiyoko/devhub/internal/controllers/git"
+	logsctl "github.com/imohiyoko/devhub/internal/controllers/logs"
 	portsctl "github.com/imohiyoko/devhub/internal/controllers/ports"
 	settingsctl "github.com/imohiyoko/devhub/internal/controllers/settings"
 	workspacectl "github.com/imohiyoko/devhub/internal/controllers/workspace"
 	"github.com/imohiyoko/devhub/internal/core"
+	docspkg "github.com/imohiyoko/devhub/internal/docs"
+	"github.com/imohiyoko/devhub/internal/reqlog"
 	"github.com/imohiyoko/devhub/internal/storage"
 )
 
@@ -41,7 +44,7 @@ var _ core.Store = (*storage.Store)(nil)
 // allowlist) keep typed helpers behind those interfaces rather than the raw
 // key/value seam, because forcing them onto a per-tool Namespace would change
 // their data semantics. envs is the one rich consumer (launch registry).
-func Registry(store *storage.Store) *core.Registry {
+func Registry(store *storage.Store, docs *docspkg.Set, rlog *reqlog.Ring) *core.Registry {
 	deps := core.Deps{Store: store}
 
 	git := gitctl.New(store)
@@ -51,6 +54,7 @@ func Registry(store *storage.Store) *core.Registry {
 	envs := envsctl.New(store, git, ports, workspace)
 	settings := settingsctl.New(store, core.Namespace(deps.Store, "tool"))
 	containers := containersctl.New()
+	logs := logsctl.New(rlog, store)
 
 	return core.NewRegistry(
 		newGit(git),
@@ -62,6 +66,8 @@ func Registry(store *storage.Store) *core.Registry {
 		newDiffKun(),
 		newDiagram(),
 		newContainers(containers),
+		newDocs(docs),
+		newLogs(logs),
 		// ← new tools: add one constructor here. Nothing else in core/server changes.
 	)
 }

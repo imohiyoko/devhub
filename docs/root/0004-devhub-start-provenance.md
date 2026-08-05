@@ -1,3 +1,7 @@
+---
+description: devhub start binary / homebrew / code で起動元をその場限りで選ぶ仕組み。リリース版と手元ソースを使い分けたいときに読む。
+---
+
 # 0004. `devhub start <provenance>` — 起動元を都度選ぶランチャ
 
 - **Status**: Accepted (2026-07-05)

@@ -1,3 +1,7 @@
+---
+description: 検証環境を専用機能ではなく env-launcher の worktree バインド + offset ポート + {{port}} で立てる方針。検証用に環境を用意するときに読む。
+---
+
 # 0001. 検証環境は専用機能を作らず、既存 env-launcher で立てる
 
 - **Status**: Accepted (2026-06-17)

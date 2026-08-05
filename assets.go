@@ -12,3 +12,16 @@ import "embed"
 //
 //go:embed dashboard tools shared settings/config.example.json settings/server.example.json settings/envs.example.json settings/tools/git.example.json
 var Assets embed.FS
+
+// Docs bundles docs/ so `devhub docs` and GET /api/docs can serve it from the
+// binary. It is a separate FS from Assets because nothing that consumes Assets
+// (the page/asset cache, the settings seeder) should see documentation.
+//
+// Embedding means a doc travels with the binary that it describes — a released
+// devhub can never quote a doc from a different version — at the cost of needing
+// a release to publish a doc edit. Files beginning with "." or "_" are excluded
+// by go:embed itself, so the .gitkeep placeholders in the empty tool
+// directories are not bundled.
+//
+//go:embed docs
+var Docs embed.FS

@@ -10,6 +10,17 @@ var sideEffectingGetPaths = map[string]bool{
 	"/api/open": true, // workspace: opens a directory in the configured editor
 }
 
+// isRead reports whether a method only reads. It is the method half of the
+// approval rule, reused where the question is "could this carry a body worth
+// recording" rather than "does this need approval".
+func isRead(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	return false
+}
+
 // aiAPINeedsApproval reports whether an /ai-api request must wait for manual
 // approval: every state-changing method, plus the handful of GET endpoints with
 // side effects. HEAD/OPTIONS and plain reads never require approval.

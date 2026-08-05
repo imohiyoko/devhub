@@ -25,11 +25,17 @@ Usage:
   devhub env list           list env-launcher environments and their live ports
   devhub env start <env-id> launch an environment (baton ports are taken over)
   devhub env stop <env-id>  kill the live processes of an environment
+  devhub docs list          list the embedded documentation (JSON)
+  devhub docs show <name>   print one document
   devhub version            print version info (same as -version)
   devhub help               show this help
 
 A bare 'devhub' (no arguments) prints this help. Starting the server is the
 explicit 'devhub start', so a reflexive 'devhub' never binds a port by surprise.
+
+Driving devhub from a coding agent? Read 'devhub docs show agent/ai-api' for
+the HTTP surface, 'agent/cli' for this command line, and
+'agent/troubleshooting' when a call fails.
 
 'devhub start' can take an optional provenance — 'binary', 'homebrew', or
 'code' — to launch the server from a specific devhub instead of the current
@@ -84,6 +90,8 @@ func runSubcommand(name string, args []string) int {
 		return runServer(args)
 	case "env":
 		return runEnv(args)
+	case "docs":
+		return runDocs(args)
 	case "doctor":
 		return runDoctor()
 	case "status":
@@ -97,7 +105,7 @@ func runSubcommand(name string, args []string) int {
 		fmt.Print(rootUsage)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "devhub: unknown subcommand %q\n\n%s", name, rootUsage)
+		fmt.Fprintf(os.Stderr, "devhub: unknown subcommand %q\n\n%s\n%s\n", name, rootUsage, docsHint)
 		return 2
 	}
 }
