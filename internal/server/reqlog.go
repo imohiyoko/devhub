@@ -176,6 +176,13 @@ func labelEscape(s string) string {
 //
 // The last two grant nothing: the handlers read the query with the same parser,
 // so what is missing from the label is also missing from what they acted on.
+//
+// The placeholder above is hyphenated, but the fixed templates elsewhere in a
+// detail — "(no request body)", "(non-JSON body, N bytes)" — keep their spaces,
+// and that is not an oversight. What makes a space dangerous is a caller
+// choosing where it lands; none of those has a caller-controlled part (N is a
+// length), and both sit at the end of the detail, where there is nothing left
+// for a prefix to reach.
 func redactedQuery(u *url.URL) string {
 	if u.RawQuery == "" {
 		return ""
