@@ -76,6 +76,12 @@ func TestSameOriginOrNonBrowser(t *testing.T) {
 //
 // So: every key must name a route that exists, and no route may reach a key by
 // prefix.
+//
+// For whoever blocks a system route next: /api/restart and its neighbours are
+// handled by serveSystem, not by a tool, so reg.Tools() does not know them and
+// this test would report such a key as blocking nothing. Widen the route list
+// below rather than dropping the assertion. ADR 0005 decision #8 records why
+// restart is deliberately left on the approval gate today.
 func TestBlockedPathsNameRoutesThatExistAndAreExact(t *testing.T) {
 	st, err := storage.Open(t.TempDir(), devhub.Assets)
 	if err != nil {
