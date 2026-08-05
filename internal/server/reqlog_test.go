@@ -567,3 +567,48 @@ func TestApprovalDetailCarriesTheQueryWithSecretsMasked(t *testing.T) {
 		t.Errorf("detail should keep the surface it arrived on: %q", detail)
 	}
 }
+
+// The two caps are separate on purpose, and nothing but this test says so. Tie
+// maxParsedErrBytes back to maxLoggedErrRunes and the body handed to errCode is
+// cut mid-JSON: it parses as nothing, the code column goes empty for exactly
+// the errors this log exists to make searchable, and every other test stays
+// green. That is the shape of failure this change was written against.
+//
+// The hint here is multi-byte so the excerpt's rune cap and the parse's byte
+// cap cannot be satisfied by the same number.
+func TestALongHintTruncatesTheExcerptWithoutBlankingTheCode(t *testing.T) {
+	srv := newTestServer(t)
+	srv.gateway.Next = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		httpx.WriteError(w, httpx.Errorf(http.StatusBadRequest, "nope").WithHint(
+			"long_hint", strings.Repeat("あ", maxLoggedErrRunes+200)))
+	})
+	srv.do(http.MethodGet, "/api/does-not-exist", goodHost, testToken, "", nil)
+
+	got := srv.rlog.Query(reqlog.Filter{})
+	if len(got) != 1 {
+		t.Fatalf("entries = %d, want 1", len(got))
+	}
+	if got[0].Code != "long_hint" {
+		t.Errorf("code = %q, want long_hint — a hint past the display cap must not blank it", got[0].Code)
+	}
+	if !strings.HasSuffix(got[0].Err, "…(truncated)") {
+		t.Errorf("excerpt was not truncated to the display cap: %q…", got[0].Err[:min(len(got[0].Err), 60)])
+	}
+}
+
+// Both halves of decision #8 in one place. Blocking the writes is only half the
+// decision; the other half is that reading stays open, because an agent
+// diagnosing its own failure is the reason /ai-api exists at all.
+//
+// Nothing else pins the read. aiAPIBlockedPaths is an exact-match map today, so
+// /ai-api/logs cannot be caught by the entries for /ai-api/logs/clear — but
+// that is a property of the map, not a promise, and this change spent four
+// commits refusing to lean on properties of that kind.
+func TestReadingTheLogStaysOpenOnAiAPI(t *testing.T) {
+	srv := newTestServer(t)
+
+	rr := srv.do(http.MethodGet, "/ai-api/logs", goodHost, "", "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /ai-api/logs = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+}

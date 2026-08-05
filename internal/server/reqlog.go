@@ -136,10 +136,23 @@ func requestLabel(r *http.Request) (surface reqlog.Surface, path, query string) 
 // separator here, so none can forge a boundary.
 func labelEscape(s string) string {
 	const hex = "0123456789ABCDEF"
+	// Almost nothing needs escaping — a route path is letters and slashes, and
+	// requestLabel runs before loggablePath, so this is reached by every request
+	// the server handles rather than only the recorded ones. Returning the input
+	// untouched keeps the common case free of an allocation.
+	i := 0
+	for i < len(s) && !needsLabelEscape(s[i]) {
+		i++
+	}
+	if i == len(s) {
+		return s
+	}
 	var b strings.Builder
-	for i := range len(s) {
+	b.Grow(len(s) + 8)
+	b.WriteString(s[:i])
+	for ; i < len(s); i++ {
 		c := s[i]
-		if c == '%' || c == '&' || c == '=' || c == '?' || c == ' ' || c < 0x20 || c == 0x7F {
+		if needsLabelEscape(c) {
 			b.WriteByte('%')
 			b.WriteByte(hex[c>>4])
 			b.WriteByte(hex[c&0x0F])
@@ -150,6 +163,13 @@ func labelEscape(s string) string {
 	return b.String()
 }
 
+// needsLabelEscape reports whether a byte has to be escaped to keep labelEscape
+// injective: the characters this format uses as structure, the escape character
+// itself, and the ASCII control range.
+func needsLabelEscape(c byte) bool {
+	return c == '%' || c == '&' || c == '=' || c == '?' || c == ' ' || c < 0x20 || c == 0x7F
+}
+
 // redactedQuery renders a URL's query with secret-looking values masked, or ""
 // when there is none. The leading "?" is included so callers can concatenate.
 //
@@ -157,7 +177,9 @@ func labelEscape(s string) string {
 // passed as a query parameter is hidden the same way one passed in a body is.
 // Keys are sorted, which makes the string deterministic — it is used as an
 // approval detail, and a rule must not depend on the order a client happened to
-// send its parameters in.
+// send its parameters in. Repeats of one key keep their order, deliberately:
+// handlers read a query with q.Get, which returns the first value, so "?a=1&a=2"
+// and "?a=2&a=1" ask for different things and must not share a rule.
 //
 // A malformed query yields whatever ParseQuery could recover; the unparseable
 // remainder is dropped rather than echoed, because "could not parse it" is not
@@ -177,8 +199,11 @@ func labelEscape(s string) string {
 //     safe to echo.
 //   - Two queries longer than the cap can truncate alike. A caller can also send
 //     the truncation marker verbatim and match a query that was cut at that
-//     point. No devhub route takes a query that long, so this is recorded rather
-//     than solved.
+//     point. Appending a short hash of the full string would restore injectivity
+//     in one line; it is not done because no devhub route takes a query that
+//     long, and an unexplained hex tail in an approval prompt costs the reader
+//     something on every request to buy a case that does not arise. Revisit if a
+//     route ever takes a long argument.
 //   - "?a" and "?a=" both parse to {"a": [""]}.
 //   - A query ParseQuery recovers only part of drops the rest, so "?a=1&%zz"
 //     renders as "?a=1".

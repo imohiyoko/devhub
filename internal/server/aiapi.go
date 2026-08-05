@@ -25,6 +25,12 @@ var sideEffectingGetPaths = map[string]bool{
 //
 // Reading the log stays open on /ai-api. An agent diagnosing its own failures
 // is why that surface exists; erasing the evidence is not.
+//
+// The match is on path alone, so GET /ai-api/logs/clear is refused with this
+// message rather than the 404 the same spelling gets on /api. That is the
+// intended way round: the reason is about the route, not about one verb of it,
+// and answering "no such route" to a GET while answering "withheld" to a POST
+// would tell a caller which methods exist on a path it is not allowed to use.
 var aiAPIBlockedPaths = map[string]string{
 	"/api/logs/clear":   "Clearing the request log is deliberately unavailable to /ai-api — an agent must not be able to erase the record of what it did. Ask the user to clear it from the dashboard if that is really what they want.",
 	"/api/logs/archive": "Archiving the request log is deliberately unavailable to /ai-api — what is kept past a restart is the user's decision. Read it with GET /ai-api/logs instead.",
