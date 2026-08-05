@@ -189,9 +189,10 @@ func TestAliasReachesThePanel(t *testing.T) {
 // refused — and it arrives with the listing rather than behind a second
 // endpoint the panel would have to fetch.
 //
-// The running totals are summed from the sources this request already fetched,
-// so the whole budget costs no extra process: asking the admin would run a
-// second `colima list` for numbers the listing had already reported.
+// It is the caps and the host, and not what is currently allocated: the sources
+// in the same payload already carry each profile's size and status, so a
+// running total here would be a second count of numbers the listing reported —
+// one that could drift from the one the start path decides on.
 func TestLimitsRideWithTheListing(t *testing.T) {
 	rr := httptest.NewRecorder()
 	c := &Controller{
@@ -220,11 +221,17 @@ func TestLimitsRideWithTheListing(t *testing.T) {
 	}
 	for k, want := range map[string]float64{
 		"cpus": 10, "cpu_cap": 8, "memory_cap_gib": 25,
-		// Only the running profile counts: a stopped one is holding nothing.
-		"running_cpus": 8, "running_mem_gib": 20,
 	} {
 		if host[k] != want {
 			t.Errorf("host[%q] = %v, want %v", k, host[k], want)
+		}
+	}
+	// No running total: the sources in this same payload carry the sizes and
+	// statuses it would be summed from, and a second count here is one that can
+	// disagree with the one the start path actually decides on.
+	for _, k := range []string{"running_cpus", "running_mem_gib"} {
+		if _, found := host[k]; found {
+			t.Errorf("host[%q] appeared; the sources already carry that", k)
 		}
 	}
 	// The reserve travels in the form it was written, so the panel can say

@@ -22,7 +22,6 @@ import (
 	"context"
 	"net/http"
 	"sort"
-	"strings"
 
 	"github.com/imohiyoko/devhub/internal/container"
 	"github.com/imohiyoko/devhub/internal/httpx"
@@ -160,12 +159,14 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 	// would be a new line in the execaudit ledger for a payload that spawns
 	// nothing.
 	//
-	// Limits asks colima nothing, and the running totals are summed from the
-	// sources this request already fetched. So the whole budget costs no extra
-	// process: asking the admin for allocations here would run a second
-	// `colima list` for numbers the listing had already reported.
+	// Limits asks colima nothing, so the budget costs no extra process. What is
+	// currently allocated is deliberately not part of it: the sources in this
+	// payload already carry each profile's size and status, so a panel that
+	// wants the running total can add it up from rows the user is looking at,
+	// and devhub is not maintaining a second count that could drift from the
+	// one the start path actually decides on.
 	if l := c.admin.Limits(); l.Detected {
-		out["host"] = limitsJSON(l, sources)
+		out["host"] = limitsJSON(l)
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 	return nil
@@ -174,19 +175,7 @@ func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 // limitsJSON renders the host and its caps. Absent entirely when devhub cannot
 // measure the machine — a panel showing "0 CPU" would be stating a limit that
 // does not exist, and the caps are not applied in that case either.
-func limitsJSON(l container.Limits, sources []container.Source) map[string]any {
-	// Summed from the sources rather than from a fresh `colima list`: a Colima
-	// source carries the profile's size and status already, so this is the same
-	// answer without a second sweep — and it cannot disagree with the rows the
-	// user is looking at, which a separately-timed listing could.
-	var runningCPUs, runningMemGiB int
-	for _, s := range sources {
-		if s.Profile == "" || !strings.EqualFold(s.Status, "Running") {
-			continue
-		}
-		runningCPUs += s.CPUs
-		runningMemGiB += int(s.MemoryBytes / (1 << 30))
-	}
+func limitsJSON(l container.Limits) map[string]any {
 	return map[string]any{
 		"cpus": l.HostCPUs, "memory_bytes": l.HostMemBytes,
 		// Reported so the profile form can show it. Never a limit: Lima's disk
@@ -195,8 +184,6 @@ func limitsJSON(l container.Limits, sources []container.Source) map[string]any {
 		"cpu_cap":         l.CPUCap,
 		"memory_cap_gib":  l.MemCapGiB,
 		"reserve":         l.Reserve.JSON(),
-		"running_cpus":    runningCPUs,
-		"running_mem_gib": runningMemGiB,
 	}
 }
 
