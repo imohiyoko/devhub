@@ -7,6 +7,7 @@
 <script src="/shared/reorder.js"></script>
 <script src="/shared/rebuild-reload.js"></script>
 <script src="/shared/dom.js"></script>
+<script src="/shared/modal.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <link rel="stylesheet" href="/shared/ui/components.css">
 <link rel="stylesheet" href="/tools/env-launcher/env-launcher.css">
@@ -250,7 +251,7 @@
 <!-- Runtime (execution base) Modal -->
 <div class="modal-overlay" id="runtimeModalOverlay">
   <div class="modal">
-    <div class="modal-header">実行基盤の設定</div>
+    <div class="modal-header" id="runtimeModalTitle">実行基盤の設定</div>
     <div class="modal-body">
       <div class="form-group">
         <label for="runtimeProvider">Provider</label>

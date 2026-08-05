@@ -266,14 +266,18 @@ func TestInvalidToolID(t *testing.T) {
 	}
 }
 
-// The shared "contract" JS modules (dom.js/net.js) are served straight from the
-// embed via the recursive shared/ walk, with a JS content-type. This guards the
-// serving path that lets tool pages drop their copy-pasted escapeHtml/apiJson.
+// The shared "contract" JS modules (dom.js/net.js/modal.js) are served straight
+// from the embed via the recursive shared/ walk, with a JS content-type. This
+// guards the serving path that lets tool pages drop their copy-pasted
+// escapeHtml/apiJson and their per-page modal keyboard handling: a page whose
+// modal helper 404s renders a dialog that Tab walks straight out of, and
+// nothing else on the page would fail.
 func TestSharedContractModulesServed(t *testing.T) {
 	s := newTestServer(t)
 	for _, tc := range []struct{ path, wantSubstr string }{
 		{"/shared/dom.js", "function escapeHtml"},
 		{"/shared/net.js", "async function apiJson"},
+		{"/shared/modal.js", "window.DevhubModal"},
 	} {
 		rr := s.do("GET", tc.path, goodHost, "", "", nil)
 		if rr.Code != http.StatusOK {

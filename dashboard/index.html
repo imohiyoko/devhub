@@ -6,6 +6,7 @@
 <title>devhub</title>
 <script src="/shared/reorder.js"></script>
 <script src="/shared/rebuild-reload.js"></script>
+<script src="/shared/modal.js"></script>
 <link rel="stylesheet" href="/shared/theme.css">
 <style>
 
@@ -321,13 +322,15 @@ footer {
 .footer-update:hover { background: var(--accent); color: #fff; }
 
 /* ── Update modal ── */
+/* 表示の切り替えは overlay の open クラス — devhub の他のモーダルと同じ約束に
+   そろえてある。shared/modal.js がこのクラスで開閉する。 */
 .update-overlay {
   position: fixed; inset: 0; z-index: 100;
   background: rgba(0, 0, 0, 0.5);
-  display: flex; align-items: center; justify-content: center;
+  display: none; align-items: center; justify-content: center;
   padding: 16px;
 }
-.update-overlay[hidden] { display: none; }
+.update-overlay.open { display: flex; }
 .update-modal {
   background: #161b22;
   border: 1px solid var(--border);
@@ -540,8 +543,9 @@ footer {
   <a class="footer-link" href="https://github.com/imohiyoko/devhub" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
 </footer>
 
-<div class="update-overlay" id="updateOverlay" hidden>
-  <div class="update-modal" role="dialog" aria-modal="true" aria-labelledby="updateTitle">
+<div class="update-overlay" id="updateOverlay">
+  <!-- role / aria-modal / aria-labelledby は DevhubModal.attach（shared/modal.js）が付ける -->
+  <div class="update-modal">
     <h2 id="updateTitle">アップデート</h2>
     <div class="update-ver">
       <span id="updateCurrent">—</span>
@@ -935,13 +939,20 @@ async function checkUpdate() {
   }
 }
 
+// 更新中でも閉じられるのは従来どおり。閉じても更新は止まらないが、止まったふりを
+// するわけでもない — 完了すればページごとリロードされる。
+const updateModal = DevhubModal.attach('updateOverlay', {
+  labelledBy: 'updateTitle',
+  initialFocus: () => document.getElementById('updateClose'),
+});
+
 async function openUpdateModal() {
   // Refresh so the modal reflects current state even when opened long after load.
   if (!updateStatus) { try { await checkUpdate(); } catch { /* offline */ } }
   renderUpdateModal(updateStatus || {});
-  document.getElementById('updateOverlay').hidden = false;
+  updateModal.open();
 }
-function closeUpdateModal() { document.getElementById('updateOverlay').hidden = true; }
+function closeUpdateModal() { updateModal.close(); }
 
 // Render the modal for every state: dev/source build, checks disabled, offline,
 // update-available (installer → one-click; homebrew → command), or up-to-date.

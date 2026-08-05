@@ -15,6 +15,9 @@ let currentScenarioIndex = -1;
 // Mirrors envIDRe on the server, which rejects a scenario id outright.
 const scenarioIDRe = /^[a-zA-Z0-9_-]+$/;
 
+// Escape・Tab の閉じ込め・フォーカス復帰・role/aria は shared/modal.js が持つ。
+const scenarioModal = DevhubModal.attach('scenarioModalOverlay', { labelledBy: 'scenarioModalTitle' });
+
 function openScenarioModal(envIndex, scenarioIndex = -1) {
   currentEnvIndex = envIndex;
   currentScenarioIndex = scenarioIndex;
@@ -33,11 +36,11 @@ function openScenarioModal(envIndex, scenarioIndex = -1) {
     .map(c => `<option value="${escapeHtml(c.id)}"${members.includes(c.id) ? ' selected' : ''}>${escapeHtml(c.label || c.id)}</option>`)
     .join('');
 
-  document.getElementById('scenarioModalOverlay').classList.add('open');
+  scenarioModal.open();
 }
 
 function closeScenarioModal() {
-  document.getElementById('scenarioModalOverlay').classList.remove('open');
+  scenarioModal.close();
 }
 
 async function saveScenario() {
