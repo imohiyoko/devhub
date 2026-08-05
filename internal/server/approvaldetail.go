@@ -24,6 +24,12 @@ const (
 // body. JSON is normalized (whitespace stripped, keys sorted by json.Marshal) so
 // the preview — and any always-allow rule matched against it — is deterministic.
 func summarizeApprovalBody(body []byte) string {
+	// Kept before the trim: the size below is the only fact reported about a
+	// body whose contents are withheld, so it has to be the size that was
+	// actually received. Trimming first would understate a padded body, and an
+	// audit record that rounds a number down for a reason nobody can see is
+	// worse than one that omits it.
+	received := len(body)
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
 		return ""
@@ -41,7 +47,7 @@ func summarizeApprovalBody(body []byte) string {
 		// Every devhub write endpoint takes JSON, so reaching this branch means
 		// malformed or unexpected — a case worth reporting the shape of rather
 		// than the contents of.
-		return fmt.Sprintf("(non-JSON body, %d bytes)", len(body))
+		return fmt.Sprintf("(non-JSON body, %d bytes)", received)
 	}
 	redactSecrets(v)
 	b, err := json.Marshal(v)

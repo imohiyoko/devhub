@@ -23,6 +23,10 @@ func TestSummarizeApprovalBody(t *testing.T) {
 		// shape is reported and the contents are not.
 		{"non-json reports shape only", "not   json\nhere", "(non-JSON body, 15 bytes)"},
 		{"non-json secret does not leak", "password=hunter2&user=me", "(non-JSON body, 24 bytes)"},
+		// The size is the one fact reported about a body that is not shown, so it
+		// counts what arrived. Measuring after the trim would report 3 here and
+		// leave no way to tell a 3-byte body from a padded one.
+		{"non-json size counts what arrived", "  \n abc \t ", "(non-JSON body, 10 bytes)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
