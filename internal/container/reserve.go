@@ -18,6 +18,7 @@ package container
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -250,11 +251,26 @@ func intField(m map[string]any, key, where string) (int, bool, error) {
 		f = n
 	case int:
 		f = float64(n)
+	case string:
+		// The panel sends what is in the field rather than silently reading a
+		// blank one as zero, so an empty string arrives here and gets named for
+		// what it is. "数値で指定してください" about a field the user never
+		// filled in sends them looking for a typo that is not there.
+		if strings.TrimSpace(n) == "" {
+			return 0, false, fmt.Errorf("%s.%s が空欄です", where, key)
+		}
+		return 0, false, fmt.Errorf("%s.%s は数値で指定してください（%q）", where, key, n)
 	default:
 		return 0, false, fmt.Errorf("%s.%s は数値で指定してください", where, key)
 	}
-	if f != float64(int(f)) {
+	// Integrality is checked without converting: int(f) on a float this side of
+	// the integer range is implementation-defined, so the range comes first and
+	// math.Trunc does the comparison that conversion would otherwise have done.
+	if f != math.Trunc(f) {
 		return 0, false, fmt.Errorf("%s.%s は整数で指定してください（%v）", where, key, f)
+	}
+	if f < math.MinInt32 || f > math.MaxInt32 {
+		return 0, false, fmt.Errorf("%s.%s の値が大きすぎます（%v）", where, key, f)
 	}
 	return int(f), true, nil
 }

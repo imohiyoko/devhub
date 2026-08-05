@@ -193,7 +193,9 @@ main { padding: 16px; overflow-y: auto; }
   padding: 6px 8px;
 }
 .form-control:focus { border-color: var(--accent); outline: none; }
-.hint { color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 9px; }
+/* pre-line は必須。上限や予約の説明は textContent に \n 区切りで入れており、
+   既定の white-space では 1 本の段落に畳まれて読めなくなる。 */
+.hint { color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 9px; white-space: pre-line; }
 .warn {
   border: 1px solid var(--red);
   border-radius: 6px;
@@ -462,21 +464,29 @@ function rowHtml(c) {
 
 // vmControls decides which VM buttons a source header carries.
 //
-// available と status の二つを見るのは、available が別々の事情を一つのビットに
-// まとめてしまうから。単に停止しているだけの profile と、devhub が扱えない
-// engine で動いている profile はどちらも available: false になるが、「起動」で
-// 直るのは前者だけで、後者に出すのは何も起きないボタンになる。
+// 分岐は available ではなく status で行う。available は「中を一覧できるか」で、
+// 別々の事情を一つのビットに畳んでいる — 単に停止している profile も、devhub が
+// 扱えない engine で動いている profile もどちらも false になる。VM そのものへの
+// 操作が成立するかは、その二つで別々に決まる:
+//
+//   - サイズ変更は状態に関係なく成立する。Resize は動いていれば止めてから、
+//     止まっていればそのまま、新しいサイズで起動する。
+//   - 起動と停止は、動いているかどうかだけで決まる。engine が devhub の扱えない
+//     ものでも、その VM を止めることはできる。
+//
+// status が無いときはサイズ変更だけ出す。起動と停止はどちらを出すべきか決められ
+// ないが、サイズ変更は profile がある時点で押せる。
 function vmControls(src) {
   if (!src.profile || src.alias_of) return '';
   const p = escapeHtml(src.profile);
-  if (src.available) {
-    return `<button class="src-btn" data-resize="${p}">サイズ変更</button>
-            <button class="src-btn" data-vm-stop="${p}">VM を停止</button>`;
+  const status = (src.status || '').toLowerCase();
+  const btns = [`<button class="src-btn" data-resize="${p}">サイズ変更</button>`];
+  if (status === 'running') {
+    btns.push(`<button class="src-btn" data-vm-stop="${p}">VM を停止</button>`);
+  } else if (status) {
+    btns.push(`<button class="src-btn" data-vm-start="${p}">VM を起動</button>`);
   }
-  if (src.status && src.status.toLowerCase() !== 'running') {
-    return `<button class="src-btn" data-vm-start="${p}">VM を起動</button>`;
-  }
-  return '';
+  return btns.join('\n            ');
 }
 
 function sourceHtml(src, rows) {
@@ -957,13 +967,17 @@ async function startVM(profile, btn) {
 
 // renderMemoryQuestion は足し算をそのまま見せる。ユーザーに検算できない計算を
 // 信じさせないため、依拠している数値を全部出す。
+//
+// 閾値が「1 VM あたりの上限」である理由は startProfile 側のコメントのとおり。文
+// 面でもその線の出どころ（実装から予約を引いた値）を言う — 合計を per-VM の上限
+// と比べたとだけ読めると、比較そのものが取り違えに見える。
 function renderMemoryQuestion(m) {
   const vms = (m.running_vms || [])
     .map(v => `<li>${escapeHtml(v.name)} <span class="sub">${v.memory_gib} GiB</span></li>`).join('');
   $('vmStartWarn').innerHTML =
     `<div class="warn">起動すると、動いている VM に割り当てられたメモリの合計が
       <strong>${m.total_gib} GiB</strong> になります（いま ${m.running_gib} GiB ＋ この VM ${m.adding_gib} GiB）。
-      1 VM あたりの上限 ${m.cap_gib} GiB を超えています（実装 ${m.host_gib} GiB）。
+      実装 ${m.host_gib} GiB のうち devhub が 1 VM に許している ${m.cap_gib} GiB を、合計が超えます。
       ${vms ? `<ul class="stop-list">${vms}</ul>` : ''}</div>`;
 }
 

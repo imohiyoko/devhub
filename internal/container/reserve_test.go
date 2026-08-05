@@ -142,6 +142,22 @@ func TestNormalizeReserveRefuses(t *testing.T) {
 		{"not a number", map[string]any{
 			"cpu": map[string]any{"percent": "20"},
 		}, "数値"},
+		// The panel sends the field's contents rather than reading a blank one
+		// as zero, so this arrives and has to be named for what it is: "数値で
+		// 指定してください" would send the user hunting for a typo in an empty
+		// box.
+		{"blank field", map[string]any{
+			"cpu": map[string]any{"percent": ""},
+		}, "空欄"},
+		{"blank absolute", map[string]any{
+			"memory": map[string]any{"gib": "  "},
+		}, "空欄"},
+		// Out of int range. Refused by magnitude before any conversion, since
+		// int() on such a float is implementation-defined and the value it
+		// lands on could well be one this would then accept.
+		{"beyond int range", map[string]any{
+			"memory": map[string]any{"gib": 1e20},
+		}, "大きすぎます"},
 		// A misspelled key must not leave the default quietly in force while
 		// the settings screen shows the value the user thought they set.
 		{"unknown key", map[string]any{

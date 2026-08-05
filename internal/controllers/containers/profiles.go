@@ -168,11 +168,18 @@ func (c *Controller) startProfile(w http.ResponseWriter, r *http.Request, name s
 	}
 	confirmed, _ := data["confirm"].(bool)
 	if !confirmed {
-		// Allocations is the one colima call on this path, and it answers both
-		// halves of the sum: what is already up, and how big the profile being
-		// started is. A failure here is not fatal — it means devhub cannot do
-		// the arithmetic, not that the start is unsafe — so it falls through
-		// and starts, which is what this endpoint did before it could count.
+		// Allocations answers both halves of the sum in one call: what is
+		// already up, and how big the profile being started is. A failure here
+		// is not fatal — it means devhub cannot do the arithmetic, not that the
+		// start is unsafe — so it falls through and starts, which is what this
+		// endpoint did before it could count.
+		//
+		// It does mean the unconfirmed path lists twice, because Start looks the
+		// profile up again a moment later, and another VM could come up in
+		// between and leave the total understated. Both are accepted: this
+		// number is advice being shown to a user, and nothing is decided on it.
+		// The figure that *is* enforced — the per-VM cap — is checked inside
+		// Start, against the listing Start itself made.
 		if allocs, err := c.admin.Allocations(r.Context()); err == nil {
 			if over := memoryOversubscription(c.admin.Limits(), allocs, name); over != nil {
 				httpx.WriteJSON(w, http.StatusOK, map[string]any{
