@@ -157,15 +157,22 @@ func labelEscape(s string) string {
 // escapes spaces: this string sits in the middle of an approval detail, where a
 // space is the boundary a prefix rule anchors on.
 //
-// Known limits, both of the same shape — distinct queries can share a label, so
-// an always-allow rule on one covers the other:
+// Known limits, all of the same shape — distinct queries can share a label, so
+// an always-allow rule on one covers the other. None of them lets a value forge
+// a space, which is the boundary detailMatchesPattern anchors on, so the bleed
+// stays within a single route:
 //
 //   - Every query ParseQuery cannot recover anything from collapses to the
 //     placeholder, so allowing one broken query allows any broken query to that
 //     route. Deliberate: there is nothing left to distinguish them by that is
 //     safe to echo.
-//   - Two queries longer than the cap can truncate alike. No devhub route takes
-//     a query that long, so this is recorded rather than solved.
+//   - Two queries longer than the cap can truncate alike. A caller can also send
+//     the truncation marker verbatim and match a query that was cut at that
+//     point. No devhub route takes a query that long, so this is recorded rather
+//     than solved.
+//   - "?a" and "?a=" both parse to {"a": [""]}. This one grants nothing: the
+//     handlers read the query with the same parser, so they cannot tell the two
+//     apart either.
 func redactedQuery(u *url.URL) string {
 	if u.RawQuery == "" {
 		return ""
@@ -233,15 +240,21 @@ func (rec *statusRecorder) Flush() {
 	}
 }
 
-// Unwrap exposes the writer underneath, so http.ResponseController reaches any
-// capability this wrapper does not forward by hand.
+// There is deliberately no Unwrap method, and TestHijackIsRefusedRatherThanUnlogged
+// pins its absence.
 //
-// Flush is forwarded explicitly above because three handlers assert
-// w.(http.Flusher) directly and would silently stop flushing without it.
-// Hijacker, ReaderFrom and Pusher have no caller today — but the next person to
-// add streaming would find them missing, and the failure would again be silence
-// rather than a compile error. One method closes that whole class.
-func (rec *statusRecorder) Unwrap() http.ResponseWriter { return rec.ResponseWriter }
+// Adding one looks like harmless future-proofing — http.ResponseController would
+// then reach the capabilities this wrapper does not forward by hand. But the one
+// that matters is Hijack, and letting it succeed takes the connection away from
+// this recorder: it never sees WriteHeader or Write again, and the ring gets a
+// tidy "200, 0 bytes" for a request that did something else entirely. That is
+// the failure this whole change exists to prevent, one level down — a fabricated
+// entry is worse than a missing one, because nothing about it looks wrong.
+//
+// Without Unwrap, ResponseController.Hijack returns http.ErrNotSupported, and
+// whoever adds streaming has to decide what the log should say. Flush is
+// unaffected either way: the method above satisfies both the controller and the
+// three handlers that assert w.(http.Flusher) directly.
 
 // errExcerpt returns the captured failure body as a single line, truncated to
 // the display cap, or "" for a success.
