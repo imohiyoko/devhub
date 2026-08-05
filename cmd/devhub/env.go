@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 
 	devhub "github.com/imohiyoko/devhub"
 	envsctl "github.com/imohiyoko/devhub/internal/controllers/envs"
@@ -108,8 +107,15 @@ func envList(envs *envsctl.Controller) int {
 		fmt.Println("no environments defined (configure them in the env-launcher tool)")
 		return 0
 	}
-	w := tabwriter.NewWriter(os.Stdout, 2, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tPROCESSES\tLIVE")
+	printTable(os.Stdout, []string{"ID", "NAME", "PROCESSES", "LIVE"}, envListRows(statuses))
+	return 0
+}
+
+// envListRows lays out the `env list` body. It is split from envList so the
+// table can be checked against real environment names — which is where the
+// column drift came from — without a store behind it.
+func envListRows(statuses []envsctl.EnvStatus) [][]string {
+	rows := make([][]string, 0, len(statuses))
 	for _, st := range statuses {
 		live := "-"
 		if len(st.LivePorts) > 0 {
@@ -119,10 +125,9 @@ func envList(envs *envsctl.Controller) int {
 			}
 			live = strings.Join(ports, " ")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", st.ID, st.Name, st.Processes, live)
+		rows = append(rows, []string{st.ID, st.Name, strconv.Itoa(st.Processes), live})
 	}
-	_ = w.Flush()
-	return 0
+	return rows
 }
 
 func envStop(envs *envsctl.Controller, store *storage.Store, envID string) int {
@@ -162,16 +167,7 @@ func envComponentStatus(envs *envsctl.Controller, envID string) int {
 		fmt.Printf("%s: no components defined\n", envID)
 		return 0
 	}
-	w := tabwriter.NewWriter(os.Stdout, 2, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "STATE\tCOMPONENT\tKIND\tSCOPE\tDETAIL")
-	for _, c := range components {
-		scope := "scenario"
-		if c.Shared {
-			scope = "shared"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", c.State, c.Label, c.Kind, scope, c.Reason)
-	}
-	_ = w.Flush()
+	printTable(os.Stdout, []string{"STATE", "COMPONENT", "KIND", "SCOPE", "DETAIL"}, envComponentRows(components))
 	if len(scenarios) > 0 {
 		names := make([]string, len(scenarios))
 		for i, s := range scenarios {
@@ -180,6 +176,22 @@ func envComponentStatus(envs *envsctl.Controller, envID string) int {
 		fmt.Printf("\nscenarios: %s\n", strings.Join(names, ", "))
 	}
 	return 0
+}
+
+// envComponentRows lays out the `env status` body. Split from
+// envComponentStatus for the same reason as envListRows: DETAIL carries the
+// Japanese reason a state could not be observed, so this table's alignment
+// has to be checkable directly.
+func envComponentRows(components []envsctl.ComponentReport) [][]string {
+	rows := make([][]string, 0, len(components))
+	for _, c := range components {
+		scope := "scenario"
+		if c.Shared {
+			scope = "shared"
+		}
+		rows = append(rows, []string{c.State, c.Label, c.Kind, scope, c.Reason})
+	}
+	return rows
 }
 
 // parseSwitchArgs reads `<env-id> <scenario-id|--stop> [-y]`. The target is
