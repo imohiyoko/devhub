@@ -183,7 +183,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) 
 			// every "GET /ai-api/open" produced the same detail string, so one
 			// always-allow rule silently covered opening any directory on the
 			// machine — and the prompt the user saw never named the one.
-			detail := r.Method + " " + origPath + redactedQuery(r.URL)
+			//
+			// The path is escaped alongside it. r.URL.Path is percent-decoded, so
+			// an unescaped path could put a space into this string — the exact
+			// character an always-allow rule anchors on.
+			detail := r.Method + " " + labelEscape(origPath) + redactedQuery(r.URL)
 
 			// Include a redacted preview of the request body so the approval
 			// prompt — and any always-allow rule derived from it — reflects WHAT

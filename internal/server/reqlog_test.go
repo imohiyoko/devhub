@@ -71,11 +71,36 @@ func TestRequestLabel(t *testing.T) {
 		// A space would otherwise manufacture the boundary detailMatchesPattern
 		// anchors on, letting one rule cover a request the user never saw.
 		{"/api/x?a=b+c", reqlog.SurfaceAPI, "/api/x?a=b%20c"},
+		// The path gets the same treatment. r.URL.Path arrives decoded, so
+		// without this a request could put that same space into the detail.
+		{"/ai-api/db/%20query", reqlog.SurfaceAIAPI, "/api/db/%20query"},
+		// And "?" in a path must not be able to imitate a query that was never
+		// sent — these two must not render alike.
+		{"/api/x%3Fa=1", reqlog.SurfaceAPI, "/api/x%3Fa%3D1"},
+		{"/api/x?a=1", reqlog.SurfaceAPI, "/api/x?a=1"},
 	} {
 		surface, path, query := requestLabel(httptest.NewRequest(http.MethodGet, tc.in, nil))
 		if got := path + query; surface != tc.wantSurface || got != tc.wantLabel {
 			t.Errorf("requestLabel(%q) = %q %q, want %q %q", tc.in, surface, got, tc.wantSurface, tc.wantLabel)
 		}
+	}
+}
+
+// labelEscape promises injectivity, and invalid UTF-8 is where that promise is
+// easiest to break: ranging over a string yields U+FFFD for every bad byte, so
+// two different requests would produce one label — and an always-allow rule for
+// either would cover both. url.ParseQuery hands raw bytes through, so this is
+// reachable from a plain HTTP client.
+func TestLabelDistinguishesInvalidUTF8(t *testing.T) {
+	label := func(target string) string {
+		_, path, query := requestLabel(httptest.NewRequest(http.MethodGet, target, nil))
+		return path + query
+	}
+	if a, b := label("/api/x?a=%FF"), label("/api/x?a=%FE"); a == b {
+		t.Errorf("two different queries render alike: %q", a)
+	}
+	if a, b := label("/api/%FF"), label("/api/%FE"); a == b {
+		t.Errorf("two different paths render alike: %q", a)
 	}
 }
 
@@ -110,8 +135,14 @@ func TestARuleDoesNotReachAcrossAQueryString(t *testing.T) {
 	// saying no is the space anchor in detailMatchesPattern. Approving one
 	// directory would otherwise approve every directory whose name extends it.
 	//
-	// This is also why the query escaping masks spaces: a value allowed to
-	// contain one could manufacture the boundary the anchor looks for.
+	// This is also why labelEscape masks spaces: a value allowed to contain one
+	// could manufacture the boundary the anchor looks for.
+	//
+	// The current API cannot produce a pattern of this shape — always-allow
+	// stores a pending request's complete detail, and nothing else writes a
+	// rule. What this guards is the rules file: patterns already persisted by an
+	// older devhub, one edited by hand, and any future UI that lets a pattern be
+	// shortened. Unreachable from the API is not the same as unreachable.
 	t.Run("pattern ending inside the query", func(t *testing.T) {
 		srv := newTestServer(t)
 		srv.approvalMgr.AddAlwaysAllowRule(action, "GET /ai-api/open?path=/a")
