@@ -35,6 +35,18 @@ package execaudit
 //   - Callers entries that are malformed, unsorted, duplicated or empty.
 //     (TestCallersAreWellFormed)
 //
+//   - An execFreeEndpoints declaration for a path the server no longer routes.
+//     The list is a set of claims exactly as Callers is, so it is held to the
+//     same standard: a route that is renamed or deleted must not leave its
+//     "this one spawns nothing" behind, still counting toward coverage.
+//     (TestExecFreeDeclarationsStillMatchARoute)
+//
+//   - An endpoint that is both claimed by a Surface and declared exec-free.
+//     Coverage is satisfied by either, and stops at the first — so an endpoint
+//     written off as inert, which later grows an exec seam and is correctly
+//     added to a Surface, would keep a line saying it cannot spawn a process.
+//     (TestNoEndpointIsBothClaimedAndExecFree)
+//
 // # What these tests do NOT detect
 //
 //   - Under-classification, in general: an endpoint listed under some of the
@@ -80,7 +92,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -163,7 +174,7 @@ func TestCallersAreWellFormed(t *testing.T) {
 			t.Errorf("Surface %q: Callers must not be empty — every surface has a way in", s.ID)
 			continue
 		}
-		if !sort.StringsAreSorted(s.Callers) {
+		if !slices.IsSorted(s.Callers) {
 			t.Errorf("Surface %q: Callers must be kept sorted; got %v", s.ID, s.Callers)
 		}
 		seen := map[string]bool{}
@@ -238,28 +249,7 @@ func TestEveryServedEndpointIsAccountedFor(t *testing.T) {
 	system := systemEndpoints(t, root)
 	literals := dispatchLiterals(t, root)
 
-	// Prefix routes are not endpoints themselves unless the pattern is also a
-	// real path: /api/containers/profiles is one (it is the create endpoint),
-	// /api/git/ is not. Everything a prefix route fans out to is the set of
-	// dispatch literals underneath it.
-	paths := map[string]string{} // path -> where it came from
-	add := func(p, origin string) {
-		if _, ok := paths[p]; !ok {
-			paths[p] = origin
-		}
-	}
-	for _, e := range routes {
-		if !e.prefix || !strings.HasSuffix(e.path, "/") {
-			add(e.path, e.origin)
-		}
-	}
-	for _, e := range system {
-		add(e.path, e.origin)
-	}
-	for lit := range literals {
-		add(lit, "dispatch literal")
-	}
-
+	paths := servedPaths(routes, system, literals)
 	claimed := claimedPaths(t)
 
 	var unaccounted []string
@@ -270,10 +260,100 @@ func TestEveryServedEndpointIsAccountedFor(t *testing.T) {
 		unaccounted = append(unaccounted, p+"  ("+origin+")")
 	}
 	if len(unaccounted) > 0 {
-		sort.Strings(unaccounted)
+		slices.Sort(unaccounted)
 		t.Errorf("endpoint(s) no Surface claims and no exec-free declaration covers:\n  %s\n"+
 			"Add each one to the Callers of every exec Surface it can reach, or to execFreeEndpoints in this file with the reason it spawns nothing.",
 			strings.Join(unaccounted, "\n  "))
+	}
+}
+
+// TestExecFreeDeclarationsStillMatchARoute holds execFreeEndpoints to the same
+// standard as Callers.
+//
+// Both are claims about an endpoint, and the file says so — but only one of them
+// was checked. A Callers entry naming a route that no longer exists fails
+// TestCallersNameEndpointsTheServerServes; the same mistake in execFreeEndpoints
+// used to pass, so a renamed or deleted route left its "this one spawns nothing"
+// behind, still counting toward coverage for a path nobody serves.
+func TestExecFreeDeclarationsStillMatchARoute(t *testing.T) {
+	root := moduleRoot(t)
+	routes := registeredEndpoints(t)
+	paths := servedPaths(routes, systemEndpoints(t, root), dispatchLiterals(t, root))
+
+	var stale []string
+	for key := range execFreeEndpoints {
+		if declarationIsCurrent(key, paths, routes) {
+			continue
+		}
+		stale = append(stale, key)
+	}
+	if len(stale) > 0 {
+		slices.Sort(stale)
+		t.Errorf("execFreeEndpoints declares path(s) the server does not serve:\n  %s\n"+
+			"Remove each one, or fix the path if the route was renamed.", strings.Join(stale, "\n  "))
+	}
+}
+
+// declarationIsCurrent reports whether an execFreeEndpoints key still describes
+// something the server routes.
+//
+// Two ways to be current, because there are two kinds of endpoint here. Most
+// resolve to a concrete path the scan found. A few sit under a prefix route that
+// fans out to no dispatch literals at all — /api/settings/tool/ takes the tool
+// name from the path rather than switching on a list of them — and servedPaths
+// deliberately omits those, since the prefix pattern is not itself an endpoint.
+// A declaration covering such a prefix is still current: the server does route
+// everything under it.
+func declarationIsCurrent(key string, paths map[string]string, routes []endpoint) bool {
+	one := map[string]string{key: ""}
+	for p := range paths {
+		if matchesAny(one, p) {
+			return true
+		}
+	}
+	pre, isPrefix := strings.CutSuffix(key, "*")
+	if !isPrefix {
+		return false
+	}
+	for _, e := range routes {
+		if e.prefix && strings.HasPrefix(pre, e.path) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNoEndpointIsBothClaimedAndExecFree closes the other half of the same gap.
+//
+// TestEveryServedEndpointIsAccountedFor accepts an endpoint that is claimed by a
+// Surface *or* declared exec-free, and stops at the first match. So an endpoint
+// written off as inert, which later grows an exec seam and is correctly added to
+// a Surface's Callers, keeps its stale exec-free line — and the line goes on
+// saying the endpoint cannot spawn a process while the ledger next to it says it
+// can. Nothing would have complained.
+//
+// execFreeEndpoints is keyed by path with no method, so this is a per-path rule.
+// If devhub ever needs one method of a path to be inert while another spawns,
+// this test is what will say so — by failing, which is the outcome that asks for
+// a decision instead of hiding one. The fix then is to give the key a method,
+// not to delete the check.
+func TestNoEndpointIsBothClaimedAndExecFree(t *testing.T) {
+	var both []string
+	for claim, surface := range claimedPaths(t) {
+		// Callers are "METHOD /path"; execFreeEndpoints is bare paths.
+		path := claim
+		if _, rest, found := strings.Cut(claim, " "); found {
+			path = strings.TrimSuffix(rest, "*")
+		}
+		if matchesAny(execFreeEndpoints, path) {
+			both = append(both, claim+"  (claimed by "+surface+")")
+		}
+	}
+	if len(both) > 0 {
+		slices.Sort(both)
+		t.Errorf("endpoint(s) both claimed by a Surface and declared exec-free:\n  %s\n"+
+			"An endpoint that reaches an exec seam is not exec-free. Drop the execFreeEndpoints entry.",
+			strings.Join(both, "\n  "))
 	}
 }
 
@@ -317,7 +397,7 @@ func TestContainerSeamCallersImplyTheProfileProbe(t *testing.T) {
 			seams = append(seams, id)
 		}
 	}
-	sort.Strings(seams)
+	slices.Sort(seams)
 
 	// If the probe surface is not among them the assumption this test rests on
 	// has moved; fail loudly rather than vacuously passing.
@@ -361,6 +441,34 @@ func TestContainerSeamCallersImplyTheProfileProbe(t *testing.T) {
 // claimedPaths collects every path any Surface claims, keyed the way
 // execFreeEndpoints is (a trailing "*" means prefix), so both can be matched by
 // the same helper.
+// servedPaths is every path the server answers on, mapped to where the scan
+// found it.
+//
+// Prefix routes are not endpoints themselves unless the pattern is also a real
+// path: /api/containers/profiles is one (it is the create endpoint), /api/git/
+// is not. Everything a prefix route fans out to is the set of dispatch literals
+// underneath it.
+func servedPaths(routes, system []endpoint, literals map[string]bool) map[string]string {
+	paths := map[string]string{} // path -> where it came from
+	add := func(p, origin string) {
+		if _, ok := paths[p]; !ok {
+			paths[p] = origin
+		}
+	}
+	for _, e := range routes {
+		if !e.prefix || !strings.HasSuffix(e.path, "/") {
+			add(e.path, e.origin)
+		}
+	}
+	for _, e := range system {
+		add(e.path, e.origin)
+	}
+	for lit := range literals {
+		add(lit, "dispatch literal")
+	}
+	return paths
+}
+
 func claimedPaths(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
