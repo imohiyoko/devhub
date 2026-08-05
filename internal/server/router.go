@@ -12,6 +12,7 @@ import (
 
 	"github.com/imohiyoko/devhub/internal/approval"
 	"github.com/imohiyoko/devhub/internal/httpx"
+	"github.com/imohiyoko/devhub/internal/reqlog"
 )
 
 // approvalTimeout is how long an /ai-api write blocks waiting for the user to
@@ -46,11 +47,67 @@ func (s *Server) tokenlessAlternative(apiPath string) string {
 		"/ai-api/"+strings.TrimPrefix(apiPath, "/api/"))
 }
 
-// ServeHTTP is the single security gate (host allowlist + API token). Once a
+// markApproval records how an approval-gated request was decided. e is nil for
+// a request that is not being logged, which is the normal case for the log's own
+// endpoints — so this tolerates it rather than making every call site check.
+func markApproval(e *reqlog.Entry, outcome string) {
+	if e != nil {
+		e.Approval = outcome
+	}
+}
+
+// captureBody reads a request body, restores it for the downstream handler, and
+// returns a redacted single-line summary. The summary also lands on the log
+// entry, so the approval prompt and the log always show the same text and a body
+// is read and redacted exactly once.
+//
+// Redaction is summarizeApprovalBody's, unchanged: secret-bearing keys become
+// "***" before the value reaches either destination.
+func (s *Server) captureBody(r *http.Request, e *reqlog.Entry) string {
+	if r.Body == nil {
+		return ""
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes))
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	summary := summarizeApprovalBody(body)
+	if e != nil {
+		e.Body = summary
+	}
+	return summary
+}
+
+// ServeHTTP records the request, then serves it. Everything about how a request
+// is handled lives in serve; this wrapper only observes, so a change to the
+// security gate below cannot accidentally bypass the log.
+//
+// The entry is added after serve returns rather than deferred, because serve is
+// synchronous and a panic should not leave a half-finished entry claiming a
+// status the caller never received.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !loggablePath(r.URL.Path) {
+		s.serve(w, r, nil)
+		return
+	}
+	start := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	e := reqlog.Begin(r)
+
+	s.serve(rec, r, e)
+
+	e.Finish(rec.status, rec.bytes, rec.errExcerpt(), time.Since(start))
+	e.Code = rec.errCode()
+	s.rlog.Add(e)
+}
+
+// serve is the single security gate (host allowlist + API token). Once a
 // request clears the gate it is handed to the core gateway, which serves all
 // tools (registry-driven) plus GET /api/tools, and falls through to serveSystem
 // for the dashboard root and system endpoints.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+//
+// e is the log entry being built for this request, or nil when the request is
+// not logged. Only the approval outcome is recorded here — it is knowable
+// nowhere else — via markApproval, which tolerates a nil entry.
+func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) {
 	if !s.hostAllowed(r) {
 		httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden").WithHint(
 			"host_not_allowed",
@@ -115,25 +172,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Include a redacted preview of the request body so the approval
 			// prompt — and any always-allow rule derived from it — reflects WHAT
 			// is being written (e.g. setting `editor` to a shell command), not
-			// just the endpoint. Read then restore the body so the downstream
-			// handler still sees it; secret-bearing fields are masked so they
-			// never reach the prompt or a persisted rule.
-			if r.Body != nil {
-				body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes))
-				r.Body = io.NopCloser(bytes.NewReader(body))
+			// just the endpoint. The same summary is what the log stores, so a
+			// body is read, restored and redacted exactly once per request.
+			if summary := s.captureBody(r, e); summary != "" {
+				detail += " " + summary
+			} else {
 				// Always record a body component so the detail — and any always-allow
 				// rule derived from it — is specific to WHAT is written. A bodyless
 				// write must not collapse to a bare "METHOD /path" pattern that, under
 				// prefix matching, would then auto-approve a later write of ANY body to
 				// the same path (e.g. setting `editor` to a shell command).
-				if summary := summarizeApprovalBody(body); summary != "" {
-					detail += " " + summary
-				} else {
-					detail += " (no request body)"
-				}
+				detail += " (no request body)"
 			}
 
-			if !s.approvalMgr.ShouldAutoApprove(action, detail) {
+			if s.approvalMgr.ShouldAutoApprove(action, detail) {
+				// The rule matched, so nothing is shown and nobody is asked. Before
+				// this was logged it was devhub's one truly invisible operation:
+				// after a single "always allow", every later call through the rule
+				// happened with no record anywhere.
+				markApproval(e, reqlog.ApprovalAuto)
+			} else {
 				req := s.approvalMgr.Register(action, detail)
 				decision, err := s.approvalMgr.Wait(req, approvalTimeout)
 				// Rejected and timed out demand opposite responses from a caller —
@@ -148,15 +206,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					// the request again and have someone waiting to approve it —
 					// telling the caller to "go approve the pending request" would
 					// send it hunting for something that no longer exists.
+					markApproval(e, reqlog.ApprovalTimeout)
 					httpx.WriteError(w, httpx.Errorf(http.StatusRequestTimeout, "approval timed out").WithHint(
 						"approval_timeout",
 						fmt.Sprintf("Nobody answered within %s, and the prompt is now gone. Ask the user to open %s and watch for the approval prompt, then send this request again.", approvalTimeout, s.baseURL())))
 					return
 				case decision != approval.Approved:
+					markApproval(e, reqlog.ApprovalRejected)
 					httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "approval rejected").WithHint(
 						"approval_rejected",
 						"The user declined this request. Do not retry it — ask the user what they want done instead."))
 					return
+				default:
+					markApproval(e, reqlog.ApprovalManual)
 				}
 			}
 		}
@@ -173,6 +235,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, httpx.Errorf(http.StatusUnauthorized, "unauthorized").WithHint(
 				"missing_token", s.tokenlessAlternative(r.URL.Path)))
 			return
+		}
+		// Writes on this surface never reach the approval path, so this is the
+		// only chance to capture their body for the log. Without it the dashboard's
+		// own edits would appear in the log as a bare method and path.
+		if e != nil && !isRead(r.Method) {
+			s.captureBody(r, e)
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/approval/") {
 			s.handleApproval(w, r)
