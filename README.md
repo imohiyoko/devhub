@@ -31,6 +31,8 @@ devhub doctor               # 「何が起動するか / 何が動いている�
 devhub env list             # env-launcher の環境一覧と稼働中ポート
 devhub env start <env-id>   # 環境を起動（worktree 解決・依存順・offset 採番も UI と同一）
 devhub env stop <env-id>    # その環境のポートで LISTEN 中のプロセスを kill
+devhub docs list            # 同梱ドキュメントの一覧（JSON）
+devhub docs show <name>     # ドキュメント本文を表示
 devhub version / help
 ```
 
@@ -41,6 +43,11 @@ devhub version / help
 「新しい起動が勝つ」（devhub という名前のプロセスに限り reclaim）ようになりました。
 詳細は [docs/env-launcher/0002](docs/env-launcher/0002-cli-env-stop.md) と
 [docs/root/0002](docs/root/0002-single-command-slot-and-cli.md)。
+
+ドキュメントはバイナリに同梱されているため、チェックアウトもネットワークも不要で
+`devhub docs` から読めます。コーディングエージェントに devhub を操作させる場合は
+`devhub docs show agent/ai-api`（HTTP 面）と `agent/troubleshooting`（エラー対処）が
+出発点です。
 
 `devhub start` は**起動元を選べます**: `devhub start binary|homebrew|code`
 （リリースバイナリ / Homebrew 版 / 手元ソースの `go run`）。コマンドスロットや

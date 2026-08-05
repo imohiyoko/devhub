@@ -1,3 +1,7 @@
+---
+description: env-launcher が docker context use を実行せず、コンテナ実行基盤（Docker context / Colima profile）を暗黙に切り替えない理由。コンテナが想定と違う場所で動くときに読む。
+---
+
 # 0005. 実行基盤の選択（Docker context を変更しない・engine を暗黙に変えない）
 
 - **Status**: Accepted (2026-08-04)

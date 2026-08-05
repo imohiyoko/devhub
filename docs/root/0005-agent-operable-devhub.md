@@ -1,11 +1,11 @@
 ---
-description: エラーに code / hint を付け、エージェントが失敗から立ち直れるようにするための一連の判断。
+description: エラーに code / hint を付け、devhub docs を追加した決定。エージェントが devhub を操作して失敗から立ち直れるようにするための一連の判断。
 ---
 
 # 0005. エージェントが操作して立ち直れる devhub にする
 
 - **Status**: Accepted (2026-08-05)
-- **対象**: internal/httpx / internal/server
+- **対象**: internal/httpx / internal/server / internal/docs / cmd/devhub / docs
 - **関連**: [root/0002](0002-single-command-slot-and-cli.md)（CLI で見える化する方針の延長）、
   [env-launcher/0002](../env-launcher/0002-cli-env-stop.md)（`/ai-api` の書き込みに手動承認が要ることを前提にしている）
 - **参考**: <https://zenn.dev/shunsuke_suzuki/articles/make-cli-ai-friendly>
@@ -29,6 +29,10 @@ devhub には `/ai-api` というトークン不要のローカル API 面があ
 3. **トークンなしで `/api` を叩いたエージェントが詰む。** 401 が返るだけで、
    トークンはページに埋め込まれるものなのでブラウザ以外は入手できない。
    `/ai-api` という別の入口があることを知る手段がどこにもなかった。
+
+4. **ドキュメントが agent 向けに成立していない。** `docs/` は ADR だけ、つまり
+   「なぜそう決めたか」しかない。「どう使うか」「なぜ失敗したか」の文書はゼロ。
+   そもそも `docs/` は embed されておらず、バイナリからは読めなかった。
 
 ## Decision（決定）
 
@@ -64,16 +68,46 @@ timeout の hint は「**投げ直してから**ユーザーに承認しても�
 ここで `/ai-api/approval/…` を案内すると 404 に送るだけでなく、
 あってはならない経路の存在を示唆してしまう。
 
+### 4. ドキュメントをバイナリに埋め込み、コマンドにする
+
+`docs/` を `//go:embed` に載せ、`devhub docs list` / `devhub docs show <name>` と
+`GET /api/docs` / `GET /api/docs/<name>` から読めるようにする。実装は `internal/docs` 一つで、
+CLI と HTTP が同じ `Set` を見る —— hint が名前で案内した文書は、どちらの入口からでも
+その名前で見つかる必要があるため。
+
+**トレードオフ**: 文書がバイナリに固定されるので、更新にリリースが要る。
+引き換えに、リリース版の devhub が別バージョンの文書を引用することが原理的に起きず、
+チェックアウトもネットワークも不要で読める。ローカル開発ツールとしてはこちらを取る。
+
+導線は **help・`version`・エラーの hint・未知サブコマンド**の 4 箇所に張る。
+`version` にも置くのは、エージェントが help を読まずにいきなり叩く挙動が
+参考記事で実測されているため。人間には 1 行のノイズだが、
+気づかれない docs コマンドは無いのと同じ。
+
+### 5. `docs/` に ADR 以外を置く
+
+`docs/agent/` を新設し、`ai-api.md` / `troubleshooting.md` / `cli.md` を置く。
+ADR は「なぜそう決めたか」の記録で、**失敗した agent が読むべきものではない**。
+`docs/README.md` のレイアウト節にこの区別を明記する。
+
+全ての `docs/*.md` に YAML frontmatter の `description` を必須とし、
+テストで強制する（`internal/docs` の `TestEmbeddedDocsAllHaveDescriptions`）。
+`docs list` は name と description しか出さないので、description の無い文書は
+一覧の中で選びようがない。
+
 ## Consequences（結果）
 
 - エラーの `code` は API 契約になった。改名には移行手順が要る
 - 承認タイムアウトの HTTP ステータスが 403 → 408 に変わった。
   `/ai-api` を叩く既存クライアントがあれば影響する（devhub 自身のフロントエンドは
   `/ai-api` を使わないので UI への影響はない）
+- 文書の更新にリリースが必要になった
 
 ## Alternatives considered（検討した代替案）
 
 - **`hint` を全エラーに機械的に付ける。** 付ける先を「詰まりやすい経路」に絞った。
   意味のない hint が並ぶと、hint 全体が読み飛ばされるようになる
+- **Agent Skill を同梱する。** 参考記事の 5 番目。CLI 側の導線が実際に効くかを
+  確かめてから判断する（記事自身も「提供しない選択肢もあり得る」としている）
 - **承認タイムアウトの 60 秒を延ばす。** 伝え方の問題であって長さの問題ではない、と整理した。
   正しく「ユーザーに頼んでから投げ直せ」と言えれば、待ち時間は短いほうがよい

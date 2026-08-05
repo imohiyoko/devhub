@@ -31,7 +31,7 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("LoadSettings: %v", err)
 	}
-	srv, err := New(st, devhub.Assets, settings, true, "test")
+	srv, err := New(st, devhub.Assets, devhub.Docs, settings, true, "test")
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
 	}

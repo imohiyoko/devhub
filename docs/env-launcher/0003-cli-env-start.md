@@ -1,3 +1,7 @@
+---
+description: devhub env start の設計と、launch レジストリを行単位 INSERT/DELETE にして別プロセスからの書き込みを安全にした経緯。baton ポートの奪取もここ。
+---
+
 # 0003. CLI からの環境起動を追加（レジストリを行単位書き込みにして安全化）
 
 - **Status**: Accepted (2026-07-05)
