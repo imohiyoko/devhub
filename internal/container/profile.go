@@ -372,10 +372,11 @@ func (a *colimaAdmin) run(ctx context.Context, args ...string) error {
 // ProfileTargets names the containers a resize would take down, so the caller
 // can show them before asking. It is a read: nothing here stops anything.
 //
-// The list is what makes the shared-profile case visible. Two environments can
-// name the same profile, and resizing for one of them stops the other's
-// containers — a consequence the user cannot infer from the environment they
-// happen to be looking at.
+// It lists everything in the VM, not only what some definition declared, and
+// that is what makes the cost visible: a resize stops the profile, so a
+// container devhub never declared goes down with the rest. Two environments
+// naming the same profile is one instance of that, and the one no definition
+// reveals on its own.
 func (r *Runtime) ProfileTargets(ctx context.Context, name string) ([]Container, error) {
 	list, err := r.Colima.Profiles(ctx)
 	if err != nil {
