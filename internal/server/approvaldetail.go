@@ -3,7 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"strings"
+	"fmt"
 
 	"github.com/imohiyoko/devhub/internal/sanitize"
 )
@@ -30,8 +30,18 @@ func summarizeApprovalBody(body []byte) string {
 	}
 	var v any
 	if err := json.Unmarshal(body, &v); err != nil {
-		// Not JSON: collapse whitespace and show a truncated raw preview.
-		return truncateRunes(strings.Join(strings.Fields(string(body)), " "), maxApprovalSummaryRunes)
+		// Not JSON, so there are no keys to judge and redaction cannot run. A raw
+		// preview used to be returned here, which was defensible while this
+		// string only ever reached an approval prompt a user was reading in the
+		// moment. It stopped being defensible when the same string became what
+		// the request log stores and the archive writes to disk: a form-encoded
+		// or plain-text body would carry its secrets there verbatim, and the
+		// key heuristic that protects the JSON path would never see them.
+		//
+		// Every devhub write endpoint takes JSON, so reaching this branch means
+		// malformed or unexpected — a case worth reporting the shape of rather
+		// than the contents of.
+		return fmt.Sprintf("(non-JSON body, %d bytes)", len(body))
 	}
 	redactSecrets(v)
 	b, err := json.Marshal(v)

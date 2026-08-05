@@ -150,8 +150,7 @@ func requestLogWhere(f RequestLogFilter) (string, []any) {
 		add("UPPER(method) = ?", strings.ToUpper(f.Method))
 	}
 	if f.PathPrefix != "" {
-		add("path LIKE ?", escapeLike(f.PathPrefix)+"%")
-		conds[len(conds)-1] += ` ESCAPE '\'`
+		add(`path LIKE ? ESCAPE '\'`, escapeLike(f.PathPrefix)+"%")
 	}
 	if f.Approval != "" {
 		add("approval = ?", f.Approval)

@@ -28,15 +28,97 @@ func TestLoggablePath(t *testing.T) {
 		{"/git", false},
 		{"/shared/net.js", false},
 		{"/tools/git/git.css", false},
-		// The log's own endpoints, or searching would fill the log with records
-		// of the searching and evict what the page exists to show.
+		// Reading the log is excluded, or searching would fill the log with
+		// records of the searching and evict what the page exists to show.
 		{"/api/logs", false},
-		{"/api/logs/archive", false},
 		{"/ai-api/logs", false},
+		// Changing it is not excluded. These are the two operations that alter
+		// the record itself, and leaving them out let a wipe pass for a quiet
+		// hour.
+		{"/api/logs/clear", true},
+		{"/api/logs/archive", true},
+		{"/ai-api/logs/clear", true},
+		{"/ai-api/logs/archive", true},
 	} {
 		if got := loggablePath(tc.path); got != tc.want {
 			t.Errorf("loggablePath(%q) = %v, want %v", tc.path, got, tc.want)
 		}
+	}
+}
+
+// The recorded path answers "what was done", and for the side-effecting GETs
+// the whole answer is in the query string. It also drops the /ai-api prefix, so
+// one path filter covers both surfaces — the surface column already says which
+// door was used.
+func TestRequestLabel(t *testing.T) {
+	for _, tc := range []struct{ in, wantSurface, wantPath string }{
+		{"/api/ports", reqlog.SurfaceAPI, "/api/ports"},
+		{"/ai-api/git/status", reqlog.SurfaceAIAPI, "/api/git/status"},
+		// The case the log existed for and could not answer.
+		{"/ai-api/open?path=%2Fetc", reqlog.SurfaceAIAPI, "/api/open?path=%2Fetc"},
+		// Sorted, so an always-allow rule cannot depend on send order.
+		{"/api/ls?b=2&a=1", reqlog.SurfaceAPI, "/api/ls?a=1&b=2"},
+		// Same key heuristic as the body summary: a token in the query is not a
+		// token the log gets to keep.
+		{"/api/x?token=abc&q=1", reqlog.SurfaceAPI, "/api/x?q=1&token=%2A%2A%2A"},
+	} {
+		surface, path := requestLabel(httptest.NewRequest(http.MethodGet, tc.in, nil))
+		if surface != tc.wantSurface || path != tc.wantPath {
+			t.Errorf("requestLabel(%q) = %q %q, want %q %q", tc.in, surface, path, tc.wantSurface, tc.wantPath)
+		}
+	}
+}
+
+// Clearing and archiving the log are withheld from /ai-api outright, not merely
+// gated on approval: approval is one "always allow" away from automatic, and
+// the rule that made it automatic would be erased along with everything else.
+func TestLogMutationsAreRefusedOnAiAPI(t *testing.T) {
+	for _, path := range []string{"/ai-api/logs/clear", "/ai-api/logs/archive"} {
+		srv := newTestServer(t)
+		srv.do(http.MethodGet, "/api/ports", goodHost, testToken, "", nil) // something to lose
+
+		rr := srv.do(http.MethodPost, path, goodHost, "", "", nil)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("%s: status = %d, want 403: %s", path, rr.Code, rr.Body.String())
+		}
+		if m := decodeBodyMap(t, rr); m["code"] != "no_ai_api_route" {
+			t.Errorf("%s: code = %v, want no_ai_api_route", path, m["code"])
+		}
+		// The refusal must not have run the handler on the way to saying no.
+		if n := srv.rlog.Len(); n < 2 {
+			t.Errorf("%s: ring holds %d entries — the request was served, not refused", path, n)
+		}
+		// And the attempt is itself on the record.
+		var found bool
+		for _, e := range srv.rlog.Query(reqlog.Filter{Code: "no_ai_api_route"}) {
+			found = found || e.Path == "/api/"+strings.TrimPrefix(path, "/ai-api/")
+		}
+		if !found {
+			t.Errorf("%s: the refused attempt was not logged", path)
+		}
+	}
+}
+
+// A live clear is recorded even though it wipes the ring: ServeHTTP adds the
+// entry after the handler returns, so the one line saying who cleared it
+// survives its own wipe. Without that, a wipe is indistinguishable from an
+// hour in which nothing happened.
+func TestClearLeavesItsOwnRecord(t *testing.T) {
+	srv := newTestServer(t)
+	for range 3 {
+		srv.do(http.MethodGet, "/api/ports", goodHost, testToken, "", nil)
+	}
+	if n := srv.rlog.Len(); n != 3 {
+		t.Fatalf("setup: ring holds %d, want 3", n)
+	}
+
+	if rr := srv.do(http.MethodPost, "/api/logs/clear", goodHost, testToken, "", nil); rr.Code != http.StatusOK {
+		t.Fatalf("clear = %d: %s", rr.Code, rr.Body.String())
+	}
+
+	entries := srv.rlog.Query(reqlog.Filter{})
+	if len(entries) != 1 || entries[0].Path != "/api/logs/clear" {
+		t.Errorf("after clear the ring holds %+v, want only the clear itself", entries)
 	}
 }
 
