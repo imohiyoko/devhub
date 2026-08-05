@@ -15,6 +15,7 @@
 | **db-table** | `/db-table` | SQLite / MySQL / MariaDB の接続管理、表表示、テーブル/横断カラム/横断要素検索、TSV/CSVコピー、列コピー、セル編集 |
 | **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、保護対象設定、LISTEN プロセスの kill |
 | **containers** | `/containers` | Docker context と Colima profile を横断したコンテナ一覧（宣言外・停止済みも表示）。logs / stop / restart と Colima profile の作成・サイズ変更 |
+| **logs** | `/logs` | この起動中に処理した API リクエストの記録。承認結果・ステータス・パス・ボディで絞り込み、残したい分だけアーカイブ |
 
 `db-table` の MySQL / MariaDB パスワードは保存されません。接続時に必要に応じて入力してください。  
 デフォルトでは外部DBホストへの接続は禁止され、`localhost` / `127.0.0.1` / `::1` のみ接続できます。

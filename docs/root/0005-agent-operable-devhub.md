@@ -1,11 +1,11 @@
 ---
-description: エラーに code / hint を付け、devhub docs を追加した決定。エージェントが devhub を操作して失敗から立ち直れるようにするための一連の判断。
+description: エラーに code / hint を付け、devhub docs を追加し、揮発リクエストログを入れた決定。エージェントが devhub を操作して失敗から立ち直れるようにするための一連の判断。
 ---
 
 # 0005. エージェントが操作して立ち直れる devhub にする
 
 - **Status**: Accepted (2026-08-05)
-- **対象**: internal/httpx / internal/server / internal/docs / cmd/devhub / docs
+- **対象**: リポジトリ全体（internal/httpx / internal/server / internal/docs / internal/reqlog / cmd/devhub / docs）
 - **関連**: [root/0002](0002-single-command-slot-and-cli.md)（CLI で見える化する方針の延長）、
   [env-launcher/0002](../env-launcher/0002-cli-env-stop.md)（`/ai-api` の書き込みに手動承認が要ることを前提にしている）
 - **参考**: <https://zenn.dev/shunsuke_suzuki/articles/make-cli-ai-friendly>
@@ -33,6 +33,12 @@ devhub には `/ai-api` というトークン不要のローカル API 面があ
 4. **ドキュメントが agent 向けに成立していない。** `docs/` は ADR だけ、つまり
    「なぜそう決めたか」しかない。「どう使うか」「なぜ失敗したか」の文書はゼロ。
    そもそも `docs/` は embed されておらず、バイナリからは読めなかった。
+
+5. **ログが存在しない。** `log.*` の呼び出しは全体で 5 箇所、すべて偶発的なエラー出力。
+   特に **always-allow ルールに一致した書き込みは痕跡がゼロ**だった。
+   `ShouldAutoApprove` が `Register` の手前で return するため、承認レコードすら作られない。
+   一度「常に許可」を押すと、以後その操作は誰にも見えなくなる —— 承認 UI を作り込んだ
+   意味が、ルール登録後に消えていた。
 
 ## Decision（決定）
 
@@ -95,6 +101,41 @@ ADR は「なぜそう決めたか」の記録で、**失敗した agent が読�
 `docs list` は name と description しか出さないので、description の無い文書は
 一覧の中で選びようがない。
 
+### 6. リクエストログは揮発 ring、アーカイブだけ永続
+
+`/api` と `/ai-api` のリクエストを、固定長のメモリ ring（`internal/reqlog`、2000 件）に記録する。
+プロセス終了で消える。残したい分だけ明示的に SQLite へコピーする。
+
+- **なぜ揮発か**: 「今なにが起きたか」は devhub が動いている間に訊かれる質問なので、
+  それ以上の保持は要らない。ホットパスの disk I/O もゼロになる
+- **なぜ ring か**: 無制限に貯めると、放置したプロセスがメモリを食い続ける
+- **アーカイブの冪等性**: `UNIQUE(instance, seq)` + `INSERT OR IGNORE`。
+  `instance` は起動ごとの乱数 ID、`seq` はその ring 内の連番。
+  条件が重なるアーカイブを繰り返しても行は増えない
+- **`instance` は ring が持つ**（`reqlog.New(n, instance)`）。`seq` はどの ring も 1 から
+  始まるので、`instance` を ring の外（プロセス単位のパッケージ変数など）に置くと、
+  ring が 2 つできた瞬間に別々のリクエストが同じキーになる。そのとき
+  `INSERT OR IGNORE` は 2 件目を捨て、コントローラはそれを `skipped` として返す ——
+  **「アーカイブ済み」と区別がつかない無音の欠落**になる。重複よりこちらが怖いので、
+  対にすべき 2 つの値を 1 つのオブジェクトに閉じ込め、`/api/info` の `instance` も
+  同じ値を返す（`server.New` が払い出して ring に渡す）
+- **記録範囲**: `/api/` と `/ai-api/` のみ。ページ配信とアセットは除外する ——
+  数で言えばそちらが大半で、しかも「マシンに何をしたか」を何も語らないので、
+  固定長の枠を食い潰すだけになる。ログ自身のエンドポイントも除外（検索が自分の結果を汚す）
+- **ボディ**: 既存の `summarizeApprovalBody` をそのまま再利用する。
+  password / token / apikey 等は `***` になり 512 rune で切られる。
+  **新しい redaction は書かない** —— 承認プロンプトとログで同じ文字列が出ることが、
+  片方だけ漏れる事故を防ぐ
+- **レスポンス**: 4xx / 5xx のときだけ本文を 256 バイト控える。
+  正常系は git diff のような巨大な応答がありうるので保持しない。
+  `code` はこの控えた本文から読み戻す（分岐ごとに引き回さないため）
+
+読み取り（`GET /ai-api/logs`）は承認なしで通す。redact 済みで loopback 限定であり、
+エージェントが自分の失敗を自己診断できる利点を取る。書き込み（archive / clear）は
+他の書き込みと同じく承認を要する —— **エージェントが自分の活動記録を消せてはならない**。
+always-allow ルールを作れるのはユーザーだけ（`/api/approval/*` はトークン必須）なので、
+この経路が自動化されることはない。
+
 ## Consequences（結果）
 
 - エラーの `code` は API 契約になった。改名には移行手順が要る
@@ -102,9 +143,19 @@ ADR は「なぜそう決めたか」の記録で、**失敗した agent が読�
   `/ai-api` を叩く既存クライアントがあれば影響する（devhub 自身のフロントエンドは
   `/ai-api` を使わないので UI への影響はない）
 - 文書の更新にリリースが必要になった
+- `tools.Registry` の引数が増えた（store, docs, ring）。
+  合成ルートは 1 箇所なので呼び出し側の変更は `server.New` のみ
+- **always-allow を押した後の操作が見えるようになった。** これが一連の変更で
+  一番実効性のある差分で、`/logs` を開いて `approval=auto` で絞ると出る
 
 ## Alternatives considered（検討した代替案）
 
+- **ログを最初から SQLite に書き、起動時に未アーカイブ行を DELETE する。**
+  検索が SQL でそのまま書け、live と archive のコード経路が一本化される。
+  採らなかったのは、リクエストのたびに disk へ書くことになるため。
+  ローカル用途なら実測上は問題ない量だが、「ログのために本来の処理を遅くしない」
+  ほうが性質として素直だと判断した。引き換えに live と archive で
+  フィルタ実装が二重になっている（`reqlog.Filter` と `storage.RequestLogFilter`）
 - **`hint` を全エラーに機械的に付ける。** 付ける先を「詰まりやすい経路」に絞った。
   意味のない hint が並ぶと、hint 全体が読み飛ばされるようになる
 - **Agent Skill を同梱する。** 参考記事の 5 番目。CLI 側の導線が実際に効くかを
