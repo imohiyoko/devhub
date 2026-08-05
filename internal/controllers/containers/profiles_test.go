@@ -20,11 +20,21 @@ type fakeAdmin struct {
 	created []container.ProfileSpec
 	resized []container.ProfileSpec
 	checked []container.ProfileSpec
+	started []string
+	stopped []string
 	targets []container.Container
+	budget  container.Budget
 	err     error
-	// actCtxErr is the state of the context Create or Resize was handed. A
-	// cancelled one means the operation would be killed mid-flight.
+	// actCtxErr is the state of the context the operation was handed. A
+	// cancelled one means it would be killed mid-flight.
 	actCtxErr error
+}
+
+// moved reports how many times this fake was asked to touch a VM. Tests that
+// assert nothing happened use it rather than naming the fields, so a new
+// operation added to the admin cannot slip past them by being unlisted.
+func (f *fakeAdmin) moved() int {
+	return len(f.created) + len(f.resized) + len(f.started) + len(f.stopped)
 }
 
 func (f *fakeAdmin) Create(ctx context.Context, spec container.ProfileSpec) error {
@@ -44,8 +54,26 @@ func (f *fakeAdmin) CheckResize(_ context.Context, spec container.ProfileSpec) e
 	return f.err
 }
 
+func (f *fakeAdmin) Start(ctx context.Context, name string) error {
+	f.actCtxErr = ctx.Err()
+	f.started = append(f.started, name)
+	return f.err
+}
+
+func (f *fakeAdmin) Stop(ctx context.Context, name string) error {
+	f.actCtxErr = ctx.Err()
+	f.stopped = append(f.stopped, name)
+	return f.err
+}
+
 func (f *fakeAdmin) ProfileTargets(context.Context, string) ([]container.Container, error) {
 	return f.targets, f.err
+}
+
+// Budget deliberately ignores f.err: it is a read of host facts the caller
+// shows, not one of the operations a test is asserting refusals for.
+func (f *fakeAdmin) Budget(context.Context) (container.Budget, error) {
+	return f.budget, nil
 }
 
 func post(t *testing.T, a *fakeAdmin, path string, body map[string]any) (int, map[string]any) {
@@ -105,6 +133,11 @@ func TestBadRequestsNeverReachTheAdmin(t *testing.T) {
 		// The route is a prefix, so this arrives here too — and without a
 		// separator check it reads as a resize of "dev".
 		{"no separator after the prefix", "/api/containers/profilesdev/resize", map[string]any{"confirm": true}},
+		// The name is one segment. Cutting at the last separator instead would
+		// make this a stop of "a".
+		{"extra segments before the verb", "/api/containers/profiles/a/b/stop", map[string]any{"confirm": true}},
+		{"flag-like name in the URL", "/api/containers/profiles/--rm/stop", map[string]any{"confirm": true}},
+		{"missing name before the verb", "/api/containers/profiles/start", map[string]any{}},
 		// A fractional CPU count is refused rather than truncated: turning a
 		// request for 1.5 into 1 answers a question nobody asked.
 		{"fractional cpus", "/api/containers/profiles", map[string]any{"name": "ok", "cpus": 1.5}},
@@ -114,8 +147,9 @@ func TestBadRequestsNeverReachTheAdmin(t *testing.T) {
 		if code == http.StatusOK {
 			t.Errorf("%s: accepted (%v)", tc.name, out)
 		}
-		if len(a.created) > 0 || len(a.resized) > 0 {
-			t.Errorf("%s: reached the admin: created=%v resized=%v", tc.name, a.created, a.resized)
+		if a.moved() > 0 {
+			t.Errorf("%s: reached the admin: created=%v resized=%v started=%v stopped=%v",
+				tc.name, a.created, a.resized, a.started, a.stopped)
 		}
 	}
 }
@@ -227,6 +261,8 @@ func TestOperationsOutliveTheRequest(t *testing.T) {
 	}{
 		{"create", "/api/containers/profiles", map[string]any{"name": "x"}},
 		{"resize", "/api/containers/profiles/dev/resize", map[string]any{"cpus": float64(2), "confirm": true}},
+		{"start", "/api/containers/profiles/dev/start", map[string]any{}},
+		{"stop", "/api/containers/profiles/dev/stop", map[string]any{"confirm": true}},
 	} {
 		a := &fakeAdmin{}
 		ctx, cancel := context.WithCancel(context.Background())
@@ -243,13 +279,108 @@ func TestOperationsOutliveTheRequest(t *testing.T) {
 	}
 }
 
+// TestUnknownProfileRouteIs404: the verb set is closed. Nothing here removes a
+// VM, and a subcommand devhub never meant to offer cannot be reached by putting
+// it in the path.
 func TestUnknownProfileRouteIs404(t *testing.T) {
-	a := &fakeAdmin{}
-	if code, _ := post(t, a, "/api/containers/profiles/dev/destroy", map[string]any{"confirm": true}); code != http.StatusNotFound {
-		t.Errorf("code = %d, want 404 — only create and resize exist", code)
+	for _, path := range []string{
+		"/api/containers/profiles/dev/destroy",
+		"/api/containers/profiles/dev/delete",
+		"/api/containers/profiles/dev/restart",
+	} {
+		a := &fakeAdmin{}
+		if code, _ := post(t, a, path, map[string]any{"confirm": true}); code != http.StatusNotFound {
+			t.Errorf("%s: code = %d, want 404 — only create, resize, start and stop exist", path, code)
+		}
+		if a.moved() > 0 {
+			t.Errorf("%s: an unknown verb reached the admin", path)
+		}
 	}
-	if len(a.created) > 0 || len(a.resized) > 0 {
-		t.Error("an unknown verb reached the admin")
+}
+
+// TestStopWithoutConfirmOnlyReports: a stop takes down every container in the
+// VM, exactly as a resize does, so it gets the same dry run. The first call
+// answers "what would this stop" and changes nothing.
+func TestStopWithoutConfirmOnlyReports(t *testing.T) {
+	a := &fakeAdmin{targets: []container.Container{
+		{ID: "a1", Name: "other-envs-db", State: "running", Project: "someone-else"},
+		{ID: "b2", Name: "", State: "running"},
+	}}
+	code, out := post(t, a, "/api/containers/profiles/shared/stop", map[string]any{})
+
+	if code != http.StatusOK {
+		t.Fatalf("code = %d (%v)", code, out)
+	}
+	if out["ok"] != false || out["confirm_required"] != true {
+		t.Errorf("out = %v, want a confirmation request", out)
+	}
+	if len(a.stopped) != 0 {
+		t.Fatalf("stopped without confirmation: %v", a.stopped)
+	}
+	stops, _ := out["stops"].([]any)
+	if len(stops) != 2 {
+		t.Fatalf("stops = %v, want both containers named", out["stops"])
+	}
+	// The owning project is the point of the list: a container belonging to an
+	// environment that merely shares the profile is the one the user cannot
+	// work out from the screen.
+	first, _ := stops[0].(map[string]any)
+	if first["project"] != "someone-else" {
+		t.Errorf("the owning project was not reported: %v", first)
+	}
+	second, _ := stops[1].(map[string]any)
+	if second["name"] != "b2" {
+		t.Errorf("nameless container rendered as %v, want its ID", second["name"])
+	}
+}
+
+func TestStopWithConfirmActs(t *testing.T) {
+	a := &fakeAdmin{targets: []container.Container{{ID: "a1", Name: "db", State: "running"}}}
+	code, out := post(t, a, "/api/containers/profiles/dev/stop", map[string]any{"confirm": true})
+
+	if code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("code=%d out=%v", code, out)
+	}
+	if len(a.stopped) != 1 || a.stopped[0] != "dev" {
+		t.Fatalf("stopped = %v", a.stopped)
+	}
+	if stopped, _ := out["stopped"].([]any); len(stopped) != 1 {
+		t.Errorf("stopped = %v, want the container that went down", out["stopped"])
+	}
+}
+
+// TestStartActsWithoutConfirmation: a start takes nothing down, so asking would
+// be a confirmation with nothing to confirm — and it is what makes stop
+// offerable at all, so it must not be the harder of the two.
+func TestStartActsWithoutConfirmation(t *testing.T) {
+	a := &fakeAdmin{}
+	code, out := post(t, a, "/api/containers/profiles/dev/start", map[string]any{})
+
+	if code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("code=%d out=%v", code, out)
+	}
+	if len(a.started) != 1 || a.started[0] != "dev" {
+		t.Fatalf("started = %v", a.started)
+	}
+	// A start does not resize, so it must not have gone looking for a size or
+	// asked what a restart would take down.
+	if len(a.resized) > 0 || len(a.checked) > 0 {
+		t.Errorf("a start touched the resize path: resized=%v checked=%v", a.resized, a.checked)
+	}
+}
+
+// TestUnknownProfileIsNotFound: Start refuses a name that does not exist rather
+// than creating it — Create is the door for a VM that does not exist, and a typo
+// must not become a default-sized machine.
+func TestUnknownProfileIsNotFound(t *testing.T) {
+	for _, path := range []string{
+		"/api/containers/profiles/nope/start",
+		"/api/containers/profiles/nope/stop",
+	} {
+		a := &fakeAdmin{err: container.ErrProfileMissing}
+		if code, _ := post(t, a, path, map[string]any{"confirm": true}); code != http.StatusNotFound {
+			t.Errorf("%s: code = %d, want 404", path, code)
+		}
 	}
 }
 
@@ -272,5 +403,65 @@ func TestResizeRefusesBeforeAsking(t *testing.T) {
 	}
 	if len(a.resized) != 0 {
 		t.Error("resized despite the refusal")
+	}
+}
+
+// TestOverCapacityIsARefusal, not a 500: nothing was attempted and the machine
+// is untouched, which is a thing a caller (and an agent reading the response)
+// acts on differently from "devhub tried and something broke".
+func TestOverCapacityIsARefusal(t *testing.T) {
+	a := &fakeAdmin{err: container.ErrOverHostCapacity}
+	code, out := post(t, a, "/api/containers/profiles", map[string]any{"name": "big", "cpus": float64(64)})
+	if code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400", code)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(msg, container.ErrOverHostCapacity.Error()) {
+		t.Errorf("message = %q, want the container package's wording", msg)
+	}
+}
+
+// TestStartWarnsWhenTheVMsTogetherOversubscribe. A warning, not a refusal: the
+// cap bounds one VM, and two being up at once is something the user may well
+// have meant. What they cannot do is notice it — nothing on the panel adds the
+// profiles up — so the answer says it once.
+func TestStartWarnsWhenTheVMsTogetherOversubscribe(t *testing.T) {
+	a := &fakeAdmin{budget: container.Budget{
+		Detected: true, HostMemBytes: 32 << 30, MemCapGiB: 25, RunningMemGiB: 36,
+	}}
+	code, out := post(t, a, "/api/containers/profiles/dev/start", map[string]any{})
+
+	if code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("the start was refused: code=%d out=%v", code, out)
+	}
+	if len(a.started) != 1 {
+		t.Fatalf("started = %v — the warning must not have blocked it", a.started)
+	}
+	warning, _ := out["warning"].(string)
+	if warning == "" {
+		t.Fatal("no warning for 36 GiB allocated against a 25 GiB cap")
+	}
+	for _, want := range []string{"36 GiB", "25 GiB", "32 GiB"} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("warning is missing %q:\n%s", want, warning)
+		}
+	}
+}
+
+// TestStartIsQuietWhenItFits — and when devhub cannot measure the host at all,
+// since a warning computed from zeros would be about a machine nobody has.
+func TestStartIsQuietWhenItFits(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		budget container.Budget
+	}{
+		{"within the cap", container.Budget{Detected: true, MemCapGiB: 25, RunningMemGiB: 20}},
+		{"exactly at the cap", container.Budget{Detected: true, MemCapGiB: 25, RunningMemGiB: 25}},
+		{"host unknown", container.Budget{Detected: false, MemCapGiB: 0, RunningMemGiB: 99}},
+	} {
+		a := &fakeAdmin{budget: tc.budget}
+		_, out := post(t, a, "/api/containers/profiles/dev/start", map[string]any{})
+		if w, _ := out["warning"].(string); w != "" {
+			t.Errorf("%s: warned anyway:\n%s", tc.name, w)
+		}
 	}
 }

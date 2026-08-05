@@ -53,6 +53,13 @@ type Source struct {
 	// says why, in the CLI's own words where there is one.
 	Available bool
 	Reason    string
+	// Status is Colima's own word for the VM's state ("Running", "Stopped", …),
+	// empty for a Docker source. It is reported because Available collapses two
+	// unlike situations into one bit: a profile that is merely stopped, and one
+	// running an engine devhub cannot drive. Only the first is fixed by starting
+	// it, so a caller that cannot tell them apart would offer a button that
+	// changes nothing.
+	Status string
 	// AliasOf names the source this one turned out to be a second route to —
 	// the ambient Docker context resolving to a Colima profile's VM, almost
 	// always. Its containers are reported under that source instead, so they
@@ -311,7 +318,7 @@ func (r *Runtime) inventorySources(ctx context.Context) []Source {
 func colimaSource(p Profile) Source {
 	src := Source{
 		ID: ProviderColima + ":" + p.Name, Label: "Colima: " + p.Name,
-		Profile: p.Name, Engine: p.Engine, Context: p.Context,
+		Profile: p.Name, Engine: p.Engine, Context: p.Context, Status: p.Status,
 		CPUs: p.CPUs, MemoryBytes: p.MemoryBytes, DiskBytes: p.DiskBytes,
 	}
 	switch {

@@ -98,20 +98,20 @@ var Registry = []Surface{
 		ID:       "colima-profile",
 		Binaries: []string{"colima"},
 		Kind:     Fixed,
-		Trigger:  "POST /api/containers/profiles (create) and POST /api/containers/profiles/{name}/resize. Nothing else reaches it: no switch, status read or page load starts, stops or reconfigures a VM.",
-		// One prefix entry, because the resize path carries the profile name and
-		// is therefore not a fixed literal the guard could match. The two
+		Trigger:  "POST /api/containers/profiles (create) and POST /api/containers/profiles/{name}/{resize,start,stop}. Nothing else reaches it: no switch, status read or page load starts, stops or reconfigures a VM.",
+		// One prefix entry, because the per-profile paths carry the profile name
+		// and are therefore not fixed literals the guard could match. The
 		// endpoints under it are named in Trigger.
 		Callers: []string{"POST /api/containers/profiles*"},
-		Input:   "Fixed argv: `start --profile <name> [--cpus N] [--memory N] [--disk N] [--runtime docker|containerd]`, and for a resize `stop --profile <name>` first. The name must match [A-Za-z0-9_][A-Za-z0-9_-]* — the leading character cannot be a hyphen, so a name can never pass for a flag — and the engine must be one devhub has an adapter for, both checked before anything is spawned; the numbers are rendered from parsed integers, never passed through as text. --force is never passed to stop, so the guest shuts down gracefully.",
-		Gate:    "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Both routes are POSTs, so the /ai-api path always waits for approval — an agent can ask for a VM, it cannot have one without the user saying yes.",
-		Notes:   "This is the one place devhub moves a Colima VM rather than reading it, which is why it is its own Surface rather than more calls under container-runtime: that one is bounded to a declared compose project, this one starts and stops whole machines. Create refuses a name that already exists rather than silently resizing it, because a resize stops every container in the VM — including containers belonging to other environments that merely share the profile, which the caller is expected to list to the user first. Shrinking a disk is refused outright: colima cannot do it in place, so it would mean recreating the VM and losing every image on it, and unlike a stop that cannot be undone by starting the profile again. Spawns through adminRunner in internal/container/profile.go.",
+		Input:   "Fixed argv: `start --profile <name> [--cpus N] [--memory N] [--disk N] [--runtime docker|containerd]` and `stop --profile <name>`. A create or a resize may carry sizes; a plain start passes none, so colima applies the configuration the profile already has. A resize runs the stop and then the start. The name must match [A-Za-z0-9_][A-Za-z0-9_-]* — the leading character cannot be a hyphen, so a name can never pass for a flag — and the engine must be one devhub has an adapter for, both checked before anything is spawned; the numbers are rendered from parsed integers, never passed through as text. --force is never passed to stop, so the guest shuts down gracefully.",
+		Gate:    "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). Every route is a POST, so the /ai-api path always waits for approval — an agent can ask for a VM, it cannot have one without the user saying yes.",
+		Notes:   "This is the one place devhub moves a Colima VM rather than reading it, which is why it is its own Surface rather than more calls under container-runtime: that one is bounded to a declared compose project, this one starts and stops whole machines. The operations split by blast radius. Create and start bring a VM up and have nothing to take down; create refuses a name that already exists and start refuses one that does not, so neither can silently become the other. Stop and resize take every container in the VM down — including containers belonging to other environments that merely share the profile — which the caller is expected to list to the user before asking, and both are recoverable by starting the profile again. The one thing that is not recoverable is refused outright: colima cannot shrink a disk in place, so it would mean recreating the VM and losing every image on it. A second refusal bounds the sizes against the machine itself: create, resize and start are turned away when the VM would be given more cores or memory than the host has left after the configured reserve (settings key vm_reserve, default 20%), which is read from internal/hostspec — runtime.NumCPU and a sysctl, no subprocess, so the check that runs before everything else spawns nothing of its own. Disk is exempt because Lima's images are sparse and a larger declaration is legitimate; stop is exempt because a cap that blocked reclaiming memory would be the worst failure available. Nothing here deletes a profile. Spawns through adminRunner in internal/container/profile.go.",
 	},
 	{
 		ID:       "container-runtime",
 		Binaries: []string{"docker", "colima"},
 		Kind:     Fixed,
-		Trigger:  "docker/colima nerdctl: GET /api/envs/state and POST /api/envs/switch/plan (read: `ps`); POST /api/envs/switch/apply (write: `up`/`stop`); GET /api/envs/runtimes (read: docker `compose version`). colima `list --json` reaches further than the env endpoints, because every caller that needs to know which VMs exist asks the same probe: GET /api/envs/runtimes and POST /api/envs/switch/{plan,apply}, plus GET /api/containers (the panel derives its sources from the profile list), POST /api/containers/profiles (checks the name is free), POST /api/containers/profiles/{name}/resize (checks the profile exists, how big it is now, and what a restart would stop), and POST /api/containers/{logs,stop,restart} (each resolves the container it names against a fresh sweep before acting). Those all have their own Surfaces for what they spawn directly — containers-list, containers-control and colima-profile — but the `list` they cause is filed here, because it is execRunner that spawns it.",
+		Trigger:  "docker/colima nerdctl: GET /api/envs/state and POST /api/envs/switch/plan (read: `ps`); POST /api/envs/switch/apply (write: `up`/`stop`); GET /api/envs/runtimes (read: docker `compose version`). colima `list --json` reaches further than the env endpoints, because every caller that needs to know which VMs exist asks the same probe: GET /api/envs/runtimes and POST /api/envs/switch/{plan,apply}, plus GET /api/containers (the panel derives its sources from the profile list), POST /api/containers/profiles (checks the name is free), POST /api/containers/profiles/{name}/resize (checks the profile exists, how big it is now, and what a restart would stop), POST /api/containers/profiles/{name}/{start,stop} (each looks the profile up before touching it, so an operation cannot name a VM colima is not reporting), and POST /api/containers/{logs,stop,start,restart} (each resolves the container it names against a fresh sweep before acting). Those all have their own Surfaces for what they spawn directly — containers-list, containers-control and colima-profile — but the `list` they cause is filed here, because it is execRunner that spawns it.",
 		Callers: []string{
 			"GET /api/containers",
 			"GET /api/envs/runtimes",
@@ -119,6 +119,7 @@ var Registry = []Surface{
 			"POST /api/containers/logs",
 			"POST /api/containers/profiles*",
 			"POST /api/containers/restart",
+			"POST /api/containers/start",
 			"POST /api/containers/stop",
 			"POST /api/envs/switch/apply",
 			"POST /api/envs/switch/plan",
@@ -132,29 +133,31 @@ var Registry = []Surface{
 		ID:       "containers-control",
 		Binaries: []string{"docker", "colima"},
 		Kind:     Fixed,
-		Trigger:  "POST /api/containers/logs (read: `logs --tail N`), POST /api/containers/stop and POST /api/containers/restart (write). One container per request, named in the body; nothing here is reachable by a page load or by any env-launcher endpoint.",
+		Trigger:  "POST /api/containers/logs (read: `logs --tail N`), and POST /api/containers/{stop,start,restart} (write). One container per request, named in the body; nothing here is reachable by a page load or by any env-launcher endpoint.",
 		Callers: []string{
 			"POST /api/containers/logs",
 			"POST /api/containers/restart",
+			"POST /api/containers/start",
 			"POST /api/containers/stop",
 		},
-		Input: "Fixed argv: docker `[--context colima-<profile>] {logs --tail <n>|stop|restart} <id>`, or for a containerd profile `colima nerdctl --profile <profile> -- {…} <id>`. The container ID is the only value from the request that reaches a command line, and it is not trusted: it must match [0-9a-fA-F]{12,64} and then must appear in a listing taken from that engine in the same request (Runtime.ResolveContainer). The source and context names are not request data either — they come from `colima list --json`, so the only values passed are ones Colima itself reported. The tail count is clamped, not passed through as text.",
-		Gate:  "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). All three are POSTs, so the /ai-api path always waits for approval — which matters more here than anywhere else in devhub, because this panel deliberately lists containers no environment declared, so an agent reading it can name anything on the machine.",
-		Notes: "The third seam in internal/container, and separate for what each one can claim: the adapters under container-runtime are confined to a declared compose project, containers-list only ever reads, and this one is neither. What bounds it instead is the resolve — an operation may only name a container the engine is reporting right now, so an arbitrary string cannot reach argv and a caller cannot act on something the panel never showed. Nothing here removes anything: no `rm`, no `prune`. Those destroy state that pressing the other button does not bring back, and a machine-wide panel is the worst place to offer them. Spawns through controlRunner in internal/container/control.go.",
+		Input: "Fixed argv: docker `[--context colima-<profile>] {logs --tail <n>|stop|start|restart} <id>`, or for a containerd profile `colima nerdctl --profile <profile> -- {…} <id>`. The subcommand is chosen from a closed set in the handler, not taken from the path. The container ID is the only value from the request that reaches a command line, and it is not trusted: it must match [0-9a-fA-F]{12,64} and then must appear in a listing taken from that engine in the same request (Runtime.ResolveContainer). The source and context names are not request data either — they come from `colima list --json`, so the only values passed are ones Colima itself reported. The tail count is clamped, not passed through as text.",
+		Gate:  "host allowlist + API token (/api); loopback + Sec-Fetch + manual approval (/ai-api). All four are POSTs, so the /ai-api path always waits for approval — which matters more here than anywhere else in devhub, because this panel deliberately lists containers no environment declared, so an agent reading it can name anything on the machine.",
+		Notes: "The third seam in internal/container, and separate for what each one can claim: the adapters under container-runtime are confined to a declared compose project, containers-list only ever reads, and this one is neither. What bounds it instead is the resolve — an operation may only name a container the engine is reporting right now, so an arbitrary string cannot reach argv and a caller cannot act on something the panel never showed. start is the inverse of stop and cannot create anything, for that same reason: a stopped container is one the engine is still reporting. Nothing here removes anything: no `rm`, no `prune`. Those destroy state that pressing the other button does not bring back, and a machine-wide panel is the worst place to offer them. Spawns through controlRunner in internal/container/control.go.",
 	},
 	{
 		ID:       "containers-list",
 		Binaries: []string{"docker", "colima"},
 		Kind:     Fixed,
-		Trigger:  "GET /api/containers (the panel's read); once per POST /api/containers/{logs,stop,restart} — an operation resolves the container it names against a fresh listing before it runs, so the containers-control Surface causes a listing here every time it acts; and once per POST /api/containers/profiles/{name}/resize, whose \"what would this stop\" answer is a listing of the profile (Runtime.ProfileTargets), taken both for the dry run and for the confirmed apply.",
+		Trigger:  "GET /api/containers (the panel's read); once per POST /api/containers/{logs,stop,start,restart} — an operation resolves the container it names against a fresh listing before it runs, so the containers-control Surface causes a listing here every time it acts; and once per POST /api/containers/profiles/{name}/{resize,stop}, whose \"what would this stop\" answer is a listing of the profile (Runtime.ProfileTargets), taken both for the dry run and for the confirmed apply.",
 		Callers: []string{
 			"GET /api/containers",
 			"POST /api/containers/logs",
-			// The create half of this prefix does not list; the resize half does,
-			// for both the dry run and the apply. The prefix cannot be split
-			// further because the resize path carries the profile name.
+			// The halves of this prefix that take a VM down list first, for both
+			// the dry run and the apply; create and start do not. The prefix
+			// cannot be split further because those paths carry the profile name.
 			"POST /api/containers/profiles*",
 			"POST /api/containers/restart",
+			"POST /api/containers/start",
 			"POST /api/containers/stop",
 		},
 		Input: "Fixed argv, read-only: docker `[--context colima-<profile>] ps --all --format json`, or for a containerd profile `colima nerdctl --profile <profile> -- ps -a --format json`. Nothing from the request reaches the argv. The context and profile names are not user input either: they come from `colima list --json` via the capability probe, so the only values ever passed are ones Colima itself reported.",
