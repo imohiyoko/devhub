@@ -142,6 +142,9 @@ var execFreeEndpoints = map[string]string{
 	"/api/envs":                  "the environment definitions document, read and written through the store. Launching one is /api/envs/launch.",
 	"/api/envs/launches/remove":  "drops a launch row from the registry. It explicitly never touches worktrees and never kills anything (see removeLaunch).",
 	"/api/info":                  "version, pid and build provenance, all held in memory.",
+	"/api/logs":                  "searches the request log — the in-memory ring, or the rows archived into the store. It reads the record of what devhub did; it re-runs none of it.",
+	"/api/logs/archive":          "copies matching ring entries into the store so they outlive the process. Store writes only.",
+	"/api/logs/clear":            "empties the ring, or deletes archived rows. It discards devhub's own record and touches nothing outside it.",
 	"/api/ls":                    "directory listing via os.ReadDir; the workspace annotations come from the store, not from git.",
 	"/api/ports/label":           "a per-port label kept in the store.",
 	"/api/ports/protected":       "the protected-port set kept in the store.",
@@ -654,7 +657,7 @@ func malformedCaller(raw, why string) error {
 func registeredEndpoints(t *testing.T) []endpoint {
 	t.Helper()
 	var out []endpoint
-	for _, tool := range tools.Registry(nil, nil).Tools() {
+	for _, tool := range tools.Registry(nil, nil, nil).Tools() {
 		id := tool.Meta().ID
 		for _, r := range tool.Routes() {
 			out = append(out, endpoint{method: r.Method, path: r.Pattern, prefix: r.Prefix, origin: "tool " + id})
