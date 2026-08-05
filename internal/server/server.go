@@ -19,6 +19,7 @@ import (
 	"github.com/imohiyoko/devhub/internal/core"
 	docspkg "github.com/imohiyoko/devhub/internal/docs"
 	"github.com/imohiyoko/devhub/internal/platform"
+	"github.com/imohiyoko/devhub/internal/reqlog"
 	"github.com/imohiyoko/devhub/internal/storage"
 	"github.com/imohiyoko/devhub/internal/tools"
 )
@@ -66,6 +67,24 @@ type Server struct {
 	gateway *core.Gateway
 
 	approvalMgr *approval.Manager
+
+	// instance is a fresh random id minted for this Server. It changes on every
+	// (re)start — including a rebuild that re-execs or spawns a replacement — so
+	// the frontend can detect "the server I'm talking to is a new process" by
+	// comparing /api/info's `instance` against the value it captured before the
+	// rebuild, instead of trying to catch the transient down-window (which a fast
+	// `go run` restart can slip through entirely, leaving the UI polling forever).
+	//
+	// It also labels rlog's entries, which is why it is minted per Server rather
+	// than once per process: seq restarts at 1 with every ring, so two rings
+	// sharing one id would make two different requests indistinguishable in the
+	// archive — and the second would be silently discarded as a duplicate.
+	instance string
+
+	// rlog is this server's request log. It is in-memory and dies with the
+	// process by design (see internal/reqlog); the logs tool is what copies
+	// anything worth keeping into the store.
+	rlog *reqlog.Ring
 }
 
 // New builds a Server: resolves the token (inheriting DEVHUB_API_TOKEN across a
@@ -119,7 +138,13 @@ func New(store *storage.Store, assets, docsFS fs.FS, settings map[string]any, no
 	if err != nil {
 		return nil, fmt.Errorf("load docs: %w", err)
 	}
-	reg := tools.Registry(store, docSet)
+	// The instance id scopes archived entries to the run they came from, so a
+	// seq is never ambiguous across restarts. The ring carries it: everything
+	// downstream reads it from there, so there is no second copy to fall out of
+	// step with the counter.
+	s.instance = generateToken()
+	s.rlog = reqlog.New(reqlog.Capacity, s.instance)
+	reg := tools.Registry(store, docSet, s.rlog)
 	script := buildTokenScript(s.token)
 
 	toolPages := map[string][]byte{}
