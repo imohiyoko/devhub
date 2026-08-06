@@ -476,6 +476,10 @@ function rowHtml(c) {
 //
 // status が無いときはサイズ変更だけ出す。起動と停止はどちらを出すべきか決められ
 // ないが、サイズ変更は profile がある時点で押せる。
+//
+// 逆に Running 以外は Broken でも起動を出す。colima の状態語を devhub 側で網羅
+// するとその一覧が colima より先に古くなるので、判定は「動いているか」だけに寄せ
+// て、起動できないものは colima のエラーで返させる。
 function vmControls(src) {
   if (!src.profile || src.alias_of) return '';
   const p = escapeHtml(src.profile);

@@ -19,6 +19,7 @@ package container
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -281,7 +282,7 @@ func intField(m map[string]any, key, where string) (int, bool, error) {
 func rejectUnknownKeys(m map[string]any, where string, allowed ...string) error {
 	var bad []string
 	for k := range m {
-		if !contains(allowed, k) {
+		if !slices.Contains(allowed, k) {
 			bad = append(bad, k)
 		}
 	}
@@ -291,13 +292,4 @@ func rejectUnknownKeys(m map[string]any, where string, allowed ...string) error 
 	sort.Strings(bad) // map order is random; the message must not be
 	return fmt.Errorf("%s に未知のキーがあります: %s（使えるのは %s）",
 		where, strings.Join(bad, ", "), strings.Join(allowed, ", "))
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

@@ -347,6 +347,14 @@ func (a *colimaAdmin) reserveOrDefault() Reserve {
 // what the VM would end up with; zero means "not being set", which on a create
 // leaves colima's own default and on a start means the value was not reported.
 //
+// So a create that names no sizes is not capped, and a reserve large enough to
+// put the cap under colima's own default admits a profile that Start then
+// refuses — Start sees the size colima actually chose. Guessing at colima's
+// defaults to close that would be worse: devhub would refuse creates on a
+// number it made up, and the number would go stale the first time colima
+// changed it. The profile exists, is visible, and says why it will not start,
+// which is a state the user can act on.
+//
 // Deliberately not called from check(). check() also gates Stop, and a cap that
 // blocked stopping an over-sized VM would be the worst possible failure: the
 // user would be unable to reclaim the very memory the cap is protecting.

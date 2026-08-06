@@ -17,15 +17,16 @@ import (
 )
 
 type fakeAdmin struct {
-	created []container.ProfileSpec
-	resized []container.ProfileSpec
-	checked []container.ProfileSpec
-	started []string
-	stopped []string
-	targets []container.Container
-	limits  container.Limits
-	allocs  []container.Alloc
-	err     error
+	created    []container.ProfileSpec
+	resized    []container.ProfileSpec
+	checked    []container.ProfileSpec
+	started    []string
+	stopped    []string
+	targets    []container.Container
+	targetsErr error
+	limits     container.Limits
+	allocs     []container.Alloc
+	err        error
 	// actCtxErr is the state of the context the operation was handed. A
 	// cancelled one means it would be killed mid-flight.
 	actCtxErr error
@@ -67,7 +68,13 @@ func (f *fakeAdmin) Stop(ctx context.Context, name string) error {
 	return f.err
 }
 
+// targetsErr fails only the listing, leaving the VM operations working. That is
+// a real combination — the listing runs `docker ps` inside the VM, which is
+// exactly what a wedged daemon breaks — and the shared f.err cannot express it.
 func (f *fakeAdmin) ProfileTargets(context.Context, string) ([]container.Container, error) {
+	if f.targetsErr != nil {
+		return nil, f.targetsErr
+	}
 	return f.targets, f.err
 }
 
@@ -349,6 +356,44 @@ func TestStopWithConfirmActs(t *testing.T) {
 	}
 	if stopped, _ := out["stopped"].([]any); len(stopped) != 1 {
 		t.Errorf("stopped = %v, want the container that went down", out["stopped"])
+	}
+}
+
+// TestConfirmedStopSurvivesAnUnlistableVM. The listing runs `docker ps` inside
+// the VM, and the ways it fails are the ways that make someone want to stop it:
+// a wedged daemon, a probe that timed out, an engine devhub cannot drive.
+// Blocking an agreed stop on it would mean the VM most in need of stopping is
+// the one devhub refuses to stop — the same failure the capacity cap avoids by
+// staying out of check().
+func TestConfirmedStopSurvivesAnUnlistableVM(t *testing.T) {
+	a := &fakeAdmin{targetsErr: errors.New("docker: context colima-dev not found")}
+	code, out := post(t, a, "/api/containers/profiles/dev/stop", map[string]any{"confirm": true})
+
+	if code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("an agreed stop was refused because the listing failed: code=%d out=%v", code, out)
+	}
+	if len(a.stopped) != 1 || a.stopped[0] != "dev" {
+		t.Fatalf("stopped = %v, want the VM down", a.stopped)
+	}
+	// Absent rather than empty: an empty array would be devhub stating that
+	// nothing went down, which is a different claim from not having looked.
+	if _, found := out["stopped"]; found {
+		t.Errorf("stopped = %v, want the key absent when the listing failed", out["stopped"])
+	}
+}
+
+// TestUnconfirmedStopStillNeedsTheListing: the dry run *is* the listing. Letting
+// it answer with an empty list would read as "nothing goes down", which is the
+// one thing the confirmation exists to say.
+func TestUnconfirmedStopStillNeedsTheListing(t *testing.T) {
+	a := &fakeAdmin{targetsErr: errors.New("probe timed out")}
+	code, out := post(t, a, "/api/containers/profiles/dev/stop", map[string]any{})
+
+	if code == http.StatusOK {
+		t.Fatalf("the dry run claimed success without a listing: %v", out)
+	}
+	if a.moved() != 0 {
+		t.Errorf("touched a VM on a failed dry run: %+v", a)
 	}
 }
 
