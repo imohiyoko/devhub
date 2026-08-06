@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	devhub "github.com/imohiyoko/devhub"
 	"github.com/imohiyoko/devhub/internal/core"
@@ -111,6 +112,61 @@ func TestBlockedPathsNameRoutesThatExistAndAreExact(t *testing.T) {
 		}
 		if !exact {
 			t.Errorf("%q blocks nothing: no tool declares it as an exact route (renamed or moved?)", blocked)
+		}
+	}
+}
+
+// The blocklist is an exact-match map over a path nobody canonicalized:
+// net/http.Server, unlike http.ServeMux, hands the handler the path as written.
+// So "/ai-api/./logs/clear" does not match the key that withholds it, and the
+// unconditional barrier is not the one holding these back.
+//
+// What holds them is the approval gate and, behind it, the gateway matching
+// routes exactly or by prefix. Both are barriers this change argued are the
+// wrong ones to rely on: decision #8 exists precisely because approval is one
+// "always allow" away from automatic, and labelEscape escapes "?" rather than
+// trusting the gateway's route matching.
+//
+// So the test stands where decision #8 says an agent can stand — past the
+// approval gate — and pins the outcome rather than the mechanism. Whoever later
+// adds path cleaning, or turns /api/logs/ into a prefix route, has to keep the
+// handler behind a blocked path from running. The setup entry is the witness:
+// clear empties the ring, so it surviving is proof the handler did not.
+func TestNonCanonicalPathsDoNotReachABlockedHandler(t *testing.T) {
+	// A safety net only. If the always-allow rule below stops matching, these
+	// fall back to waiting for a user who is not here, and the test would take a
+	// minute per spelling on its way to proving nothing.
+	orig := approvalTimeout
+	approvalTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { approvalTimeout = orig })
+
+	for _, path := range []string{
+		"/ai-api/./logs/clear",
+		"/ai-api//logs/clear",
+		"/ai-api/logs/./clear",
+		"/ai-api/logs/../logs/clear",
+		"/ai-api/logs/clear/",
+		"/ai-api/logs/clear/.",
+	} {
+		srv := newTestServer(t)
+		srv.do(http.MethodGet, "/api/ports", goodHost, testToken, "", nil) // the witness
+		// The detail is "POST <path> (no request body)", so this prefix matches
+		// it at a space boundary — the same way a rule the user actually clicked
+		// would.
+		srv.approvalMgr.AddAlwaysAllowRule("api_write", "POST "+path)
+
+		rr := srv.do(http.MethodPost, path, goodHost, "", "", nil)
+		// Without this the test can go vacuous without saying so: a rule that
+		// stopped matching would leave the approval gate doing the stopping, and
+		// every assertion below would pass no matter what the blocklist did.
+		if rr.Code == http.StatusRequestTimeout {
+			t.Fatalf("POST %s waited for approval — the rule no longer matches, so this test checks nothing", path)
+		}
+		if rr.Code == http.StatusOK {
+			t.Errorf("POST %s = 200 — it reached a handler", path)
+		}
+		if n := len(srv.rlog.Query(reqlog.Filter{PathPrefix: "/api/ports"})); n != 1 {
+			t.Errorf("POST %s emptied the ring — the clear handler ran behind the blocklist", path)
 		}
 	}
 }
