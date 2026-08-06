@@ -73,8 +73,10 @@
         <div style="font-size: 12px; color: var(--muted); margin: 4px 0 8px;">
           ※ Repository を選ぶと、この環境のプロセスは選んだ範囲からのみ binding できます（事故防止）。空なら制限なし。
         </div>
-        <label>許可する Repository</label>
-        <div id="envRepos" class="check-list"></div>
+        <!-- A <label> with no `for` and no control inside labels nothing, so the
+             caption is a plain element and the group is named through it. -->
+        <div class="field-label" id="envReposLabel">許可する Repository</div>
+        <div id="envRepos" class="check-list" role="group" aria-labelledby="envReposLabel"></div>
         <label style="margin-top: 8px;">許可する IP / ホスト <span style="font-size: 11px; color: var(--muted);">※ 1行に1つ</span></label>
         <textarea id="envIps" class="form-control" rows="2" style="font-family: monospace; resize: vertical;" placeholder="10.0.0.1&#10;db.local"></textarea>
       </div>
@@ -222,8 +224,8 @@
         <input type="text" id="scenarioName" class="form-control" placeholder="会計">
       </div>
       <div class="form-group">
-        <label>所属コンポーネント</label>
-        <div id="scenarioComponents" class="check-list"></div>
+        <div class="field-label" id="scenarioComponentsLabel">所属コンポーネント</div>
+        <div id="scenarioComponents" class="check-list" role="group" aria-labelledby="scenarioComponentsLabel"></div>
         <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">
           このシナリオへ切り替えたときに起動するコンポーネントです。lifecycle が <code>shared</code> のものは全シナリオに暗黙で所属するため、ここには出ません。
         </div>

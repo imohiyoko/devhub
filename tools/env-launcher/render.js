@@ -24,15 +24,29 @@ function switchSectionHtml(env, eIdx) {
     ? components.map((c, cIdx) => {
         const seen = observed[c.id] || {};
         const stateName = seen.state || 'unknown';
-        const why = seen.reason || (state ? '' : '状態を読み込み中');
+        // 読み込み前と、読んで失敗した後は別のこと。後者を「読み込み中」と書くと
+        // 待てば直るという意味になり、恒久的な失敗のとき嘘になる。
+        const unread = switchStateStale ? '状態を取得できませんでした' : state ? '' : '状態を読み込み中';
+        const why = seen.reason || unread;
         const reason = why ? ` — ${escapeHtml(why)}` : '';
         const shared = c.lifecycle === 'shared' ? ' <span class="component-tag">shared</span>' : '';
         const kind = c.kind === 'compose_service' ? 'compose_service' : 'host_process';
         // 個別起動は「今 running のものに 1 つ足した目的状態」として組む
         // (startComponent) ので、観測状態が無ければ安全な target を作れない。
-        // running なら起動しても差分が無いので、どちらも押させない。
-        const startNote = !state ? '状態を読み込み中です' : stateName === 'running' ? '起動済みです' : '';
-        const startAttrs = startNote ? ` disabled title="${escapeHtml(startNote)}"` : '';
+        // running なら起動しても差分が無い。どちらも押させない。
+        //
+        // unknown は押させる。ポート未宣言の host_process は恒久的に unknown な
+        // ので、ここで塞ぐと「二度と起動できないコンポーネント」ができる。ただし
+        // 「起動済みなら押せない」という保証はこの行には無いことを明示する。実際に
+        // 重複するかどうかは plan が警告を出すので、判断はそこでできる。
+        const startNote = !state || switchStateStale
+          ? '状態を取得できていないため起動できません'
+          : stateName === 'running' ? '起動済みです' : '';
+        const startAttrs = startNote
+          ? ` disabled title="${escapeHtml(startNote)}"`
+          : stateName === 'unknown'
+            ? ' title="起動しているか判定できません。既に起動している場合は重複します。"'
+            : '';
         return `
       <div class="component-item">
         <span class="state-dot state-${escapeHtml(stateName)}" title="${escapeHtml(why || stateName)}"></span>
