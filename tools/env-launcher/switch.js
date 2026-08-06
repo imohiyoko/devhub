@@ -66,6 +66,30 @@ function stopScenarioComponents(envId) {
   requestSwitchPlan(envId, {components: []}, 'シナリオのコンポーネントを全停止');
 }
 
+// Starting one component. The target is declarative, so sending {components:
+// [id]} alone would mean "and stop every other scenario component" — the
+// opposite of what a per-row 起動 button promises. The additive meaning is
+// expressed by targeting what is already running, plus the requested one.
+//
+// State is re-read first rather than trusted from the last fetch: a target
+// built from a stale snapshot would list something started since as a stop.
+// The plan screen would still show it, but a 起動 button should not be
+// producing stops to review in the first place.
+async function startComponent(envId, componentId, label) {
+  await fetchSwitchState();
+  const state = switchEnvState(envId);
+  if (!state) {
+    alert('コンポーネントの状態を取得できないため、起動内容を計算できません。');
+    return;
+  }
+  // Unknown components are left out deliberately: they are not stopped either
+  // way (planSwitch warns instead of stopping them), and putting them in the
+  // target would start a duplicate of something that may already be running.
+  const running = (state.components || []).filter(c => c.state === 'running').map(c => c.id);
+  const target = running.includes(componentId) ? running : running.concat([componentId]);
+  requestSwitchPlan(envId, {components: target}, `「${label || componentId}」を起動`);
+}
+
 function planSteps(title, steps, cls) {
   if (!steps || !steps.length) return '';
   const items = steps.map(s =>
