@@ -27,7 +27,11 @@ func (f fakeInventory) Containers(context.Context) ([]container.Source, []contai
 func get(t *testing.T, inv fakeInventory) map[string]any {
 	t.Helper()
 	rr := httptest.NewRecorder()
-	c := &Controller{runtime: inv}
+	// An admin is always wired in production (New builds one), so the helper
+	// supplies a double rather than the handler carrying a nil check that only
+	// a test could trip. Its zero Limits is the undetected host, which is what
+	// these payload tests want anyway.
+	c := &Controller{runtime: inv, admin: &fakeAdmin{}}
 	if err := c.HandleGet(rr, httptest.NewRequest(http.MethodGet, "/api/containers", nil)); err != nil {
 		t.Fatalf("HandleGet: %v", err)
 	}
@@ -59,6 +63,34 @@ func TestUnlistableSourcesReachThePanel(t *testing.T) {
 	}
 	if stopped["reason"] == "" {
 		t.Error("the stopped profile arrived without a reason; that is the actionable part")
+	}
+}
+
+// TestProfileStatusReachesThePanel: available collapses "merely stopped" and
+// "an engine devhub cannot drive" into one bit, and only the first is fixed by
+// starting the VM. Without the status the panel would offer a start button that
+// changes nothing — or withhold one that would have worked.
+func TestProfileStatusReachesThePanel(t *testing.T) {
+	out := get(t, fakeInventory{sources: []container.Source{
+		{ID: "docker", Label: "Docker", Available: true},
+		{ID: "colima:dev", Label: "Colima: dev", Profile: "dev", Status: "Stopped"},
+		{ID: "colima:odd", Label: "Colima: odd", Profile: "odd", Status: "Running",
+			Reason: "incus は devhub が扱えません"},
+	}})
+	srcs, _ := out["sources"].([]any)
+
+	// A Docker source has no VM, so no status — absent, not an empty string
+	// that would read as "colima said nothing".
+	if plain, _ := srcs[0].(map[string]any); plain["status"] != nil {
+		t.Errorf("ambient docker reported a VM status: %v", plain["status"])
+	}
+	if stopped, _ := srcs[1].(map[string]any); stopped["status"] != "Stopped" {
+		t.Errorf("status = %v, want Stopped", stopped["status"])
+	}
+	// Unavailable but running: the panel must be able to tell this one apart
+	// from the stopped one above.
+	if odd, _ := srcs[2].(map[string]any); odd["status"] != "Running" {
+		t.Errorf("status = %v, want Running", odd["status"])
 	}
 }
 
@@ -149,5 +181,82 @@ func TestAliasReachesThePanel(t *testing.T) {
 	kept, _ := srcs[1].(map[string]any)
 	if kept["alias_of"] != "" {
 		t.Errorf("the kept source reported alias_of = %v", kept["alias_of"])
+	}
+}
+
+// TestLimitsRideWithTheListing. The cap has to be on screen before someone runs
+// into it — a size field with no limit shown is a limit the user meets by being
+// refused — and it arrives with the listing rather than behind a second
+// endpoint the panel would have to fetch.
+//
+// It is the caps and the host, and not what is currently allocated: the sources
+// in the same payload already carry each profile's size and status, so a
+// running total here would be a second count of numbers the listing reported —
+// one that could drift from the one the start path decides on.
+func TestLimitsRideWithTheListing(t *testing.T) {
+	rr := httptest.NewRecorder()
+	c := &Controller{
+		runtime: fakeInventory{sources: []container.Source{
+			{ID: "docker", Label: "Docker", Available: true},
+			{ID: "colima:up", Profile: "up", Status: "Running", Available: true,
+				CPUs: 8, MemoryBytes: 20 << 30},
+			{ID: "colima:down", Profile: "down", Status: "Stopped",
+				CPUs: 6, MemoryBytes: 16 << 30},
+		}},
+		admin: &fakeAdmin{limits: container.Limits{
+			Detected: true, HostCPUs: 10, HostMemBytes: 32 << 30, FreeDiskBytes: 129 << 30,
+			CPUCap: 8, MemCapGiB: 25, Reserve: container.DefaultReserve(),
+		}},
+	}
+	if err := c.HandleGet(rr, httptest.NewRequest(http.MethodGet, "/api/containers", nil)); err != nil {
+		t.Fatalf("HandleGet: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	host, _ := out["host"].(map[string]any)
+	if host == nil {
+		t.Fatal("no host budget in the payload")
+	}
+	for k, want := range map[string]float64{
+		"cpus": 10, "cpu_cap": 8, "memory_cap_gib": 25,
+	} {
+		if host[k] != want {
+			t.Errorf("host[%q] = %v, want %v", k, host[k], want)
+		}
+	}
+	// No running total: the sources in this same payload carry the sizes and
+	// statuses it would be summed from, and a second count here is one that can
+	// disagree with the one the start path actually decides on.
+	for _, k := range []string{"running_cpus", "running_mem_gib"} {
+		if _, found := host[k]; found {
+			t.Errorf("host[%q] appeared; the sources already carry that", k)
+		}
+	}
+	// The reserve travels in the form it was written, so the panel can say
+	// "20%" rather than a number of cores it would have to derive.
+	res, _ := host["reserve"].(map[string]any)
+	cpu, _ := res["cpu"].(map[string]any)
+	if cpu["percent"] != float64(20) {
+		t.Errorf("reserve.cpu = %v, want the percentage as written", cpu)
+	}
+	// Free disk is reported and is never a cap: sparse images make a larger
+	// declaration legitimate, so there is no disk_cap key to find.
+	if host["free_disk_bytes"] == nil {
+		t.Error("free disk was not reported")
+	}
+	if _, found := host["disk_cap_gib"]; found {
+		t.Error("a disk cap appeared; sparse images make that refusal wrong")
+	}
+}
+
+// TestNoBudgetWhenTheHostIsUnknown: showing zeros would state a limit that does
+// not exist — and on such a host no cap is applied either, so the panel must
+// not draw one.
+func TestNoBudgetWhenTheHostIsUnknown(t *testing.T) {
+	out := get(t, fakeInventory{}) // the helper's admin reports an undetected host
+	if _, found := out["host"]; found {
+		t.Errorf("reported a host budget devhub cannot measure: %v", out["host"])
 	}
 }

@@ -63,11 +63,16 @@ type fakeAdmin struct{}
 func (fakeAdmin) Create(context.Context, ProfileSpec) error      { return nil }
 func (fakeAdmin) Resize(context.Context, ProfileSpec) error      { return nil }
 func (fakeAdmin) CheckResize(context.Context, ProfileSpec) error { return nil }
+func (fakeAdmin) Start(context.Context, string) error            { return nil }
+func (fakeAdmin) Stop(context.Context, string) error             { return nil }
+func (fakeAdmin) Limits() Limits                                 { return Limits{} }
+func (fakeAdmin) Allocations(context.Context) ([]Alloc, error)   { return nil, nil }
 
 type fakeOperator struct{}
 
 func (fakeOperator) Logs(context.Context, Source, string, int) (string, error) { return "", nil }
 func (fakeOperator) Stop(context.Context, Source, string) error                { return nil }
+func (fakeOperator) Start(context.Context, Source, string) error               { return nil }
 func (fakeOperator) Restart(context.Context, Source, string) error             { return nil }
 
 // newTestRuntime builds a Runtime whose every seam is a double. The defaults

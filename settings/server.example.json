@@ -6,6 +6,10 @@
   "db_connections": [],
   "port_labels": {},
   "protected_ports": [],
+  "vm_reserve": {
+    "cpu": { "percent": 20 },
+    "memory": { "percent": 20 }
+  },
   "terminal": {
     "Darwin": {
       "emulator": "ghostty",

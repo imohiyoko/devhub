@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/imohiyoko/devhub/internal/container"
 	"github.com/imohiyoko/devhub/internal/core"
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/jsonx"
@@ -22,6 +23,7 @@ var settingsAllowlist = map[string]bool{
 	"disabled_tools": true, "tool_order": true, "editor": true,
 	"open_browser_on_start": true, "db_connections": true, "port_labels": true,
 	"protected_ports": true, "terminal": true, "update_check": true,
+	"vm_reserve": true,
 }
 
 var configKeys = []string{"scan_roots", "excludes", "pinned_repos", "repo_order", "hidden_repos"}
@@ -134,6 +136,20 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 				return err
 			}
 			patch["protected_ports"] = pl
+		}
+		// Validated here rather than where the cap is computed, for the reason
+		// protected_ports is: a value that only failed at the moment it mattered
+		// would be a saved setting the screen shows and the machine ignores.
+		// The rule itself lives in the container package, which owns the
+		// concept — the same relationship portutil has with ports — and the
+		// value is stored in its canonical form so the reader and the writer
+		// cannot disagree about what was saved.
+		if _, ok := patch["vm_reserve"]; ok {
+			res, err := container.NormalizeReserve(patch["vm_reserve"])
+			if err != nil {
+				return httpx.Errorf(http.StatusBadRequest, "%s", err.Error())
+			}
+			patch["vm_reserve"] = res.JSON()
 		}
 		if err := c.store.SaveSettings(patch); err != nil {
 			return err

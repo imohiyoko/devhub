@@ -193,7 +193,9 @@ main { padding: 16px; overflow-y: auto; }
   padding: 6px 8px;
 }
 .form-control:focus { border-color: var(--accent); outline: none; }
-.hint { color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 9px; }
+/* pre-line は必須。上限や予約の説明は textContent に \n 区切りで入れており、
+   既定の white-space では 1 本の段落に畳まれて読めなくなる。 */
+.hint { color: var(--muted); font-size: 11px; line-height: 1.6; margin-top: 9px; white-space: pre-line; }
 .warn {
   border: 1px solid var(--red);
   border-radius: 6px;
@@ -203,6 +205,9 @@ main { padding: 16px; overflow-y: auto; }
   margin-bottom: 11px;
 }
 .stop-list { margin: 8px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
+/* 上限を超えているあいだだけ赤くする。押す前に分かるのが目的で、保存を止める
+   のはサーバの仕事。 */
+.hint.over { color: var(--red); }
 </style>
 </head>
 <body>
@@ -215,6 +220,7 @@ main { padding: 16px; overflow-y: auto; }
   <input class="search" id="search" type="text" autocomplete="off" placeholder="name / image / project / port">
   <label class="toggle"><input type="checkbox" id="showStopped" checked> 停止済みも表示</label>
   <button class="btn" id="newProfileBtn">＋ profile</button>
+  <button class="btn" id="reserveBtn" title="Colima VM に渡さず残しておくホスト資源">⚙ 上限</button>
   <button class="btn" id="refreshBtn">再読込</button>
   <div class="status" id="status"></div>
 </header>
@@ -256,6 +262,10 @@ main { padding: 16px; overflow-y: auto; }
         <div class="form-group"><label>メモリ (GiB)</label><input type="number" id="pfMemory" class="form-control" min="0" placeholder="colima の既定"></div>
         <div class="form-group"><label>ディスク (GiB)</label><input type="number" id="pfDisk" class="form-control" min="0" placeholder="colima の既定"></div>
       </div>
+      <!-- 上限は入力欄の直後。押してから断られるより、打ちながら見えているほうが
+           安い。ディスクだけ上限が出ないのは、イメージが sparse で空き容量を超え
+           た宣言が正当に成立するから。 -->
+      <div class="hint" id="profileCaps"></div>
       <div class="hint" id="profileHint"></div>
     </div>
     <div class="modal-footer">
@@ -265,9 +275,91 @@ main { padding: 16px; overflow-y: auto; }
   </div>
 </div>
 
+<!-- ホスト資源の予約。ここで決まるのは「残す量」だけで、マシンの実装値は
+     devhub が自分で測る（internal/hostspec）— 手で入れさせると、機種を変えた日
+     から嘘になる値をユーザーが保守することになる。 -->
+<div class="modal-overlay" id="reserveOverlay">
+  <div class="modal">
+    <div class="modal-header" id="reserveTitle">VM に渡さず残す量</div>
+    <div class="modal-body">
+      <div id="reserveWarn"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>CPU の予約</label>
+          <input type="number" id="rsCpuValue" class="form-control" min="0">
+        </div>
+        <div class="form-group">
+          <label>単位</label>
+          <select id="rsCpuUnit" class="form-control">
+            <option value="percent">% （実装コア数に対する割合）</option>
+            <option value="cores">コア数</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>メモリの予約</label>
+          <input type="number" id="rsMemValue" class="form-control" min="0">
+        </div>
+        <div class="form-group">
+          <label>単位</label>
+          <select id="rsMemUnit" class="form-control">
+            <option value="percent">% （実装メモリに対する割合）</option>
+            <option value="gib">GiB</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint" id="reserveHint"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="rsCancel">キャンセル</button>
+      <button class="btn" id="rsSubmit">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- VM の起動。ふつうは確認なしで走る。訊くのは1つの状況だけ —— 起動すると、
+     このマシンが裏付けられる以上のメモリが同時に約束されるとき。稼働中の
+     profile を足し算している画面はどこにも無いので、devhub が足してから訊く。 -->
+<div class="modal-overlay" id="vmStartOverlay">
+  <div class="modal">
+    <div class="modal-header" id="vmStartTitle">Colima profile を起動</div>
+    <div class="modal-body">
+      <div id="vmStartWarn"></div>
+      <div class="hint">起動自体は失敗しません。同時に動かすと、足りない分は macOS のスワップになります。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="vmStartCancel">キャンセル</button>
+      <button class="btn" id="vmStartSubmit">起動する</button>
+    </div>
+  </div>
+</div>
+
+<!-- VM の停止。resize と同じ blast radius なので、同じ「先に何が止まるかを見せ
+     る」段取りを踏む。サイズの入力欄がないぶんだけ profile モーダルとは別に持つ:
+     停止の確認画面に、この操作では使わない入力欄が並んでいるのは嘘に近い。 -->
+<div class="modal-overlay" id="vmStopOverlay">
+  <div class="modal">
+    <div class="modal-header" id="vmStopTitle">Colima profile を停止</div>
+    <div class="modal-body">
+      <div id="vmStopWarn"></div>
+      <div class="hint">コンテナとイメージは VM のディスクに残ります。「VM を起動」で元に戻せます。</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="vmStopCancel">キャンセル</button>
+      <button class="btn" id="vmStopSubmit" disabled>停止する</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let sources = [];
 let containers = [];
+// host は「このマシンの実装値と、そこから決まる上限」。null は devhub が測れな
+// かったマシン（macOS 以外はすべてそう）で、そのときはサーバ側でも上限をかけて
+// いないので、画面にも上限を出さない — 0 を出すのは、存在しない制限を宣言する
+// ことになる。
+let host = null;
 // loadError is kept separately from the empty source list because the two mean
 // different things and the body has to say which: no sources is "this machine
 // has no container engine", a failed call is "devhub could not ask".
@@ -295,6 +387,7 @@ async function load() {
     const data = await apiJson('/api/containers');
     sources = data.sources || [];
     containers = data.containers || [];
+    host = data.host || null;
     loadError = '';
     const live = containers.filter(c => c.running).length;
     setStatus(`${live} running / ${containers.length}`, 'ok');
@@ -364,16 +457,47 @@ function rowHtml(c) {
       ${c.running
         ? `<button class="row-btn" data-op="stop" data-src="${escapeHtml(c.source)}" data-id="${escapeHtml(c.id)}">stop</button>
            <button class="row-btn" data-op="restart" data-src="${escapeHtml(c.source)}" data-id="${escapeHtml(c.id)}">restart</button>`
-        : ''}
+        : `<button class="row-btn" data-op="start" data-src="${escapeHtml(c.source)}" data-id="${escapeHtml(c.id)}">start</button>`}
     </td>
   </tr>`;
+}
+
+// vmControls decides which VM buttons a source header carries.
+//
+// 分岐は available ではなく status で行う。available は「中を一覧できるか」で、
+// 別々の事情を一つのビットに畳んでいる — 単に停止している profile も、devhub が
+// 扱えない engine で動いている profile もどちらも false になる。VM そのものへの
+// 操作が成立するかは、その二つで別々に決まる:
+//
+//   - サイズ変更は状態に関係なく成立する。Resize は動いていれば止めてから、
+//     止まっていればそのまま、新しいサイズで起動する。
+//   - 起動と停止は、動いているかどうかだけで決まる。engine が devhub の扱えない
+//     ものでも、その VM を止めることはできる。
+//
+// status が無いときはサイズ変更だけ出す。起動と停止はどちらを出すべきか決められ
+// ないが、サイズ変更は profile がある時点で押せる。
+//
+// 逆に Running 以外は Broken でも起動を出す。colima の状態語を devhub 側で網羅
+// するとその一覧が colima より先に古くなるので、判定は「動いているか」だけに寄せ
+// て、起動できないものは colima のエラーで返させる。
+function vmControls(src) {
+  if (!src.profile || src.alias_of) return '';
+  const p = escapeHtml(src.profile);
+  const status = (src.status || '').toLowerCase();
+  const btns = [`<button class="src-btn" data-resize="${p}">サイズ変更</button>`];
+  if (status === 'running') {
+    btns.push(`<button class="src-btn" data-vm-stop="${p}">VM を停止</button>`);
+  } else if (status) {
+    btns.push(`<button class="src-btn" data-vm-start="${p}">VM を起動</button>`);
+  }
+  return btns.join('\n            ');
 }
 
 function sourceHtml(src, rows) {
   const head = `<div class="source-head">
       <span class="source-name">${escapeHtml(src.label)}</span>
       <span class="source-meta">${escapeHtml(sourceMeta(src))}</span>
-      ${src.profile ? `<button class="src-btn" data-resize="${escapeHtml(src.profile)}">サイズ変更</button>` : ''}
+      ${vmControls(src)}
       <span class="source-count">${rows.length}</span>
     </div>`;
 
@@ -418,6 +542,59 @@ function render() {
   main.innerHTML = sources
     .map(src => sourceHtml(src, shown.filter(c => c.source === src.id)))
     .join('');
+}
+
+// --- ホスト資源の上限 -------------------------------------------------------
+//
+// 実装値は devhub が測ったもの、上限はそこから予約を引いたもの。どちらも設定に
+// 書かれた値ではないので、画面に出しておく意味がある — 断られてから理由を読むよ
+// り、打ちながら見えているほうが安い。
+//
+// ディスクには上限を出さない。Lima のイメージは sparse で、空き容量を超えた宣言
+// が正当に成立する（このマシンは 300 GiB 宣言・空き 129 GiB で動いている）。空き
+// は参考として並べるだけ。
+// どちらの形式で書かれたかは、値ではなくキーの有無で決まる。0 は % でも絶対値
+// でも書けて、上限としては同じでも別のことを言っている — 片方をもう片方として
+// 見せると、ユーザーが書いていない値を読ませることになる。
+function describeAmount(a, unit) {
+  if (!a) return '?';
+  if ('percent' in a) return `${a.percent}%`;
+  return `${a[unit] ?? 0}${unit === 'cores' ? 'コア' : ' GiB'}`;
+}
+
+function capsText() {
+  if (!host) return 'このマシンの実装値を測れないため、上限はかかりません。';
+  const res = host.reserve || {};
+  return `この Mac: ${host.cpus} CPU / ${gib(host.memory_bytes)}`
+    + (host.free_disk_bytes ? `・ディスク空き ${gib(host.free_disk_bytes)}` : '')
+    + `\n1 VM あたりの上限: ${host.cpu_cap} CPU / ${host.memory_cap_gib} GiB`
+    + `（予約 CPU ${describeAmount(res.cpu, 'cores')}・メモリ ${describeAmount(res.memory, 'gib')}）`
+    + `\nディスクに上限はありません（イメージが sparse のため、空き容量を超えた宣言も有効です）。`;
+}
+
+// applyCaps puts the limit on the fields themselves. max はブラウザにも効かせる
+// が、判断はここではなくサーバが持っている — この画面を通らない呼び出しがあるし、
+// 予約は別のタブで変わりうる。
+function applyCaps() {
+  $('profileCaps').textContent = capsText();
+  $('pfCpus').max = host ? host.cpu_cap : '';
+  $('pfMemory').max = host ? host.memory_cap_gib : '';
+  checkCapsInline();
+}
+
+// checkCapsInline warns while the user types. 保存を止めはしない（止めるのはサー
+// バ）が、確認ボタンを押す前に分かるほうがいい。
+function checkCapsInline() {
+  if (!host) return;
+  const over = [];
+  const cpu = Number($('pfCpus').value);
+  const mem = Number($('pfMemory').value);
+  if (cpu > host.cpu_cap) over.push(`CPU は ${host.cpu_cap} まで`);
+  if (mem > host.memory_cap_gib) over.push(`メモリは ${host.memory_cap_gib} GiB まで`);
+  $('profileCaps').classList.toggle('over', over.length > 0);
+  $('profileCaps').textContent = over.length
+    ? `${over.join('・')}（この Mac は ${host.cpus} CPU / ${gib(host.memory_bytes)}、予約を差し引いた上限です）`
+    : capsText();
 }
 
 // --- Colima profile の作成とサイズ変更 -------------------------------------
@@ -469,6 +646,7 @@ function openProfileModal(profile) {
   $('pfMemory').value = src?.memory_bytes ? Math.round(src.memory_bytes / 1073741824) : '';
   $('pfDisk').value = src?.disk_bytes ? Math.round(src.disk_bytes / 1073741824) : '';
   $('profileWarn').innerHTML = '';
+  applyCaps();
   $('profileHint').textContent = profile
     ? 'colima はサイズを起動時にしか読まないので、VM の停止と再起動になります。ディスクの縮小はできません（VM の作り直しになるため）。'
     : '空欄は colima の既定値のままにします。';
@@ -517,7 +695,8 @@ async function submitProfile() {
   try {
     const res = await postJson(url, profileBody(confirmed));
     if (res.confirm_required) {
-      renderStopWarning(res.stops || []);
+      renderStopWarning($('profileWarn'), res.stops || [],
+        'この profile では現在コンテナは動いていません。VM の再起動のみ行われます。');
       btn.dataset.confirmed = '1';
       btn.textContent = '実行する';
       btn.disabled = false;
@@ -543,18 +722,21 @@ async function submitProfile() {
   }
 }
 
-// renderStopWarning names what the restart will take down. The project column
+// renderStopWarning names what the operation will take down. The project column
 // is the point: a container from a project the user was not thinking about is
 // exactly the one they need to see before saying yes.
-function renderStopWarning(stops) {
+//
+// 出力先を引数で受けるのは、サイズ変更と VM 停止が同じ一覧を必要とするから。
+// 「何が止まるか」の書き方が二か所に分かれると、片方だけ project 名を落とすよう
+// な差が入り、その差が出るのは誰かが知らないコンテナを落とした後になる。
+function renderStopWarning(el, stops, emptyNote) {
   if (!stops.length) {
-    $('profileWarn').innerHTML =
-      '<div class="warn">この profile では現在コンテナは動いていません。VM の再起動のみ行われます。</div>';
+    el.innerHTML = `<div class="warn">${escapeHtml(emptyNote)}</div>`;
     return;
   }
   const items = stops.map(s =>
     `<li>${escapeHtml(s.name)}${s.project ? ` <span class="sub">(${escapeHtml(s.project)})</span>` : ''}</li>`).join('');
-  $('profileWarn').innerHTML =
+  el.innerHTML =
     `<div class="warn">この ${stops.length} 件のコンテナが停止します。別の環境が同じ profile を使っている場合、そちらのコンテナも含まれます。
       <ul class="stop-list">${items}</ul></div>`;
 }
@@ -576,6 +758,9 @@ $('profileModalOverlay').addEventListener('click', e => {
   $(id).addEventListener('input', disarmConfirm);
   $(id).addEventListener('change', disarmConfirm);
 });
+['pfCpus', 'pfMemory'].forEach(id => {
+  $(id).addEventListener('input', checkCapsInline);
+});
 
 function disarmConfirm() {
   const btn = $('pfSubmit');
@@ -589,6 +774,254 @@ main.addEventListener('click', e => {
   if (!btn) return;
   $('pfSubmit').dataset.confirmed = '';
   openProfileModal(btn.dataset.resize);
+});
+
+// --- 予約の設定 -------------------------------------------------------------
+//
+// 設定できるのは「残す量」だけ。マシンの実装値は devhub が測るので、ここには
+// 出てこない — 手で入れさせた値は、機種を変えた日から嘘になる。
+const reserveModal = DevhubModal.attach('reserveOverlay', {
+  labelledBy: 'reserveTitle',
+  initialFocus: () => $('rsCpuValue'),
+});
+
+function openReserveModal() {
+  const res = (host && host.reserve) || {
+    cpu: { percent: 20 }, memory: { percent: 20 },
+  };
+  const fill = (v, unitId, valueId, absKey) => {
+    const isPct = v && 'percent' in v;
+    $(unitId).value = isPct ? 'percent' : absKey;
+    $(valueId).value = isPct ? v.percent : (v?.[absKey] ?? 0);
+  };
+  fill(res.cpu, 'rsCpuUnit', 'rsCpuValue', 'cores');
+  fill(res.memory, 'rsMemUnit', 'rsMemValue', 'gib');
+  $('reserveWarn').innerHTML = '';
+  $('reserveHint').textContent = host
+    ? `いまの上限: ${host.cpu_cap} CPU / ${host.memory_cap_gib} GiB（この Mac は ${host.cpus} CPU / ${gib(host.memory_bytes)}）。`
+      + `\n上限を超える profile は作成・サイズ変更・起動ができなくなります。既にあるより大きい VM は、予約を戻すか端末の colima start で動かせます。`
+    : 'このマシンの実装値を測れないため、いま上限はかかっていません（Colima は macOS 専用です）。';
+  reserveModal.open();
+}
+
+async function submitReserve() {
+  const btn = $('rsSubmit');
+  const amount = (unitId, valueId) => {
+    const unit = $(unitId).value;
+    const raw = $(valueId).value.trim();
+    const v = Number(raw);
+    // 数字でないものはそのまま送る。名指しで断るのはサーバの仕事で、ここで
+    // 黙って 0 にすると「予約なし」を保存したことになる。
+    return { [unit]: Number.isFinite(v) && raw !== '' ? v : raw };
+  };
+  const body = {
+    vm_reserve: {
+      cpu: amount('rsCpuUnit', 'rsCpuValue'),
+      memory: amount('rsMemUnit', 'rsMemValue'),
+    },
+  };
+
+  btn.disabled = true;
+  setStatus('予約を保存中...');
+  try {
+    await postJson('/api/settings', body);
+    reserveModal.close();
+    // 保存しただけでは画面の上限は古いまま。上限は一覧と一緒に降ってくるので、
+    // 読み直して初めて「いま効いている値」になる。
+    const reloaded = await load();
+    setStatus(reloaded ? '予約を保存しました' : '予約を保存しました（一覧を再読込できません）',
+      reloaded ? 'ok' : 'error');
+  } catch (e) {
+    $('reserveWarn').innerHTML = `<div class="warn">${escapeHtml(e.message)}</div>`;
+    setStatus(`エラー: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('reserveBtn').addEventListener('click', openReserveModal);
+$('rsCancel').addEventListener('click', () => reserveModal.close());
+$('rsSubmit').addEventListener('click', submitReserve);
+$('reserveOverlay').addEventListener('click', e => {
+  if (e.target === $('reserveOverlay')) reserveModal.close();
+});
+
+// --- VM の停止と起動 -------------------------------------------------------
+//
+// 停止はサイズ変更と同じ段取り: confirm なしの POST がまず「何が止まるか」を返
+// し、それを見せてから確認付きで撃つ。落ちるコンテナは、いま見ている環境とは無
+// 関係の profile を共有した別環境のものかもしれない。
+//
+// 起動は確認なし。落ちるものがなく、そして停止をこのパネルに置ける理由そのもの
+// でもある — 戻す手段がなければ、devhub が始めた操作の後半をユーザーが端末で片
+// 付けることになる。
+let vmStopTarget = '';
+let vmInFlight = false;
+
+const vmStopModal = DevhubModal.attach('vmStopOverlay', {
+  labelledBy: 'vmStopTitle',
+  canClose: () => !vmInFlight,
+  // 破壊的な操作の確認なので、開いた直後のフォーカスはキャンセル側に置く。
+  initialFocus: () => $('vmStopCancel'),
+  onClose: () => { vmStopTarget = ''; },
+});
+
+async function openVMStop(profile) {
+  vmStopTarget = profile;
+  $('vmStopTitle').textContent = `Colima profile「${profile}」を停止`;
+  $('vmStopWarn').innerHTML = '<div class="hint">停止するコンテナを確認中...</div>';
+  // 何が止まるかを見る前は押せない。押せてしまえば、確認の一覧は飾りになる。
+  $('vmStopSubmit').disabled = true;
+  $('vmStopSubmit').textContent = '停止する';
+  vmStopModal.open();
+
+  try {
+    const res = await postJson(`/api/containers/profiles/${encodeURIComponent(profile)}/stop`, {});
+    // 別の profile のモーダルに開き直された後で古い応答が届くことがある。宛先が
+    // 変わっていたら、その一覧はいま画面にある操作の説明ではない。
+    if (vmStopTarget !== profile) return;
+    renderStopWarning($('vmStopWarn'), res.stops || [],
+      'この profile では現在コンテナは動いていません。VM の停止のみ行われます。');
+    $('vmStopSubmit').disabled = false;
+  } catch (e) {
+    if (vmStopTarget !== profile) return;
+    $('vmStopWarn').innerHTML = `<div class="warn">${escapeHtml(e.message)}</div>`;
+    setStatus(`エラー: ${e.message}`, 'error');
+  }
+}
+
+async function submitVMStop() {
+  const profile = vmStopTarget;
+  if (!profile) return;
+  const btn = $('vmStopSubmit');
+
+  // 閉じても止まらない（サーバ側はリクエストの寿命を離れている）ので、閉じる道
+  // を出しておくのは、ありもしないキャンセルを約束することになる。
+  vmInFlight = true;
+  btn.disabled = true;
+  $('vmStopCancel').disabled = true;
+  btn.textContent = '停止中...';
+  setStatus(`${profile}: VM を停止中...`);
+  try {
+    await postJson(`/api/containers/profiles/${encodeURIComponent(profile)}/stop`, { confirm: true });
+    vmInFlight = false;
+    vmStopModal.close();
+    const reloaded = await load();
+    setStatus(reloaded ? `${profile}: VM を停止しました`
+      : `${profile}: VM を停止しました（一覧を再読込できません）`, reloaded ? 'ok' : 'error');
+  } catch (e) {
+    $('vmStopWarn').innerHTML = `<div class="warn">${escapeHtml(e.message)}</div>`;
+    setStatus(`エラー: ${e.message}`, 'error');
+  } finally {
+    vmInFlight = false;
+    btn.disabled = false;
+    btn.textContent = '停止する';
+    $('vmStopCancel').disabled = false;
+  }
+}
+
+$('vmStopCancel').addEventListener('click', () => vmStopModal.close());
+$('vmStopSubmit').addEventListener('click', submitVMStop);
+$('vmStopOverlay').addEventListener('click', e => {
+  if (e.target === $('vmStopOverlay')) vmStopModal.close();
+});
+
+main.addEventListener('click', e => {
+  const btn = e.target.closest('[data-vm-stop]');
+  if (btn) openVMStop(btn.dataset.vmStop);
+});
+
+let vmStartTarget = '';
+
+const vmStartModal = DevhubModal.attach('vmStartOverlay', {
+  labelledBy: 'vmStartTitle',
+  canClose: () => !vmInFlight,
+  initialFocus: () => $('vmStartCancel'),
+  onClose: () => { vmStartTarget = ''; },
+});
+
+// startVM は confirm なしで投げ、サーバが「合計が上限を超える」と答えたときだけ
+// 確認に切り替える。ふつうの起動でモーダルは出ない。
+async function startVM(profile, btn) {
+  const was = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '起動中...'; }
+  // colima start はイメージの取得を含むと分単位になる。サーバ側はリクエストの
+  // 寿命を離れて走るので、タブを閉じても VM は上がりきる。
+  setStatus(`${profile}: VM を起動中...`);
+  try {
+    const res = await postJson(`/api/containers/profiles/${encodeURIComponent(profile)}/start`, {});
+    if (res.confirm_required) {
+      renderMemoryQuestion(res.memory || {});
+      vmStartTarget = profile;
+      $('vmStartTitle').textContent = `Colima profile「${profile}」を起動`;
+      vmStartModal.open();
+      setStatus('確認待ち');
+      return;
+    }
+    const reloaded = await load();
+    setStatus(reloaded ? `${profile}: VM を起動しました`
+      : `${profile}: VM を起動しました（一覧を再読込できません）`, reloaded ? 'ok' : 'error');
+  } catch (err) {
+    setStatus(`エラー: ${err.message}`, 'error');
+  } finally {
+    // load() が表を差し替えた後なら、これらのノードは既に切り離されている。
+    if (btn) { btn.disabled = false; btn.textContent = was; }
+  }
+}
+
+// renderMemoryQuestion は足し算をそのまま見せる。ユーザーに検算できない計算を
+// 信じさせないため、依拠している数値を全部出す。
+//
+// 閾値が「1 VM あたりの上限」である理由は startProfile 側のコメントのとおり。文
+// 面でもその線の出どころ（実装から予約を引いた値）を言う — 合計を per-VM の上限
+// と比べたとだけ読めると、比較そのものが取り違えに見える。
+function renderMemoryQuestion(m) {
+  const vms = (m.running_vms || [])
+    .map(v => `<li>${escapeHtml(v.name)} <span class="sub">${v.memory_gib} GiB</span></li>`).join('');
+  $('vmStartWarn').innerHTML =
+    `<div class="warn">起動すると、動いている VM に割り当てられたメモリの合計が
+      <strong>${m.total_gib} GiB</strong> になります（いま ${m.running_gib} GiB ＋ この VM ${m.adding_gib} GiB）。
+      実装 ${m.host_gib} GiB のうち devhub が 1 VM に許している ${m.cap_gib} GiB を、合計が超えます。
+      ${vms ? `<ul class="stop-list">${vms}</ul>` : ''}</div>`;
+}
+
+async function submitVMStart() {
+  const profile = vmStartTarget;
+  if (!profile) return;
+  const btn = $('vmStartSubmit');
+
+  vmInFlight = true;
+  btn.disabled = true;
+  $('vmStartCancel').disabled = true;
+  btn.textContent = '起動中...';
+  setStatus(`${profile}: VM を起動中...`);
+  try {
+    await postJson(`/api/containers/profiles/${encodeURIComponent(profile)}/start`, { confirm: true });
+    vmInFlight = false;
+    vmStartModal.close();
+    const reloaded = await load();
+    setStatus(reloaded ? `${profile}: VM を起動しました`
+      : `${profile}: VM を起動しました（一覧を再読込できません）`, reloaded ? 'ok' : 'error');
+  } catch (e) {
+    $('vmStartWarn').innerHTML = `<div class="warn">${escapeHtml(e.message)}</div>`;
+    setStatus(`エラー: ${e.message}`, 'error');
+  } finally {
+    vmInFlight = false;
+    btn.disabled = false;
+    btn.textContent = '起動する';
+    $('vmStartCancel').disabled = false;
+  }
+}
+
+$('vmStartCancel').addEventListener('click', () => vmStartModal.close());
+$('vmStartSubmit').addEventListener('click', submitVMStart);
+$('vmStartOverlay').addEventListener('click', e => {
+  if (e.target === $('vmStartOverlay')) vmStartModal.close();
+});
+
+main.addEventListener('click', e => {
+  const btn = e.target.closest('[data-vm-start]');
+  if (btn) startVM(btn.dataset.vmStart, btn);
 });
 
 // Per-container operations. There is no dry run here, unlike a resize: a resize

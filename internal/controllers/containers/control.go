@@ -1,6 +1,6 @@
 package containers
 
-// The three endpoints that act on one container instead of listing it.
+// The endpoints that act on one container instead of listing it.
 //
 // All POSTs, which is what puts them behind /ai-api's manual-approval gate for
 // free (aiAPINeedsApproval). That matters more here than for the profile
@@ -12,9 +12,13 @@ package containers
 // A resize takes down every container in a VM, including ones belonging to
 // environments that are nowhere on screen, so the user has to be told what they
 // are agreeing to. Stopping one container stops the one container named in the
-// request — the row the user clicked — and restarting brings it back. The
-// response says which container it was, so a caller that got the wrong one
+// request — the row the user clicked — and starting it again brings it back.
+// The response says which container it was, so a caller that got the wrong one
 // finds out from the answer.
+//
+// start is here for that last reason and not as an afterthought: a panel that
+// can only take things down leaves the user in a terminal to undo it, which is
+// the state this tool exists to end.
 
 import (
 	"context"
@@ -32,15 +36,23 @@ type operator interface {
 	Resolve(ctx context.Context, sourceID, id string) (container.ContainerTarget, error)
 	Logs(ctx context.Context, src container.Source, id string, tail int) (string, error)
 	Stop(ctx context.Context, src container.Source, id string) error
+	Start(ctx context.Context, src container.Source, id string) error
 	Restart(ctx context.Context, src container.Source, id string) error
 }
 
-// HandleControlPost serves /api/containers/{logs,stop,restart}. One handler
-// because the three differ only in the verb: each names a source and a
+// controlVerbs is the closed set of subcommands this handler will run. A map
+// rather than a chain of comparisons because the set is now long enough that a
+// missing negation would read as correct — and this is the one handler where an
+// unintended verb would apply to anything on the machine, not to a declared
+// project.
+var controlVerbs = map[string]bool{"logs": true, "stop": true, "start": true, "restart": true}
+
+// HandleControlPost serves /api/containers/{logs,stop,start,restart}. One
+// handler because they differ only in the verb: each names a source and a
 // container, and each is refused in the same place for the same reasons.
 func (c *Controller) HandleControlPost(w http.ResponseWriter, r *http.Request, data map[string]any) error {
 	verb := strings.TrimPrefix(r.URL.Path, "/api/containers/")
-	if verb != "logs" && verb != "stop" && verb != "restart" {
+	if !controlVerbs[verb] {
 		return httpx.Errorf(http.StatusNotFound, "not found")
 	}
 
@@ -72,6 +84,8 @@ func (c *Controller) HandleControlPost(w http.ResponseWriter, r *http.Request, d
 		return nil
 	case "stop":
 		err = c.control.Stop(acting(r), target.Source, target.Container.ID)
+	case "start":
+		err = c.control.Start(acting(r), target.Source, target.Container.ID)
 	case "restart":
 		err = c.control.Restart(acting(r), target.Source, target.Container.ID)
 	}
