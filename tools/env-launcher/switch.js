@@ -5,6 +5,12 @@
 // anything without the user having seen the list first.
 
 let switchState = { environments: [] };
+// Whether the last state fetch failed. switchState keeps the previous values on
+// a failure (an empty section is worse than a stale one), so "we have values"
+// and "the values are current" are different questions and need separate
+// answers: the component rows say which one they are showing, and
+// startComponent refuses to build a target out of the stale one.
+let switchStateStale = false;
 // The plan being confirmed, with the request that produced it: apply re-sends
 // that same target plus the plan's fingerprint, so the user cannot approve one
 // set of stops and have another one run.
@@ -21,15 +27,23 @@ const switchModal = DevhubModal.attach('switchModalOverlay', {
 // State is fetched on load and after an apply, never polled: probing a
 // compose_service shells out to `docker compose ps`, so a background poll
 // would spawn processes forever.
+//
+// Returns whether the values are now current. A failure is still non-fatal for
+// the page — the section keeps rendering the previous values — but it must not
+// look like a successful read to a caller that is about to compute something
+// from them.
 async function fetchSwitchState() {
   try {
     const res = await fetch('/api/envs/state');
     const data = await res.json();
-    if (res.ok && !data.error) {
-      switchState = data;
-      render();
-    }
-  } catch (e) { /* non-fatal: the switch section stays empty */ }
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    switchState = data;
+    switchStateStale = false;
+  } catch (e) {
+    switchStateStale = true;
+  }
+  render();
+  return !switchStateStale;
 }
 
 function switchEnvState(envId) {
@@ -64,6 +78,44 @@ function switchToScenario(envId, scenarioId, scenarioName) {
 // action, which still leaves shared infrastructure (a database) running.
 function stopScenarioComponents(envId) {
   requestSwitchPlan(envId, {components: []}, 'シナリオのコンポーネントを全停止');
+}
+
+// Starting one component. The target is declarative, so sending {components:
+// [id]} alone would mean "and stop every other scenario component" — the
+// opposite of what a per-row 起動 button promises. The additive meaning is
+// expressed by targeting what is already running, plus the requested one.
+//
+// State is re-read first rather than trusted from the last fetch: a target
+// built from a stale snapshot would list something started since as a stop.
+// The plan screen would still show it, but a 起動 button should not be
+// producing stops to review in the first place. That only holds if the re-read
+// actually succeeded, so a failed one aborts rather than falling back to the
+// values it was meant to replace — the fingerprint does not catch this, since
+// it validates the plan against the same current state that the wrong target
+// was derived against.
+async function startComponent(envId, componentId, label) {
+  if (!await fetchSwitchState()) {
+    alert('コンポーネントの状態を取得できませんでした。今動いているものが分からないまま起動すると、別のコンポーネントを停止対象にしてしまいます。');
+    return;
+  }
+  const state = switchEnvState(envId);
+  if (!state) {
+    alert('コンポーネントの状態を取得できないため、起動内容を計算できません。');
+    return;
+  }
+  // Unknown components are left out of the ids listed here: they are not
+  // stopped either way (planSwitch warns instead of stopping them), and listing
+  // one would start a duplicate of something that may already be running.
+  //
+  // This covers only what is listed. targetComponents (switch.go) re-adds each
+  // target's depends_on transitively, so an unknown component that a running
+  // one depends on still enters the target and is planned as a start. That is
+  // the server's rule for every switch, not something this button can opt out
+  // of; the plan carries planSwitch's duplication warning for it, which is what
+  // the confirmation screen is for.
+  const running = (state.components || []).filter(c => c.state === 'running').map(c => c.id);
+  const target = running.includes(componentId) ? running : running.concat([componentId]);
+  requestSwitchPlan(envId, {components: target}, `「${label || componentId}」を起動`);
 }
 
 function planSteps(title, steps, cls) {
