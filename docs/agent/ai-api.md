@@ -42,9 +42,10 @@ curl -s http://localhost:8765/ai-api/ports
 例外的に `GET /api/open` も承認を要する。読み取りに見えてエディタを起動するため。
 
 逆に、承認を待っても通らないルートもある。`POST /ai-api/logs/clear` と
-`/ai-api/logs/archive` は `no_ai_api_route`（403）で即座に拒否される ——
-エージェントが自分の活動記録を消せてはならないため。ログを**読む**
-`GET /ai-api/logs` は承認なしで通る。
+`/ai-api/logs/archive` は `no_ai_api_route`（403）で即座に拒否される。理由は
+2 つで別物 —— `clear` はエージェントが自分の活動記録を消せてはならないため、
+`archive` は何をディスクに残すかがユーザーの判断だから（`archive` 自体は加算的で、
+何も消さない）。ログを**読む** `GET /ai-api/logs` は承認なしで通る。
 
 そのログを引くときは、**`/ai-api` 接頭辞で絞っても何も返らない**。記録される
 パスは `/api/...` に正規化されているので、`path=/ai-api/git` ではなく
