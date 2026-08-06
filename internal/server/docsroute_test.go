@@ -44,7 +44,7 @@ func TestTroubleshootingDocCoversEveryEmittedCode(t *testing.T) {
 
 	for _, code := range []string{
 		"missing_token", "not_loopback", "cross_site", "host_not_allowed",
-		"approval_rejected", "approval_timeout",
+		"approval_rejected", "approval_timeout", "no_ai_api_route",
 	} {
 		if !strings.Contains(doc, code) {
 			t.Errorf("docs/agent/troubleshooting.md does not document %q", code)

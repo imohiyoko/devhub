@@ -117,21 +117,54 @@ func splitFrontMatter(src string) (description, body string) {
 	// left after it, so a shown doc starts at its title.
 	body = strings.TrimLeft(body, "\n")
 
+	// started is tracked separately from len(parts) because the two differ for
+	// the shape "description:" followed by an indented block — the key line
+	// contributes nothing, and only empty pieces are dropped. Keying off
+	// len(parts) there would either skip the whole folded value or join a blank
+	// first piece and leave a leading space on the result.
 	var parts []string
+	var started bool
 	for _, line := range strings.Split(block, "\n") {
 		if v, ok := strings.CutPrefix(line, "description:"); ok {
-			parts = append(parts, strings.TrimSpace(v))
+			started = true
+			if v = strings.TrimSpace(v); v != "" {
+				parts = append(parts, v)
+			}
+			continue
+		}
+		if !started {
 			continue
 		}
 		// Continuation lines of a folded description are indented; a new key is
-		// not. Stop at the first new key once we have started collecting.
-		if len(parts) > 0 && strings.HasPrefix(line, " ") {
-			parts = append(parts, strings.TrimSpace(line))
-			continue
-		}
-		if len(parts) > 0 {
+		// not. Stop at the first new key.
+		if !strings.HasPrefix(line, " ") {
 			break
 		}
+		if v := strings.TrimSpace(line); v != "" {
+			parts = append(parts, v)
+		}
 	}
-	return strings.Trim(strings.Join(parts, " "), ` "'`), body
+	return unquote(strings.Join(parts, " ")), body
+}
+
+// unquote strips one matching pair of surrounding quotes, the way a YAML scalar
+// is written.
+//
+// Trimming the quote characters from both ends independently — the obvious
+// strings.Trim — eats quotes that are part of the value. A description reading
+// `use 'foo'` came back as `use 'foo`, and `""` around a quoted phrase collapsed
+// to one level, losing the fact that the inner quotes were the value.
+//
+// Note what this does NOT fix: `"a" and "b"` still comes back as `a" and "b`,
+// because its first and last bytes really are a matching pair and nothing here
+// can tell that pair apart from a wrapping one. Writing that description
+// unquoted, or wrapped in single quotes, is the way through — YAML has the same
+// ambiguity, which is why it is written that way there too.
+func unquote(s string) string {
+	if len(s) >= 2 {
+		if q := s[0]; (q == '"' || q == '\'') && s[len(s)-1] == q {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }

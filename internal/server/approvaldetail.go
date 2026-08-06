@@ -3,7 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"strings"
+	"fmt"
 
 	"github.com/imohiyoko/devhub/internal/sanitize"
 )
@@ -24,14 +24,30 @@ const (
 // body. JSON is normalized (whitespace stripped, keys sorted by json.Marshal) so
 // the preview — and any always-allow rule matched against it — is deterministic.
 func summarizeApprovalBody(body []byte) string {
+	// Kept before the trim: the size below is the only fact reported about a
+	// body whose contents are withheld, so it has to be the size that was
+	// actually received. Trimming first would understate a padded body, and an
+	// audit record that rounds a number down for a reason nobody can see is
+	// worse than one that omits it.
+	received := len(body)
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
 		return ""
 	}
 	var v any
 	if err := json.Unmarshal(body, &v); err != nil {
-		// Not JSON: collapse whitespace and show a truncated raw preview.
-		return truncateRunes(strings.Join(strings.Fields(string(body)), " "), maxApprovalSummaryRunes)
+		// Not JSON, so there are no keys to judge and redaction cannot run. A raw
+		// preview used to be returned here, which was defensible while this
+		// string only ever reached an approval prompt a user was reading in the
+		// moment. It stopped being defensible when the same string became what
+		// the request log stores and the archive writes to disk: a form-encoded
+		// or plain-text body would carry its secrets there verbatim, and the
+		// key heuristic that protects the JSON path would never see them.
+		//
+		// Every devhub write endpoint takes JSON, so reaching this branch means
+		// malformed or unexpected — a case worth reporting the shape of rather
+		// than the contents of.
+		return fmt.Sprintf("(non-JSON body, %d bytes)", received)
 	}
 	redactSecrets(v)
 	b, err := json.Marshal(v)

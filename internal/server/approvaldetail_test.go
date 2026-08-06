@@ -18,7 +18,15 @@ func TestSummarizeApprovalBody(t *testing.T) {
 		{"redacts nested token", `{"conn":{"api_token":"abc","user":"me"}}`, `{"conn":{"api_token":"***","user":"me"}}`},
 		{"redacts secret in array", `{"conns":[{"password":"x"}]}`, `{"conns":[{"password":"***"}]}`},
 		{"normalizes key order and whitespace", `{ "b": 2, "a": 1 }`, `{"a":1,"b":2}`},
-		{"non-json collapses whitespace", "not   json\nhere", "not json here"},
+		// A non-JSON body has no keys to judge, so redaction cannot run on it.
+		// This string is stored in the request log and archived to disk, so the
+		// shape is reported and the contents are not.
+		{"non-json reports shape only", "not   json\nhere", "(non-JSON body, 15 bytes)"},
+		{"non-json secret does not leak", "password=hunter2&user=me", "(non-JSON body, 24 bytes)"},
+		// The size is the one fact reported about a body that is not shown, so it
+		// counts what arrived. Measuring after the trim would report 3 here and
+		// leave no way to tell a 3-byte body from a padded one.
+		{"non-json size counts what arrived", "  \n abc \t ", "(non-JSON body, 10 bytes)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
