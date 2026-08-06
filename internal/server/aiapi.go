@@ -31,6 +31,17 @@ var sideEffectingGetPaths = map[string]bool{
 // intended way round: the reason is about the route, not about one verb of it,
 // and answering "no such route" to a GET while answering "withheld" to a POST
 // would tell a caller which methods exist on a path it is not allowed to use.
+//
+// The lookup is exact and the path it is handed is not canonicalized —
+// net/http.Server, unlike http.ServeMux, does not clean one — so
+// "/ai-api/./logs/clear" misses this map. It reaches no handler either, because
+// the gateway matches routes exactly or by prefix and neither spelling matches,
+// but that is a property of the gateway rather than of this map, and the two
+// would have to stay in step for the refusal to hold. Rather than canonicalize
+// here — which would mean this map and the router disagreeing about what a path
+// is, the very thing that makes such bypasses possible —
+// TestNonCanonicalPathsDoNotReachABlockedHandler pins the outcome: however the
+// router spells these, the clear handler does not run.
 var aiAPIBlockedPaths = map[string]string{
 	"/api/logs/clear":   "Clearing the request log is deliberately unavailable to /ai-api — an agent must not be able to erase the record of what it did. Ask the user to clear it from the dashboard if that is really what they want.",
 	"/api/logs/archive": "Archiving the request log is deliberately unavailable to /ai-api — what is kept past a restart is the user's decision. Read it with GET /ai-api/logs instead.",
