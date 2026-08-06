@@ -19,6 +19,7 @@ document.getElementById('app').addEventListener('click', e => {
   else if (action === 'add-scenario') openScenarioModal(Number(btn.dataset.eIdx), -1);
   else if (action === 'edit-scenario') openScenarioModal(Number(btn.dataset.eIdx), Number(btn.dataset.sIdx));
   else if (action === 'delete-scenario') deleteScenario(Number(btn.dataset.eIdx), Number(btn.dataset.sIdx));
+  else if (action === 'start-component') startComponent(btn.dataset.envId, btn.dataset.componentId, btn.dataset.componentLabel);
   else if (action === 'switch-scenario') switchToScenario(btn.dataset.envId, btn.dataset.scenarioId, btn.dataset.scenarioName);
   else if (action === 'switch-stop') stopScenarioComponents(btn.dataset.envId);
   else if (action === 'edit-runtime') openRuntimeModal(Number(btn.dataset.eIdx));

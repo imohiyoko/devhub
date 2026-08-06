@@ -28,6 +28,11 @@ function switchSectionHtml(env, eIdx) {
         const reason = why ? ` — ${escapeHtml(why)}` : '';
         const shared = c.lifecycle === 'shared' ? ' <span class="component-tag">shared</span>' : '';
         const kind = c.kind === 'compose_service' ? 'compose_service' : 'host_process';
+        // 個別起動は「今 running のものに 1 つ足した目的状態」として組む
+        // (startComponent) ので、観測状態が無ければ安全な target を作れない。
+        // running なら起動しても差分が無いので、どちらも押させない。
+        const startNote = !state ? '状態を読み込み中です' : stateName === 'running' ? '起動済みです' : '';
+        const startAttrs = startNote ? ` disabled title="${escapeHtml(startNote)}"` : '';
         return `
       <div class="component-item">
         <span class="state-dot state-${escapeHtml(stateName)}" title="${escapeHtml(why || stateName)}"></span>
@@ -36,6 +41,7 @@ function switchSectionHtml(env, eIdx) {
           <div class="component-meta">${escapeHtml(kind)}${reason}</div>
         </div>
         <div class="process-actions">
+          <button class="btn" data-action="start-component" data-env-id="${envId}" data-component-id="${escapeHtml(c.id)}" data-component-label="${escapeHtml(c.label || c.id)}"${startAttrs}>▶ 起動</button>
           <button class="btn" data-action="edit-component" data-e-idx="${eIdx}" data-c-idx="${cIdx}">編集</button>
           <button class="btn" data-action="delete-component" data-e-idx="${eIdx}" data-c-idx="${cIdx}" style="color: var(--red);">削除</button>
         </div>
