@@ -72,7 +72,10 @@ main {
 }
 
 .form-group { margin-bottom: 12px; }
-.form-group label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
+/* .field-label captions a group of controls (a checkbox list) rather than one
+   control, where a <label> would have nothing to point `for` at. */
+.form-group label,
+.form-group .field-label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--muted); }
 .form-control {
   width: 100%;
   background: var(--bg);
@@ -261,6 +264,29 @@ main {
 .state-running { background: var(--green); }
 .state-stopped { background: var(--border); }
 .state-unknown { background: transparent; border: 1px solid var(--muted); }
+
+/* Checkbox list for picking a set (a scenario's components). It replaces a
+   <select multiple>, where a plain click replaces the selection instead of
+   adding to it — the field reads as single-choice unless you know to hold ⌘. */
+.check-list {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+.check-row:hover { background: var(--border); }
+.check-empty { padding: 10px 6px; font-size: 12px; color: var(--muted); }
 
 /* --- switch plan / result modal --- */
 .plan-section { margin-bottom: 14px; }

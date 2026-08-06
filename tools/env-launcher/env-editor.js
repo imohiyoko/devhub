@@ -10,11 +10,15 @@ envWtEnabled.addEventListener('change', () => {
 document.getElementById('envWtRepo').addEventListener('change', e => {
   fillBranchSelect(document.getElementById('envWtBranch'), e.target.value, '', '(branch を選択)');
 });
-// The env's declared repo scope (selected paths in the multi-select).
+// The env's declared repo scope (the checked paths in the repo picker).
 function selectedEnvRepos() {
-  return Array.from(document.getElementById('envRepos').selectedOptions).map(o => o.value);
+  return Array.from(
+    document.getElementById('envRepos').querySelectorAll('input[type="checkbox"]:checked')
+  ).map(input => input.value);
 }
-// Re-scope the env worktree repo picker when the allowed repos change.
+// Re-scope the env worktree repo picker when the allowed repos change. The
+// listener sits on the container and catches the checkboxes' change events as
+// they bubble, so it keeps working the same as it did on the <select>.
 document.getElementById('envRepos').addEventListener('change', () => {
   const repoSel = document.getElementById('envWtRepo');
   fillRepoSelect(repoSel, repoSel.value, '(repo を選択)', selectedEnvRepos());

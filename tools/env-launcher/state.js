@@ -65,19 +65,28 @@ function fillRepoSelect(sel, selected, placeholder, allowed) {
   }
 }
 
-// Fill the env-scope repo multi-select, marking `selectedPaths` as selected.
-// Saved paths no longer in the inventory are still shown so they aren't lost.
-function fillReposMulti(sel, selectedPaths) {
+// Fill the env-scope repo picker, checking `selectedPaths`. Saved paths no
+// longer in the inventory are still shown so they aren't lost.
+//
+// Checkboxes rather than a <select multiple>: a plain click there replaces the
+// selection instead of adding to it, so a scope meant to hold several repos
+// reads as single-choice unless the user knows to hold ⌘/Ctrl. Same reason the
+// scenario component picker is a checkbox list.
+function fillReposMulti(el, selectedPaths) {
   const repos = worktreeData.repos || [];
   const chosen = new Set((selectedPaths || []).map(expandHome));
-  const opts = repos.map(r =>
-    `<option value="${escapeHtml(r.path)}"${chosen.has(r.path) ? ' selected' : ''}>${escapeHtml(r.name)}</option>`);
+  const row = (value, label, checked) =>
+    `<label class="check-row"><input type="checkbox" value="${escapeHtml(value)}"${
+      checked ? ' checked' : ''}> ${escapeHtml(label)}</label>`;
+  const rows = repos.map(r => row(r.path, r.name, chosen.has(r.path)));
   (selectedPaths || []).forEach(p => {
     if (!repos.some(r => r.path === expandHome(p))) {
-      opts.push(`<option value="${escapeHtml(p)}" selected>${escapeHtml(p)} (未検出)</option>`);
+      rows.push(row(p, `${p} (未検出)`, true));
     }
   });
-  sel.innerHTML = opts.join('');
+  el.innerHTML = rows.length
+    ? rows.join('')
+    : '<div class="check-empty">Repository が見つかりません。</div>';
 }
 
 // Fill a branch <select> from a repo's existing worktrees.
