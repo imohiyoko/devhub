@@ -84,13 +84,15 @@ func (s *Server) captureBody(r *http.Request, e *reqlog.Entry) string {
 // synchronous and a panic should not leave a half-finished entry claiming a
 // status the caller never received.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !loggablePath(r.URL.Path) {
+	// Normalize first, so loggablePath states each rule once for both surfaces.
+	surface, path, query := requestLabel(r)
+	if !loggablePath(path) {
 		s.serve(w, r, nil)
 		return
 	}
 	start := time.Now()
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-	e := reqlog.Begin(r)
+	e := reqlog.Begin(surface, r.Method, path+query)
 
 	s.serve(rec, r, e)
 
@@ -162,12 +164,30 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) 
 		// Rewrite path: /ai-api/foo -> /api/foo to let the gateway handle it.
 		r.URL.Path = "/api/" + strings.TrimPrefix(r.URL.Path, "/ai-api/")
 
+		// A few routes are withheld from this surface outright, before the
+		// approval gate rather than through it — see aiAPIBlockedPaths for why
+		// approval is not enough for them.
+		if why, blocked := aiAPIBlockedPaths[r.URL.Path]; blocked {
+			httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "not available on /ai-api").WithHint(
+				"no_ai_api_route", why))
+			return
+		}
+
 		// Writes — and the few GET endpoints that have side effects (e.g.
 		// /api/open launches the editor) rather than just reading state — wait for
 		// manual approval. Plain reads pass straight through.
 		if aiAPINeedsApproval(r.Method, r.URL.Path) {
 			action := "api_write"
-			detail := r.Method + " " + origPath
+			// The query is part of what is being approved, not decoration: the
+			// side-effecting GETs carry their whole argument there. Without it
+			// every "GET /ai-api/open" produced the same detail string, so one
+			// always-allow rule silently covered opening any directory on the
+			// machine — and the prompt the user saw never named the one.
+			//
+			// The path is escaped alongside it. r.URL.Path is percent-decoded, so
+			// an unescaped path could put a space into this string — the exact
+			// character an always-allow rule anchors on.
+			detail := r.Method + " " + labelEscape(origPath) + redactedQuery(r.URL)
 
 			// Include a redacted preview of the request body so the approval
 			// prompt — and any always-allow rule derived from it — reflects WHAT

@@ -10,6 +10,32 @@ var sideEffectingGetPaths = map[string]bool{
 	"/api/open": true, // workspace: opens a directory in the configured editor
 }
 
+// aiAPIBlockedPaths are rewritten /api paths that /ai-api must not reach, with
+// the reason each is withheld. Keys are post-rewrite paths, matching what the
+// router holds when it consults this.
+//
+// The approval endpoints are already unreachable by construction — they are
+// served inside the token-checked branch, so an /ai-api caller falls through to
+// a 404. The log's mutating endpoints are not: they are ordinary tool routes,
+// and without this an agent could erase the record of what it had done.
+//
+// Approval alone does not cover it. Approval is one "always allow" away from
+// being automatic, and that rule would be the last thing anyone could prove had
+// ever been created — the wipe that followed would look like a quiet hour.
+//
+// Reading the log stays open on /ai-api. An agent diagnosing its own failures
+// is why that surface exists; erasing the evidence is not.
+//
+// The match is on path alone, so GET /ai-api/logs/clear is refused with this
+// message rather than the 404 the same spelling gets on /api. That is the
+// intended way round: the reason is about the route, not about one verb of it,
+// and answering "no such route" to a GET while answering "withheld" to a POST
+// would tell a caller which methods exist on a path it is not allowed to use.
+var aiAPIBlockedPaths = map[string]string{
+	"/api/logs/clear":   "Clearing the request log is deliberately unavailable to /ai-api — an agent must not be able to erase the record of what it did. Ask the user to clear it from the dashboard if that is really what they want.",
+	"/api/logs/archive": "Archiving the request log is deliberately unavailable to /ai-api — what is kept past a restart is the user's decision. Read it with GET /ai-api/logs instead.",
+}
+
 // isRead reports whether a method only reads. It is the method half of the
 // approval rule, reused where the question is "could this carry a body worth
 // recording" rather than "does this need approval".

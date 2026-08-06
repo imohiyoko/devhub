@@ -16,7 +16,6 @@ package reqlog
 
 import (
 	"cmp"
-	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -39,10 +38,16 @@ const (
 	ApprovalTimeout  = "timeout"  // nobody answered in time
 )
 
+// Surface is the door a request arrived through. It is a named type rather than
+// a plain string so Begin's three parameters cannot be transposed silently —
+// they are otherwise interchangeable to the compiler, and a swapped surface and
+// method would produce a log that reads plausibly and says the wrong thing.
+type Surface string
+
 // Surfaces a request can arrive on.
 const (
-	SurfaceAPI   = "api"    // token-authenticated, i.e. devhub's own pages
-	SurfaceAIAPI = "ai-api" // token-less local surface, i.e. agents and CLIs
+	SurfaceAPI   Surface = "api"    // token-authenticated, i.e. devhub's own pages
+	SurfaceAIAPI Surface = "ai-api" // token-less local surface, i.e. agents and CLIs
 )
 
 // Entry is one served request. It is filled in two stages: Begin records what is
@@ -59,7 +64,7 @@ type Entry struct {
 	Seq int64 `json:"seq"`
 
 	TS      time.Time `json:"ts"`
-	Surface string    `json:"surface"`
+	Surface Surface   `json:"surface"`
 	Method  string    `json:"method"`
 	Path    string    `json:"path"`
 
@@ -112,12 +117,14 @@ func (rg *Ring) Instance() string { return rg.instance }
 // Begin starts an entry for an arriving request. It does not touch the ring —
 // nothing is recorded until Add — so a handler that panics leaves no half-built
 // entry behind.
-func Begin(r *http.Request) *Entry {
-	surface := SurfaceAPI
-	if strings.HasPrefix(r.URL.Path, "/ai-api/") {
-		surface = SurfaceAIAPI
-	}
-	return &Entry{TS: time.Now(), Surface: surface, Method: r.Method, Path: r.URL.Path}
+//
+// It takes the pieces rather than the *http.Request because deciding what the
+// recorded path should say is not this package's call: the caller normalizes
+// the surface prefix away and redacts the query string before handing it over
+// (see the server's requestLabel). Keeping that here would put secret-key
+// heuristics inside the data structure.
+func Begin(surface Surface, method, path string) *Entry {
+	return &Entry{TS: time.Now(), Surface: surface, Method: method, Path: path}
 }
 
 // Finish records the outcome. errExcerpt should be empty for a success; the
@@ -154,7 +161,7 @@ func (rg *Ring) Clear() {
 // so the zero Filter matches everything.
 type Filter struct {
 	Since, Until time.Time
-	Surface      string // "api" | "ai-api"
+	Surface      Surface
 	Method       string
 	PathPrefix   string
 	Approval     string
