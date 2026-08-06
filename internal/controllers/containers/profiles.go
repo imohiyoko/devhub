@@ -268,21 +268,30 @@ func memoryOversubscription(l container.Limits, allocs []container.Alloc, name s
 // impossible the way a disk shrink is, and it is undone by starting the profile
 // again — so the only thing that fails here is a profile that does not exist,
 // which ProfileTargets answers on the dry run before anyone agrees to anything.
+//
+// Which is why the listing only gates the dry run. ProfileTargets runs `docker
+// ps` inside the VM, and the ways that fails are the ways that make someone want
+// to stop it: a wedged daemon, a probe that timed out, an engine devhub cannot
+// drive. Letting that failure block a stop the user has already agreed to would
+// mean the VM most in need of stopping is the one devhub refuses to stop — the
+// same failure the capacity cap is careful not to make by staying out of
+// check(). Past the confirm the listing is decoration, and Stop is the one that
+// decides, including whether the profile exists at all.
 func (c *Controller) stopProfile(w http.ResponseWriter, r *http.Request, name string, data map[string]any) error {
 	name, err := profileName(name)
 	if err != nil {
 		return err
 	}
-	targets, err := c.admin.ProfileTargets(r.Context(), name)
-	if err != nil {
-		return profileError(err)
-	}
-	stops := stopListJSON(targets)
+	confirmed, _ := data["confirm"].(bool)
+	targets, listErr := c.admin.ProfileTargets(r.Context(), name)
 
-	if b, _ := data["confirm"].(bool); !b {
+	if !confirmed {
+		if listErr != nil {
+			return profileError(listErr)
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"ok": false, "confirm_required": true, "action": "stop",
-			"profile": name, "stops": stops,
+			"profile": name, "stops": stopListJSON(targets),
 		})
 		return nil
 	}
@@ -290,9 +299,14 @@ func (c *Controller) stopProfile(w http.ResponseWriter, r *http.Request, name st
 	if err := c.admin.Stop(acting(r), name); err != nil {
 		return profileError(err)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "action": "stop", "profile": name, "stopped": stops,
-	})
+	out := map[string]any{"ok": true, "action": "stop", "profile": name}
+	// Absent rather than empty when the listing failed. An empty array here
+	// would be devhub stating that nothing went down, which is a different
+	// claim from "the VM is down and I could not see inside it".
+	if listErr == nil {
+		out["stopped"] = stopListJSON(targets)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 	return nil
 }
 
