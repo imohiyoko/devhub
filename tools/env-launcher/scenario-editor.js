@@ -29,12 +29,18 @@ function openScenarioModal(envIndex, scenarioIndex = -1) {
   document.getElementById('scenarioId').value = scenario.id || '';
   document.getElementById('scenarioName').value = scenario.name || '';
 
-  // Build the options with their selection already set: assigning .value or
-  // .selected to a <select> whose options do not exist yet is a silent no-op.
-  document.getElementById('scenarioComponents').innerHTML = componentsOf(env)
-    .filter(c => c.lifecycle !== 'shared')
-    .map(c => `<option value="${escapeHtml(c.id)}"${members.includes(c.id) ? ' selected' : ''}>${escapeHtml(c.label || c.id)}</option>`)
-    .join('');
+  // Checkboxes rather than a <select multiple>: in a multi-select a plain click
+  // replaces the selection instead of adding to it, so a scenario looks like it
+  // can only hold one component unless the user knows to hold ⌘/Ctrl. Selecting
+  // a set is the whole point of this field, so the affordance has to show it.
+  const assignable = componentsOf(env).filter(c => c.lifecycle !== 'shared');
+  document.getElementById('scenarioComponents').innerHTML = assignable.length
+    ? assignable.map(c => `
+        <label class="check-row">
+          <input type="checkbox" value="${escapeHtml(c.id)}"${members.includes(c.id) ? ' checked' : ''}>
+          ${escapeHtml(c.label || c.id)}
+        </label>`).join('')
+    : '<div class="check-empty">割り当てられるコンポーネントがありません（shared のものは除外されます）。</div>';
 
   scenarioModal.open();
 }
@@ -62,7 +68,9 @@ async function saveScenario() {
   const scenario = {
     id: id,
     name: document.getElementById('scenarioName').value.trim(),
-    components: Array.from(document.getElementById('scenarioComponents').selectedOptions).map(o => o.value),
+    components: Array.from(
+      document.getElementById('scenarioComponents').querySelectorAll('input[type="checkbox"]:checked')
+    ).map(input => input.value),
   };
   const saved = await saveEnvEdit(envIndex, e => {
     if (!Array.isArray(e.scenarios)) e.scenarios = [];
