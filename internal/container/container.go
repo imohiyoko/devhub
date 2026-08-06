@@ -13,8 +13,8 @@
 // side effect of something else: a switch, a status read and a page load all
 // leave a stopped VM stopped, and hand the user the command (plan §13). The one
 // exception is deliberate and narrow — see profile.go, where a request whose
-// entire purpose is to create or resize a profile does exactly that and nothing
-// reaches it by accident.
+// entire purpose is to move a profile does exactly that and nothing reaches it
+// by accident.
 package container
 
 // Runtime providers and container engines (plan §5). A provider is where
@@ -82,7 +82,8 @@ type Runtime struct {
 	// project — see internal/container/inventory.go.
 	Inventory Lister
 	// Admin is the only seam that moves a VM rather than reading one. It is
-	// reached solely by requests that exist to create or resize a profile;
+	// reached solely by requests that exist to create, resize, start or stop a
+	// profile;
 	// nothing devhub does on its own touches it (see profile.go).
 	Admin ProfileManager
 	// Control operates on one container that Inventory reported. Separate from
@@ -91,17 +92,39 @@ type Runtime struct {
 	Control Operator
 }
 
+// Option adjusts what New builds. Variadic rather than parameters because the
+// two consumers want different things: env-launcher never touches Admin, and
+// making it pass a dependency it has no use for would be a signature that lies
+// about what it needs.
+type Option func(*options)
+
+type options struct{ reserve func() Reserve }
+
+// WithReserve supplies the host-capacity policy — how much of the machine to
+// keep away from a VM. Without it the default applies, which is what a
+// consumer that never creates or starts a profile should get.
+//
+// A func, not a value: the reserve is a live setting, and reading it here would
+// pin the cap to whatever it was when devhub booted.
+func WithReserve(f func() Reserve) Option {
+	return func(o *options) { o.reserve = f }
+}
+
 // New wires the real implementations. Nothing is probed here: construction is
 // cheap and spawns nothing, so a host with neither Docker nor Colima installed
 // pays nothing until something is actually asked of it.
-func New() *Runtime {
+func New(opts ...Option) *Runtime {
+	var o options
+	for _, apply := range opts {
+		apply(&o)
+	}
 	colima := newColimaCLI()
 	return &Runtime{
 		Docker:     newDockerCompose(),
 		Containerd: newNerdctlCompose(),
 		Colima:     colima,
 		Inventory:  newCLIInventory(),
-		Admin:      newColimaAdmin(colima),
+		Admin:      newColimaAdmin(colima, o.reserve),
 		Control:    newCLIControl(),
 	}
 }

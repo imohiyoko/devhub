@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/imohiyoko/devhub/internal/hostspec"
 )
 
 func testAdmin(runner commandRunner, profiles ProfileLister) *colimaAdmin {
@@ -24,6 +26,23 @@ func testAdmin(runner commandRunner, profiles ProfileLister) *colimaAdmin {
 }
 
 func noProfiles() *fakeColima { return &fakeColima{} }
+
+// cappedAdmin is testAdmin plus a host to measure against: ten cores and
+// 32 GiB, the machine this was written on. With the default 20% reserve that
+// works out to a cap of 8 CPU and 25 GiB.
+//
+// testAdmin itself leaves host nil on purpose, so every test written before the
+// cap existed goes on exercising the undetected-host path — which is what a
+// non-darwin build and a failed sysctl both look like, and it must stay a
+// straight passthrough.
+func cappedAdmin(runner commandRunner, profiles ProfileLister, reserve Reserve) *colimaAdmin {
+	a := testAdmin(runner, profiles)
+	a.host = func() hostspec.Spec {
+		return hostspec.Spec{CPUs: 10, MemoryBytes: 32 * gibDivisor, Detected: true}
+	}
+	a.reserve = func() Reserve { return reserve }
+	return a
+}
 
 func TestCreateArgv(t *testing.T) {
 	for _, tc := range []struct {
@@ -424,5 +443,358 @@ func TestProfileTargetsNamesWhatAResizeStops(t *testing.T) {
 	}
 	if _, err := r.ProfileTargets(context.Background(), "ghost"); !errors.Is(err, ErrProfileMissing) {
 		t.Errorf("err = %v, want ErrProfileMissing", err)
+	}
+}
+
+// TestStartArgv: a start passes no size flags at all. That is what separates it
+// from a resize — colima keeps each profile's configuration, so an omitted flag
+// means "whatever this profile already is", and a start that sent sizes would be
+// a resize without the confirmation a resize is required to have.
+func TestStartArgv(t *testing.T) {
+	runner := &fakeRunner{}
+	lister := &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Stopped"}}}
+	if err := testAdmin(runner, lister).Start(context.Background(), "dev"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %v, want one", runner.calls)
+	}
+	call := runner.calls[0]
+	want := []string{"start", "--profile", "dev"}
+	if call.name != "colima" || !slices.Equal(call.args, want) {
+		t.Errorf("ran %q %v\nwant colima %v", call.name, call.args, want)
+	}
+	if !call.bounded {
+		t.Error("spawned with no deadline")
+	}
+}
+
+func TestStopArgv(t *testing.T) {
+	runner := &fakeRunner{}
+	lister := &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Running"}}}
+	if err := testAdmin(runner, lister).Stop(context.Background(), "dev"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %v, want one", runner.calls)
+	}
+	call := runner.calls[0]
+	want := []string{"stop", "--profile", "dev"}
+	if call.name != "colima" || !slices.Equal(call.args, want) {
+		t.Errorf("ran %q %v\nwant colima %v", call.name, call.args, want)
+	}
+	// --force skips the guest's shutdown. The whole point of showing the user
+	// what will stop is that those containers get to exit cleanly.
+	if slices.Contains(call.args, "--force") {
+		t.Error("passed --force; the guest would not shut down cleanly")
+	}
+	if !call.bounded {
+		t.Error("spawned with no deadline")
+	}
+}
+
+// TestStartAndStopAreIdempotent: both are read as "make it so". A profile that
+// is already in the wanted state is left alone rather than cycled, so a second
+// click cannot turn a satisfied request into a stop nobody asked for.
+func TestStartAndStopAreIdempotent(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+		op     func(*colimaAdmin) error
+	}{
+		{"start a running profile", "Running", func(a *colimaAdmin) error {
+			return a.Start(context.Background(), "dev")
+		}},
+		{"stop a stopped profile", "Stopped", func(a *colimaAdmin) error {
+			return a.Stop(context.Background(), "dev")
+		}},
+	} {
+		runner := &fakeRunner{}
+		lister := &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: tc.status}}}
+		if err := tc.op(testAdmin(runner, lister)); err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Errorf("%s: spawned %v for a VM already in that state", tc.name, runner.calls)
+		}
+	}
+}
+
+// TestStartAndStopRefuseAnUnknownProfile. Start refuses rather than creating:
+// Create is the door for a VM that does not exist and it takes a size, so
+// starting a free name would make a default-sized VM out of a typo.
+func TestStartAndStopRefuseAnUnknownProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		op   func(*colimaAdmin) error
+	}{
+		{"start", func(a *colimaAdmin) error { return a.Start(context.Background(), "ghost") }},
+		{"stop", func(a *colimaAdmin) error { return a.Stop(context.Background(), "ghost") }},
+	} {
+		runner := &fakeRunner{}
+		err := tc.op(testAdmin(runner, noProfiles()))
+		if !errors.Is(err, ErrProfileMissing) {
+			t.Errorf("%s: err = %v, want ErrProfileMissing", tc.name, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Errorf("%s: spawned %v after refusing", tc.name, runner.calls)
+		}
+	}
+}
+
+// TestStartAndStopRefuseABadName: the name becomes an argv element, and it is
+// checked before anything is spawned or even looked up.
+func TestStartAndStopRefuseABadName(t *testing.T) {
+	for _, name := range []string{"", "--rm", "-f", "my profile", "../etc"} {
+		for _, tc := range []struct {
+			verb string
+			op   func(*colimaAdmin, string) error
+		}{
+			{"start", func(a *colimaAdmin, n string) error { return a.Start(context.Background(), n) }},
+			{"stop", func(a *colimaAdmin, n string) error { return a.Stop(context.Background(), n) }},
+		} {
+			runner := &fakeRunner{}
+			lister := &fakeColima{profiles: []ColimaProfile{{Name: name, Status: "Running"}}}
+			if err := tc.op(testAdmin(runner, lister), name); err == nil {
+				t.Errorf("%s %q: accepted", tc.verb, name)
+			}
+			if len(runner.calls) != 0 {
+				t.Errorf("%s %q: reached a command line", tc.verb, name)
+			}
+		}
+	}
+}
+
+// --- ホスト容量の上限 -------------------------------------------------------
+
+// TestCapRefusesBeforeSpawning: a size this machine cannot back is turned away
+// without a command line. That is the whole point — colima would have refused
+// it too, but on a resize colima's refusal arrives after the stop.
+func TestCapRefusesBeforeSpawning(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		op   func(*colimaAdmin) error
+	}{
+		{"create cpus", func(a *colimaAdmin) error {
+			return a.Create(context.Background(), ProfileSpec{Name: "big", CPUs: 16})
+		}},
+		{"create memory", func(a *colimaAdmin) error {
+			return a.Create(context.Background(), ProfileSpec{Name: "big", MemoryGiB: 64})
+		}},
+		{"resize", func(a *colimaAdmin) error {
+			return a.Resize(context.Background(), ProfileSpec{Name: "dev", MemoryGiB: 64})
+		}},
+		// The dry run must refuse too, or the user agrees to stop a VM full of
+		// containers for an operation that was never going to run.
+		{"check resize", func(a *colimaAdmin) error {
+			return a.CheckResize(context.Background(), ProfileSpec{Name: "dev", CPUs: 16})
+		}},
+	} {
+		runner := &fakeRunner{}
+		lister := &fakeColima{profiles: []ColimaProfile{{Name: "dev", Status: "Running"}}}
+		err := tc.op(cappedAdmin(runner, lister, DefaultReserve()))
+
+		if !errors.Is(err, ErrOverHostCapacity) {
+			t.Errorf("%s: err = %v, want ErrOverHostCapacity", tc.name, err)
+		}
+		if len(runner.calls) != 0 {
+			t.Errorf("%s: spawned %v — the VM was touched for a size that could never work",
+				tc.name, runner.calls)
+		}
+	}
+}
+
+// TestCapMessageNamesTheWayOut. Raising the reserve can put an existing VM out
+// of reach of the panel, so a refusal that does not say how to undo itself
+// leaves the user with a machine they can see and cannot start.
+func TestCapMessageNamesTheWayOut(t *testing.T) {
+	err := cappedAdmin(&fakeRunner{}, noProfiles(), DefaultReserve()).
+		Create(context.Background(), ProfileSpec{Name: "big", CPUs: 16, MemoryGiB: 64})
+	if err == nil {
+		t.Fatal("accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"CPU 16", "上限 8", "実装 10", // what was asked, what is allowed, what exists
+		"メモリ 64 GiB", "上限 25 GiB", "実装 32 GiB",
+		"20%",          // the reserve, in the form it was written
+		"予約を減らす",       // way out #1
+		"colima start", // way out #2
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message is missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// TestCapUsesTheReserveAsWritten: an absolute reserve is reported as one. A
+// user who set "4 cores" must not be told about a percentage devhub computed,
+// because they would go looking for a setting they never touched.
+func TestCapUsesTheReserveAsWritten(t *testing.T) {
+	res := Reserve{CPU: Amount{Value: 4, Set: true}, Memory: Amount{Value: 8, Set: true}}
+	err := cappedAdmin(&fakeRunner{}, noProfiles(), res).
+		Create(context.Background(), ProfileSpec{Name: "big", CPUs: 7})
+	if err == nil {
+		t.Fatal("accepted 7 CPUs against a cap of 6")
+	}
+	if !strings.Contains(err.Error(), "予約 4コア") {
+		t.Errorf("message did not name the reserve as written:\n%s", err)
+	}
+}
+
+// TestCapAllowsWhatFits, including the boundary: a cap of 8 permits 8.
+func TestCapAllowsWhatFits(t *testing.T) {
+	runner := &fakeRunner{}
+	err := cappedAdmin(runner, noProfiles(), DefaultReserve()).
+		Create(context.Background(), ProfileSpec{Name: "fits", CPUs: 8, MemoryGiB: 25})
+	if err != nil {
+		t.Fatalf("refused a size that fits exactly: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Errorf("calls = %v, want the create to have run", runner.calls)
+	}
+}
+
+// TestStartRefusesAProfileThatNoLongerFits is the check asked for by name: the
+// size judged is the profile's own, since a start carries none.
+func TestStartRefusesAProfileThatNoLongerFits(t *testing.T) {
+	runner := &fakeRunner{}
+	lister := &fakeColima{profiles: []ColimaProfile{
+		{Name: "hog", Status: "Stopped", CPUs: 16, MemoryBytes: 64 * gibDivisor},
+	}}
+	err := cappedAdmin(runner, lister, DefaultReserve()).Start(context.Background(), "hog")
+
+	if !errors.Is(err, ErrOverHostCapacity) {
+		t.Fatalf("err = %v, want ErrOverHostCapacity", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("spawned %v", runner.calls)
+	}
+}
+
+// TestOverSizedVMsCanStillBeStopped. A cap that blocked the stop would be the
+// worst failure available: the user could not reclaim the very memory the cap
+// exists to protect. This is why the check is not in check(), which Stop shares.
+func TestOverSizedVMsCanStillBeStopped(t *testing.T) {
+	runner := &fakeRunner{}
+	lister := &fakeColima{profiles: []ColimaProfile{
+		{Name: "hog", Status: "Running", CPUs: 16, MemoryBytes: 64 * gibDivisor},
+	}}
+	if err := cappedAdmin(runner, lister, DefaultReserve()).Stop(context.Background(), "hog"); err != nil {
+		t.Fatalf("could not stop an over-sized VM: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("calls = %v, want the stop to have run", runner.calls)
+	}
+	// And a VM that is already up stays reachable: the "already running" answer
+	// comes before the cap, so raising the reserve cannot make a live VM look
+	// like something devhub must refuse.
+	runner2 := &fakeRunner{}
+	if err := cappedAdmin(runner2, lister, DefaultReserve()).Start(context.Background(), "hog"); err != nil {
+		t.Errorf("a running over-sized VM was refused: %v", err)
+	}
+}
+
+// TestNoHostNoCap: on a machine devhub cannot measure — every non-darwin build,
+// or a failed sysctl — the absolute limits are all that remain, and nothing new
+// is refused.
+func TestNoHostNoCap(t *testing.T) {
+	runner := &fakeRunner{}
+	// testAdmin, not cappedAdmin: host is nil.
+	if err := testAdmin(runner, noProfiles()).
+		Create(context.Background(), ProfileSpec{Name: "big", CPUs: 512, MemoryGiB: 999}); err != nil {
+		t.Fatalf("refused without a host to justify it: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Errorf("calls = %v, want the create to have run", runner.calls)
+	}
+}
+
+// TestAllocationsReportPerProfile. Not pre-totalled, because callers want
+// different sums: the panel wants what is running, and a start wants that plus
+// the one profile it is about to bring up.
+func TestAllocationsReportPerProfile(t *testing.T) {
+	lister := &fakeColima{profiles: []ColimaProfile{
+		{Name: "a", Status: "Running", CPUs: 8, MemoryBytes: 20 * gibDivisor},
+		{Name: "b", Status: "Stopped", CPUs: 6, MemoryBytes: 16 * gibDivisor},
+	}}
+	got, err := cappedAdmin(&fakeRunner{}, lister, DefaultReserve()).Allocations(context.Background())
+	if err != nil {
+		t.Fatalf("Allocations: %v", err)
+	}
+	want := []Alloc{
+		{Name: "a", CPUs: 8, MemGiB: 20, Running: true},
+		{Name: "b", CPUs: 6, MemGiB: 16, Running: false},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("allocations = %+v\nwant %+v", got, want)
+	}
+}
+
+// TestLimitsAskColimaNothing is the property that lets the listing endpoint
+// carry the caps for free: Limits is syscalls and a setting, so a caller that
+// has already swept the machine pays nothing to add the limits to its answer.
+func TestLimitsAskColimaNothing(t *testing.T) {
+	lister := &fakeColima{err: ErrColimaMissing}
+	l := cappedAdmin(&fakeRunner{}, lister, DefaultReserve()).Limits()
+	if !l.Detected || l.CPUCap != 8 || l.MemCapGiB != 25 {
+		t.Errorf("limits = %+v, want the caps for a 10-core / 32 GiB host even with colima broken", l)
+	}
+}
+
+// TestResizeJudgesTheResultingSize, not the request. An omitted size on a
+// resize is not "colima's default" — the flag is simply not passed, so the
+// profile keeps what it has. Judging the request alone let a 64 GiB VM be
+// restarted at 64 GiB by asking only for a CPU change, while Start refused the
+// same profile by its own size. The two paths have to agree.
+func TestResizeJudgesTheResultingSize(t *testing.T) {
+	// 64 GiB against a 25 GiB cap, and the request never mentions memory.
+	lister := &fakeColima{profiles: []ColimaProfile{
+		{Name: "hog", Status: "Running", CPUs: 4, MemoryBytes: 64 * gibDivisor, DiskBytes: 100 * gib},
+	}}
+	runner := &fakeRunner{}
+	err := cappedAdmin(runner, lister, DefaultReserve()).
+		Resize(context.Background(), ProfileSpec{Name: "hog", CPUs: 2})
+
+	if !errors.Is(err, ErrOverHostCapacity) {
+		t.Fatalf("err = %v, want ErrOverHostCapacity", err)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("ran %v — the VM was taken down for a resize that leaves it over the cap", runner.calls)
+	}
+	// The dry run refuses it too, so the user is never shown a stop list for a
+	// resize that cannot happen.
+	if err := cappedAdmin(&fakeRunner{}, lister, DefaultReserve()).
+		CheckResize(context.Background(), ProfileSpec{Name: "hog", CPUs: 2}); !errors.Is(err, ErrOverHostCapacity) {
+		t.Errorf("dry run: err = %v, want ErrOverHostCapacity", err)
+	}
+
+	// Shrinking into the cap is the way out, and it must still work — otherwise
+	// an over-sized VM could never be brought back under the limit.
+	runner2 := &fakeRunner{}
+	if err := cappedAdmin(runner2, lister, DefaultReserve()).
+		Resize(context.Background(), ProfileSpec{Name: "hog", MemoryGiB: 20}); err != nil {
+		t.Errorf("could not resize down into the cap: %v", err)
+	}
+	if len(runner2.calls) != 2 {
+		t.Errorf("calls = %v, want stop then start", runner2.calls)
+	}
+}
+
+// TestResizeLetsAnUnknownCurrentSizeThrough. colima not reporting a size is
+// not evidence the VM is too big, and this refusal is recoverable by starting
+// the profile again — unlike the disk shrink, which refuses outright when the
+// current size is unknown because it is not.
+func TestResizeLetsAnUnknownCurrentSizeThrough(t *testing.T) {
+	lister := &fakeColima{profiles: []ColimaProfile{
+		{Name: "dev", Status: "Stopped", DiskBytes: 100 * gib}, // no CPUs, no memory
+	}}
+	runner := &fakeRunner{}
+	if err := cappedAdmin(runner, lister, DefaultReserve()).
+		Resize(context.Background(), ProfileSpec{Name: "dev", CPUs: 2}); err != nil {
+		t.Fatalf("refused on a size colima did not report: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Errorf("calls = %v, want the start", runner.calls)
 	}
 }

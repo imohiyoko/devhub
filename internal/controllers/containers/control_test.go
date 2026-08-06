@@ -15,6 +15,7 @@ import (
 type fakeOperator struct {
 	resolved  [][2]string
 	stopped   []string
+	started   []string
 	restarted []string
 	logged    []int
 	target    container.ContainerTarget
@@ -36,6 +37,12 @@ func (f *fakeOperator) Logs(_ context.Context, _ container.Source, _ string, tai
 func (f *fakeOperator) Stop(ctx context.Context, _ container.Source, id string) error {
 	f.actCtxErr = ctx.Err()
 	f.stopped = append(f.stopped, id)
+	return f.actErr
+}
+
+func (f *fakeOperator) Start(ctx context.Context, _ container.Source, id string) error {
+	f.actCtxErr = ctx.Err()
+	f.started = append(f.started, id)
 	return f.actErr
 }
 
@@ -72,6 +79,7 @@ func TestControlActsOnTheResolvedContainer(t *testing.T) {
 		want func(*fakeOperator) int
 	}{
 		{"stop", func(f *fakeOperator) int { return len(f.stopped) }},
+		{"start", func(f *fakeOperator) int { return len(f.started) }},
 		{"restart", func(f *fakeOperator) int { return len(f.restarted) }},
 	} {
 		f := &fakeOperator{target: liveTarget()}
@@ -107,14 +115,14 @@ func TestNothingActsOnAnUnresolvedContainer(t *testing.T) {
 		// the machine's state after one.
 		{"broken", errors.New("boom"), http.StatusInternalServerError},
 	} {
-		for _, verb := range []string{"stop", "restart", "logs"} {
+		for _, verb := range []string{"stop", "start", "restart", "logs"} {
 			f := &fakeOperator{resolveEr: tc.err}
 			code, _ := ctlPost(t, f, "/api/containers/"+verb,
 				map[string]any{"source": "docker", "id": "abc123def456"})
 			if code != tc.want {
 				t.Errorf("%s/%s: code = %d, want %d", tc.name, verb, code, tc.want)
 			}
-			if len(f.stopped)+len(f.restarted)+len(f.logged) > 0 {
+			if len(f.stopped)+len(f.started)+len(f.restarted)+len(f.logged) > 0 {
 				t.Errorf("%s/%s: acted after a failed resolve", tc.name, verb)
 			}
 		}
@@ -130,15 +138,18 @@ func TestControlRejectsIncompleteRequests(t *testing.T) {
 		{"no id", "/api/containers/stop", map[string]any{"source": "docker"}},
 		{"no source", "/api/containers/stop", map[string]any{"id": "abc123def456"}},
 		{"blank id", "/api/containers/stop", map[string]any{"source": "docker", "id": "  "}},
-		// Only three verbs exist; devhub does not remove containers.
+		// The verb set is closed at logs/stop/start/restart; devhub does not
+		// remove containers, and a subcommand it never meant to offer cannot be
+		// reached by naming it in the path.
 		{"rm", "/api/containers/rm", map[string]any{"source": "docker", "id": "abc123def456"}},
 		{"prune", "/api/containers/prune", map[string]any{"source": "docker", "id": "abc123def456"}},
+		{"kill", "/api/containers/kill", map[string]any{"source": "docker", "id": "abc123def456"}},
 	} {
 		f := &fakeOperator{target: liveTarget()}
 		if code, _ := ctlPost(t, f, tc.path, tc.body); code == http.StatusOK {
 			t.Errorf("%s: accepted", tc.name)
 		}
-		if len(f.resolved) > 0 || len(f.stopped) > 0 || len(f.restarted) > 0 {
+		if len(f.resolved) > 0 || len(f.stopped) > 0 || len(f.started) > 0 || len(f.restarted) > 0 {
 			t.Errorf("%s: reached the operator", tc.name)
 		}
 	}

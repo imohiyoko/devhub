@@ -21,6 +21,7 @@ import (
 var settingsOwners = map[string]string{
 	"protected_ports": "ports",
 	"port_labels":     "ports",
+	"vm_reserve":      "containers",
 }
 
 // settingsRowKey returns the kv row key holding the given settings key.
@@ -61,6 +62,11 @@ func (s *Store) LoadSettings() (map[string]any, error) {
 		"protected_ports":       []any{},
 		"db_local_only":         true,
 		"terminal":              map[string]any{},
+		// Empty rather than spelled out: the container package owns this
+		// default (container.DefaultReserve) and already fills in a missing or
+		// half-written value. Restating the numbers here would give one policy
+		// two homes, and the one that drifted would be the one nobody edits.
+		"vm_reserve": map[string]any{},
 	}
 	if ex, err := s.readExample("settings/server.example.json"); err == nil {
 		mergeMap(m, ex)

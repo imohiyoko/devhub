@@ -14,7 +14,7 @@
 | **diagram** | `/diagram` | Mermaid 記法と Draw.io XML の相互変換（外部CDNは読み込まない） |
 | **db-table** | `/db-table` | SQLite / MySQL / MariaDB の接続管理、表表示、テーブル/横断カラム/横断要素検索、TSV/CSVコピー、列コピー、セル編集 |
 | **ports** | `/ports` | 開いている TCP ポートの確認、ラベル付け、保護対象設定、LISTEN プロセスの kill |
-| **containers** | `/containers` | Docker context と Colima profile を横断したコンテナ一覧（宣言外・停止済みも表示）。logs / stop / restart と Colima profile の作成・サイズ変更 |
+| **containers** | `/containers` | Docker context と Colima profile を横断したコンテナ一覧（宣言外・停止済みも表示）。logs / stop / start / restart と Colima profile の作成・サイズ変更・起動・停止 |
 | **logs** | `/logs` | この起動中に処理した API リクエストの記録。承認結果・ステータス・パス・ボディで絞り込み、残したい分だけアーカイブ |
 
 `db-table` の MySQL / MariaDB パスワードは保存されません。接続時に必要に応じて入力してください。  
@@ -156,6 +156,7 @@ devhub                     # 引数なしはヘルプ（サーバーは起動し
 | `open_browser_on_start` | `true` | 起動時にブラウザを自動で開くか |
 | `db_local_only` | `true` | db-table の MySQL / MariaDB 接続をローカルホストのみに制限 |
 | `protected_ports` | `[]` | ports ツールで kill できないよう保護するポート番号の配列 |
+| `vm_reserve` | CPU / メモリとも `20%` | Colima VM に渡さず残しておくホスト資源。`{"cpu":{"percent":20},"memory":{"gib":8}}` のように、リソースごとに `percent` か絶対値（CPU は `cores`、メモリは `gib`）で指定します。上限 = 実装値 − 予約で、これを超える profile の作成・サイズ変更・起動は拒否されます（ディスクは対象外 — イメージが sparse なので空き容量を超えた宣言も正当です） |
 
 環境変数で上書きできる項目:
 

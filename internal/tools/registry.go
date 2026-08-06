@@ -53,7 +53,7 @@ func Registry(store *storage.Store, docs *docspkg.Set, rlog *reqlog.Ring) *core.
 	database := databasectl.New(store)
 	envs := envsctl.New(store, git, ports, workspace)
 	settings := settingsctl.New(store, core.Namespace(deps.Store, "tool"))
-	containers := containersctl.New()
+	containers := containersctl.New(store)
 	logs := logsctl.New(rlog, store)
 
 	return core.NewRegistry(

@@ -34,6 +34,15 @@ type inventory interface {
 	Containers(ctx context.Context) ([]container.Source, []container.Container)
 }
 
+// settingsReader is the narrow persistence this controller needs: the shared
+// settings document, where vm_reserve lives. Declared in the consumer, and read
+// live on every decision rather than snapshotted at boot — the same shape the
+// ports controller uses for protected_ports, and for the same reason: a limit
+// the user just changed should be the limit in force.
+type settingsReader interface {
+	LoadSettings() (map[string]any, error)
+}
+
 // Controller serves the container inventory and the profile operations.
 type Controller struct {
 	runtime inventory
@@ -43,9 +52,37 @@ type Controller struct {
 
 // New returns a containers controller wired to the real CLIs. Nothing is probed
 // at construction — that only happens when a request arrives.
-func New() *Controller {
-	rt := container.New()
+//
+// The store is here only to answer "how much of this machine is off limits".
+// It is handed to the container package as a func, so the reserve is read at
+// the moment a size is judged rather than fixed when devhub started.
+func New(store settingsReader) *Controller {
+	rt := container.New(container.WithReserve(func() container.Reserve {
+		return reserveFrom(store)
+	}))
 	return &Controller{runtime: rt, admin: profileAdmin{rt}, control: containerOps{rt}}
+}
+
+// reserveFrom reads the configured reserve, falling back to the default.
+//
+// A store that cannot be read, or a value that no longer parses, yields the
+// default rather than an error: this is consulted on the path that decides
+// whether a VM may be created, and failing that decision over an unreadable
+// preference would take the panel down over a setting. The settings endpoint
+// refuses a malformed value at save time, which is where a person is watching.
+func reserveFrom(store settingsReader) container.Reserve {
+	if store == nil {
+		return container.DefaultReserve()
+	}
+	settings, err := store.LoadSettings()
+	if err != nil {
+		return container.DefaultReserve()
+	}
+	res, err := container.NormalizeReserve(settings["vm_reserve"])
+	if err != nil {
+		return container.DefaultReserve()
+	}
+	return res
 }
 
 // containerOps joins the two halves the operator interface needs, the same way
@@ -64,6 +101,10 @@ func (o containerOps) Logs(ctx context.Context, src container.Source, id string,
 
 func (o containerOps) Stop(ctx context.Context, src container.Source, id string) error {
 	return o.rt.Control.Stop(ctx, src, id)
+}
+
+func (o containerOps) Start(ctx context.Context, src container.Source, id string) error {
+	return o.rt.Control.Start(ctx, src, id)
 }
 
 func (o containerOps) Restart(ctx context.Context, src container.Source, id string) error {
@@ -88,8 +129,22 @@ func (p profileAdmin) CheckResize(ctx context.Context, spec container.ProfileSpe
 	return p.rt.Admin.CheckResize(ctx, spec)
 }
 
+func (p profileAdmin) Start(ctx context.Context, name string) error {
+	return p.rt.Admin.Start(ctx, name)
+}
+
+func (p profileAdmin) Stop(ctx context.Context, name string) error {
+	return p.rt.Admin.Stop(ctx, name)
+}
+
 func (p profileAdmin) ProfileTargets(ctx context.Context, name string) ([]container.Container, error) {
 	return p.rt.ProfileTargets(ctx, name)
+}
+
+func (p profileAdmin) Limits() container.Limits { return p.rt.Admin.Limits() }
+
+func (p profileAdmin) Allocations(ctx context.Context) ([]container.Alloc, error) {
+	return p.rt.Admin.Allocations(ctx)
 }
 
 // HandleGet serves GET /api/containers. The request's context is passed
@@ -97,8 +152,39 @@ func (p profileAdmin) ProfileTargets(ctx context.Context, name string) ([]contai
 // belongs to the container package, which applies one per source.
 func (c *Controller) HandleGet(w http.ResponseWriter, r *http.Request) error {
 	sources, list := c.runtime.Containers(r.Context())
-	httpx.WriteJSON(w, http.StatusOK, inventoryJSON(sources, list))
+	out := inventoryJSON(sources, list)
+	// The limits ride along with the listing rather than living behind a second
+	// endpoint. The panel needs them on every load — a size field with no limit
+	// on screen is a limit the user meets by being refused — and a new route
+	// would be a new line in the execaudit ledger for a payload that spawns
+	// nothing.
+	//
+	// Limits asks colima nothing, so the budget costs no extra process. What is
+	// currently allocated is deliberately not part of it: the sources in this
+	// payload already carry each profile's size and status, so a panel that
+	// wants the running total can add it up from rows the user is looking at,
+	// and devhub is not maintaining a second count that could drift from the
+	// one the start path actually decides on.
+	if l := c.admin.Limits(); l.Detected {
+		out["host"] = limitsJSON(l)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 	return nil
+}
+
+// limitsJSON renders the host and its caps. Absent entirely when devhub cannot
+// measure the machine — a panel showing "0 CPU" would be stating a limit that
+// does not exist, and the caps are not applied in that case either.
+func limitsJSON(l container.Limits) map[string]any {
+	return map[string]any{
+		"cpus": l.HostCPUs, "memory_bytes": l.HostMemBytes,
+		// Reported so the profile form can show it. Never a limit: Lima's disk
+		// images are sparse, so declaring more than this is legitimate.
+		"free_disk_bytes": l.FreeDiskBytes,
+		"cpu_cap":         l.CPUCap,
+		"memory_cap_gib":  l.MemCapGiB,
+		"reserve":         l.Reserve.JSON(),
+	}
 }
 
 // inventoryJSON renders the payload. Slices are materialised as empty arrays
@@ -117,9 +203,16 @@ func inventoryJSON(sources []container.Source, list []container.Container) map[s
 			"available": s.Available, "reason": s.Reason,
 			"alias_of": s.AliasOf,
 		}
-		// Only Colima sources have a VM behind them, and only a VM has a size.
-		// Absent keys rather than zeroes: "6 CPUs" and "unknown" must not look
-		// the same, and 0 would render as a real answer.
+		// Only Colima sources have a VM behind them, and only a VM has a size or
+		// a status. Absent keys rather than zeroes: "6 CPUs" and "unknown" must
+		// not look the same, and 0 would render as a real answer.
+		//
+		// The status is what lets a caller tell a profile that is merely stopped
+		// from one devhub cannot drive — available is false for both, and only
+		// the first is fixed by starting it.
+		if s.Status != "" {
+			entry["status"] = s.Status
+		}
 		if s.CPUs > 0 {
 			entry["cpus"] = s.CPUs
 		}
