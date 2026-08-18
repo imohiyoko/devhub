@@ -78,7 +78,7 @@ cmd_install() {
   # コマンドスロットは 1 つ（install.sh のリリース版リンクと同じパス）。最後に
   # install した方が勝つ設計だが、置き換えは黙って行わず必ず告知する。
   if [ -L "$dest" ]; then
-    echo "[Notice] 既存のリリース版リンク（$(readlink "$dest")）を dev shim（ソース実行: $REPO_ROOT）に置き換えます。" >&2
+    echo "[Notice] 既存のリリース版リンク（$(readlink "$dest")）を dev shim（ソース実行: ${REPO_ROOT}）に置き換えます。" >&2
     echo "         リリース版に戻すには: install.sh を再実行してください。" >&2
   elif [ -f "$dest" ]; then
     old_root=$(sed -n 's/^cd "\([^"]*\)".*/\1/p' "$dest" | head -n1)
