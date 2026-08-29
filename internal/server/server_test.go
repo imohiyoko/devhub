@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	devhub "github.com/imohiyoko/devhub"
+	"github.com/imohiyoko/devhub/internal/probeauth"
 	"github.com/imohiyoko/devhub/internal/storage"
 )
 
@@ -87,6 +88,44 @@ func TestAIAPIRequiresSameUserToken(t *testing.T) {
 	s.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("valid agent token = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAgentProbeIsCredentialFreeMinimalAndSigned(t *testing.T) {
+	s := newTestServer(t)
+	nonce, err := probeauth.NewNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/ai-api/probe", nil)
+	req.Host = goodHost
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("X-Devhub-Probe-Nonce", nonce)
+	rr := httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("probe = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var info probeauth.Info
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if !probeauth.Verify(s.agentToken, nonce, s.port, info) {
+		t.Fatalf("probe response has invalid proof: %s", rr.Body.String())
+	}
+	for _, sensitive := range []string{"base", "home", "migration_warnings", "instance"} {
+		if strings.Contains(rr.Body.String(), `"`+sensitive+`"`) {
+			t.Errorf("credential-free probe exposed %q: %s", sensitive, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/ai-api/probe", nil)
+	req.Host = goodHost
+	req.RemoteAddr = "127.0.0.1:54321"
+	rr = httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing nonce = %d, want 400", rr.Code)
 	}
 }
 

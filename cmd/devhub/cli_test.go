@@ -1,13 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"net"
 	"net/http"
 	"strconv"
 	"testing"
 
 	devhub "github.com/imohiyoko/devhub"
+	"github.com/imohiyoko/devhub/internal/probeauth"
 	"github.com/imohiyoko/devhub/internal/storage"
 )
 
@@ -32,7 +32,7 @@ func TestRunSubcommandDispatch(t *testing.T) {
 	}
 }
 
-func TestProbeInfoSendsSameUserToken(t *testing.T) {
+func TestProbeInfoDoesNotSendAgentTokenToUnverifiedListener(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DEVHUB_HOME", home)
 	st, err := storage.Open(home, devhub.Assets)
@@ -40,7 +40,7 @@ func TestProbeInfoSendsSameUserToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	token, err := st.AgentToken()
+	_, err = st.AgentToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,13 +49,13 @@ func TestProbeInfoSendsSameUserToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var gotAgentToken, gotNonce, gotPath string
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("X-Devhub-Agent-Token"); got != token {
-			http.Error(w, "bad token", http.StatusUnauthorized)
-			return
-		}
+		gotAgentToken = r.Header.Get("X-Devhub-Agent-Token")
+		gotNonce = r.Header.Get("X-Devhub-Probe-Nonce")
+		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"version":"test","instance":"instance-1","pid":1234}`)
+		_, _ = w.Write([]byte(`{"version":"fake","edition":"code","pid":1234,"proof":"forged"}`))
 	})}
 	t.Cleanup(func() { _ = srv.Close() })
 	go func() { _ = srv.Serve(ln) }()
@@ -68,12 +68,14 @@ func TestProbeInfoSendsSameUserToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := probeInfo(port)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := probeInfo(port); err == nil {
+		t.Fatal("forged listener response was accepted")
 	}
-	if info.Version != "test" || info.Instance != "instance-1" || info.PID != 1234 {
-		t.Fatalf("info = %#v", info)
+	if gotAgentToken != "" {
+		t.Fatal("probe disclosed X-Devhub-Agent-Token to an unverified listener")
+	}
+	if gotPath != "/ai-api/probe" || !probeauth.ValidNonce(gotNonce) {
+		t.Fatalf("probe request path=%q nonce=%q", gotPath, gotNonce)
 	}
 }
 

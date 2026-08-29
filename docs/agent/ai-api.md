@@ -12,15 +12,26 @@ devhub の HTTP API には入口が 2 つある。
 | `/ai-api/...` | same-user agent token | ローカルの CLI / エージェント |
 
 ブラウザ用のセッショントークンとは別に、`/ai-api` は
-`$DEVHUB_HOME/settings/ai-api-token`（既定 `~/.devhub/settings/ai-api-token`）の
-same-user token を使う。Unix では mode 0600、Windows ではユーザープロファイル配下の
-ACL で保護され、devhub と同じ OS ユーザーが読む。
+`$DEVHUB_HOME/settings/ai-api-token`（既定は macOS / Linux で
+`~/.devhub/settings/ai-api-token`、Windows で
+`%LOCALAPPDATA%\devhub\settings\ai-api-token`）の
+same-user token を使う。Unix では mode 0600、Windows の既定パスではユーザープロファイル
+配下の ACL で保護され、devhub と同じ OS ユーザーが読む。Windows で `DEVHUB_HOME` を
+変更する場合は、そのディレクトリに当該ユーザーだけがアクセスできる ACL を設定する。
 
 パスは `/api` と 1 対 1 で対応する。`/api/ports` を叩きたいなら `/ai-api/ports`。
 
 ```bash
+# macOS / Linux
 DEVHUB_AGENT_TOKEN="$(cat "${DEVHUB_HOME:-$HOME/.devhub}/settings/ai-api-token")"
 curl -s -H "X-Devhub-Agent-Token: $DEVHUB_AGENT_TOKEN" http://localhost:8765/ai-api/ports
+```
+
+```powershell
+# Windows PowerShell
+$devhubHome = if ($env:DEVHUB_HOME) { $env:DEVHUB_HOME } else { Join-Path $env:LOCALAPPDATA 'devhub' }
+$agentToken = (Get-Content (Join-Path $devhubHome 'settings\ai-api-token') -Raw).Trim()
+Invoke-RestMethod -Headers @{ 'X-Devhub-Agent-Token' = $agentToken } http://localhost:8765/ai-api/ports
 ```
 
 ## 4 つの前提条件
@@ -35,6 +46,10 @@ curl -s -H "X-Devhub-Agent-Token: $DEVHUB_AGENT_TOKEN" http://localhost:8765/ai-
    curl や HTTP クライアントは付けないので影響を受けない（`cross_site`）
 3. **Host は localhost か 127.0.0.1**（`host_not_allowed`）
 4. **`X-Devhub-Agent-Token` が same-user token と一致する**（`missing_agent_token`）
+
+例外として、CLI の `status` / `stop` / `doctor` 専用の `GET /ai-api/probe` は bearer
+token を送らない。fresh nonce に対して署名された最小のプロセス情報だけを返し、CLI が
+ローカルの token で検証する。未知の loopback listener に token を渡さず本人確認するため。
 
 ## 書き込みはユーザーの承認を待つ
 
@@ -124,6 +139,7 @@ curl -s -H "X-Devhub-Agent-Token: $DEVHUB_AGENT_TOKEN" http://localhost:8765/ai-
 | メソッド | パス | 内容 | 承認 |
 |---|---|---|---|
 | GET | `/ai-api/info` | ポート・バージョン・インスタンス ID | 不要 |
+| GET | `/ai-api/probe` | CLI 用の署名済み最小プロセス情報 | token不要（nonce必須） |
 | GET | `/ai-api/tools` | ツール一覧 | 不要 |
 | GET | `/ai-api/docs` | ドキュメント一覧 | 不要 |
 | GET | `/ai-api/ports` | LISTEN 中の TCP ポート | 不要 |

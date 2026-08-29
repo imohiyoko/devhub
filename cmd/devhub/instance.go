@@ -36,7 +36,7 @@ func runStatus() int {
 }
 
 // runStop stops the devhub instance on the configured port. The listener must
-// identify itself via /ai-api/info before anything is signalled — `devhub
+// identify itself via a signed /ai-api/probe before anything is signalled — `devhub
 // stop` must never become a generic port killer (the ports tool exists for
 // that, with its own safety checks). Stopping when nothing runs is a no-op
 // success so the command is idempotent in scripts.
