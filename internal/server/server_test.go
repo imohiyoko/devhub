@@ -192,7 +192,9 @@ func TestStaticServesDashboardWithShim(t *testing.T) {
 		`const rollback = message =>`,
 		`!currentServerPortOverridden && currentServerPort && serverConfig && serverConfig.port !== currentServerPort`,
 		`if (portChangeTarget)`,
-		`if (!currentServerPortOverridden && port !== serverConfig.port) patch.port = port`,
+		`const portChanged = !currentServerPortOverridden && port !== serverConfig.port`,
+		`if (portChanged && (!Number.isInteger(port) || port < 1024 || port > 65535))`,
+		`if (portChanged) patch.port = port`,
 	} {
 		if !strings.Contains(body, safeDefault) {
 			t.Errorf("dashboard missing failed-settings-load guard %q", safeDefault)

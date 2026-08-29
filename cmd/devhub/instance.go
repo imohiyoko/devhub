@@ -20,7 +20,11 @@ func runStatus() int {
 	}
 	port := resolvePort(store)
 	fmt.Printf("port    : %d\n", port)
-	pids := listenersOn(port)
+	pids, err := listenersOn(port)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "devhub: listing ports:", err)
+		return 1
+	}
 	if len(pids) == 0 {
 		fmt.Println("server  : not running")
 		return 1
@@ -48,7 +52,11 @@ func runStop() int {
 	ports := resolvePortCandidates(store)
 	refused := 0
 	for _, port := range ports {
-		pids := listenersOn(port)
+		pids, err := listenersOn(port)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "devhub: listing ports:", err)
+			return 1
+		}
 		if len(pids) == 0 {
 			continue
 		}
@@ -69,7 +77,13 @@ func runStop() int {
 			refused++
 			continue
 		}
-		if waitForListenerExit(port, pid) {
+		exited, err := waitForListenerExit(port, pid)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "devhub: pid %d was signalled but listener exit could not be verified on :%d: %v\n", pid, port, err)
+			refused++
+			continue
+		}
+		if exited {
 			fmt.Printf("stopped devhub %s (pid %d) on :%d\n", info.Version, pid, port)
 			if store != nil {
 				if active, err := store.LoadActiveInstance(); err == nil && active.Port == port && active.PID == pid {
@@ -94,14 +108,22 @@ func runStop() int {
 	return 0
 }
 
-func waitForListenerExit(port, pid int) bool {
+func waitForListenerExit(port, pid int) (bool, error) {
+	return waitForListenerExitWith(port, pid, listenersOn)
+}
+
+func waitForListenerExitWith(port, pid int, lookup func(int) ([]int, error)) (bool, error) {
 	for range 10 {
-		if !containsInt(listenersOn(port), pid) {
-			return true
+		pids, err := lookup(port)
+		if err != nil {
+			return false, err
+		}
+		if !containsInt(pids, pid) {
+			return true, nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return false
+	return false, nil
 }
 
 func joinPorts(ports []int) string {
