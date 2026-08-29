@@ -64,7 +64,7 @@ jobs:
           files="$(gh api --paginate \
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
             --jq '.[].filename')"
-          if printf '%s\n' "$files" | grep -qE '\.go$|^go\.(mod|sum)$|^\.mise\.toml$|^Makefile$|^\.github/workflows/ci\.yml$'; then
+          if printf '%s\n' "$files" | grep -qE '\.go$|^go\.(mod|sum)$|^\.mise\.toml$|^\.golangci\.yml$|^Makefile$|^\.github/workflows/ci\.yml$'; then
             echo "go=true" >> "$GITHUB_OUTPUT"
           else
             echo "go=false" >> "$GITHUB_OUTPUT"
@@ -109,6 +109,25 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+
+  lint:
+    needs: label
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      needs.label.outputs.run_go == 'true'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4.2.0
+        with:
+          version: ${{ env.MISE_VERSION }}
+      - name: golangci-lint
+        run: mise run lint
 
   # Native tests on every OS+arch combination that has a reliable hosted runner.
   # macos-latest = Apple Silicon (arm64). macOS amd64 (Intel / macos-13) has an
@@ -205,9 +224,9 @@ jobs:
   # fails if any failed or was cancelled — so real regressions still block merge.
   #
   # Ruleset change that must accompany this (repo Settings → Rules → "protect main"):
-  # replace the required checks {fmt, cross, go (…×4)} with just {gate}.
+  # replace the required checks {fmt, lint, cross, go (…×4)} with just {gate}.
   gate:
-    needs: [label, fmt, go, cross]
+    needs: [label, fmt, lint, go, cross]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -221,11 +240,11 @@ jobs:
           # legitimately skipped, so a failure|cancelled here is always a real
           # problem. fmt/go/cross may be legitimately `skipped` on docs-only PRs,
           # which the loop treats as passing (only failure|cancelled block merge).
-          for r in "${{ needs.label.result }}" "${{ needs.fmt.result }}" "${{ needs.go.result }}" "${{ needs.cross.result }}"; do
+          for r in "${{ needs.label.result }}" "${{ needs.fmt.result }}" "${{ needs.lint.result }}" "${{ needs.go.result }}" "${{ needs.cross.result }}"; do
             case "$r" in
               failure|cancelled)
                 echo "::error::a required job did not pass: $r"
                 exit 1 ;;
             esac
           done
-          echo "all required jobs succeeded or were skipped: label=${{ needs.label.result }} fmt=${{ needs.fmt.result }} go=${{ needs.go.result }} cross=${{ needs.cross.result }}"
+          echo "all required jobs succeeded or were skipped: label=${{ needs.label.result }} fmt=${{ needs.fmt.result }} lint=${{ needs.lint.result }} go=${{ needs.go.result }} cross=${{ needs.cross.result }}"
