@@ -20,7 +20,11 @@ func (t settingsTool) Meta() core.Meta {
 
 func (t settingsTool) Routes() []core.Route {
 	post := func(w http.ResponseWriter, r *http.Request) error {
-		return t.ctl.HandlePost(w, r, decodeBody(w, r))
+		data, err := decodeBody(w, r)
+		if err != nil {
+			return err
+		}
+		return t.ctl.HandlePost(w, r, data)
 	}
 	return []core.Route{
 		{Method: http.MethodGet, Pattern: "/api/config", Handle: t.ctl.HandleGet},

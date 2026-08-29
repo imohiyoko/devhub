@@ -22,7 +22,7 @@ func decodeBodyMap(t *testing.T, rr *httptest.ResponseRecorder) map[string]any {
 
 // A caller that isn't a browser cannot obtain the injected token, so the 401
 // has to name /ai-api — otherwise there is nothing in the response, or anywhere
-// else it can reach, that reveals the token-less surface exists.
+// else it can reach, that reveals the agent surface exists.
 func TestUnauthorizedNamesAiAPI(t *testing.T) {
 	srv := newTestServer(t)
 	rr := srv.do(http.MethodGet, "/api/ports", goodHost, "", "", nil)
@@ -37,6 +37,9 @@ func TestUnauthorizedNamesAiAPI(t *testing.T) {
 	hint, _ := m["hint"].(string)
 	if !strings.Contains(hint, "/ai-api/ports") {
 		t.Errorf("hint does not point at the equivalent /ai-api route: %q", hint)
+	}
+	if !strings.Contains(hint, "X-Devhub-Agent-Token") {
+		t.Errorf("hint does not explain the agent credential: %q", hint)
 	}
 }
 

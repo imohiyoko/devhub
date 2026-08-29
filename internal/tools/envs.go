@@ -25,7 +25,11 @@ func (t envsTool) Meta() core.Meta {
 
 func (t envsTool) Routes() []core.Route {
 	post := func(w http.ResponseWriter, r *http.Request) error {
-		return t.ctl.HandlePost(w, r, decodeBody(w, r))
+		data, err := decodeBody(w, r)
+		if err != nil {
+			return err
+		}
+		return t.ctl.HandlePost(w, r, data)
 	}
 	return []core.Route{
 		// Exact /api/envs and any /api/envs/* path both dispatch to the

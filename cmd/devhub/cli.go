@@ -12,6 +12,7 @@ import (
 	devhub "github.com/imohiyoko/devhub"
 	portsctl "github.com/imohiyoko/devhub/internal/controllers/ports"
 	"github.com/imohiyoko/devhub/internal/platform"
+	"github.com/imohiyoko/devhub/internal/probeauth"
 	"github.com/imohiyoko/devhub/internal/storage"
 )
 
@@ -134,7 +135,32 @@ func resolvePort(store *storage.Store) int {
 		}
 		return port
 	}
-	return devhubPort(store)
+	return resolvePortCandidates(store)[0]
+}
+
+// resolvePortCandidates returns the live runtime port first and the newly
+// configured port second. Saving a port does not move an already-bound server;
+// stop must still find that old listener before a restart starts the new one.
+func resolvePortCandidates(store *storage.Store) []int {
+	configured := 8765
+	if store != nil {
+		configured = devhubPort(store)
+	} else if env := os.Getenv("DEVHUB_PORT"); env != "" {
+		if port, err := parsePortEnv(env); err == nil {
+			configured = port
+		}
+	}
+	if os.Getenv("DEVHUB_PORT") != "" || store == nil {
+		return []int{configured}
+	}
+	ports := []int{}
+	if active, err := store.LoadActiveInstance(); err == nil && active.Port >= 1 && active.Port <= 65535 {
+		ports = append(ports, active.Port)
+	}
+	if len(ports) == 0 || ports[0] != configured {
+		ports = append(ports, configured)
+	}
+	return ports
 }
 
 func parsePortEnv(s string) (int, error) {
@@ -143,12 +169,12 @@ func parsePortEnv(s string) (int, error) {
 	return p, err
 }
 
-// listenersOn returns the pids listening on port (usually one).
-func listenersOn(port int) []int {
+// listenersOn returns the pids listening on port (usually one). Callers must
+// distinguish an empty result from a failed system-level listener query.
+func listenersOn(port int) ([]int, error) {
 	entries, err := portsctl.ListListening()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "devhub: listing ports:", err)
-		return nil
+		return nil, err
 	}
 	var pids []int
 	seen := map[int]bool{}
@@ -158,45 +184,59 @@ func listenersOn(port int) []int {
 			pids = append(pids, e.PID)
 		}
 	}
-	return pids
+	return pids, nil
 }
 
 // serverInfo is the subset of GET /api/info the CLI consumes.
 type serverInfo struct {
-	Version  string `json:"version"`
-	Edition  string `json:"edition"`
-	Base     string `json:"base"`
-	Port     int    `json:"port"`
-	Instance string `json:"instance"`
+	Version string `json:"version"`
+	Edition string `json:"edition"`
+	PID     int    `json:"pid"`
+	Proof   string `json:"proof"`
+	Base    string `json:"-"`
 }
 
-// probeInfo asks the listener on port to identify itself via the token-less
-// /ai-api/info read (loopback-only, no approval needed for plain GETs). This
-// is the CLI's only sanctioned window into a running server: the /api/ token
-// lives in server memory alone. Redirects are not followed — a devhub too old
-// to serve /ai-api answers 302-to-dashboard, which must read as "cannot
-// identify", not as success.
+// probeInfo asks the listener to sign a fresh challenge with the same-user
+// secret. The secret is used locally to verify the response and is never sent
+// to the unverified TCP peer. Redirects are not followed: an old devhub or
+// another app must read as "cannot identify", not as success.
 func probeInfo(port int) (*serverInfo, error) {
+	agentToken, err := storage.ReadAgentToken(platform.DevhubHome())
+	if err != nil {
+		return nil, fmt.Errorf("read ai-api token: %w", err)
+	}
+	nonce, err := probeauth.NewNonce()
+	if err != nil {
+		return nil, fmt.Errorf("generate probe nonce: %w", err)
+	}
 	client := &http.Client{
 		Timeout: 1500 * time.Millisecond,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/ai-api/info", port))
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/ai-api/probe", port), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Devhub-Probe-Nonce", nonce)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected response %s (devhub too old for /ai-api, or another app)", resp.Status)
+		return nil, fmt.Errorf("unexpected response %s (devhub too old for signed probe, or another app)", resp.Status)
 	}
 	var info serverInfo
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&info); err != nil {
 		return nil, fmt.Errorf("not devhub: %v", err)
 	}
-	if info.Instance == "" && info.Version == "" {
-		return nil, fmt.Errorf("response lacks devhub info fields")
+	if info.PID <= 0 || info.Version == "" || !probeauth.Verify(agentToken, nonce, port, probeauth.Info{
+		Version: info.Version, Edition: info.Edition, PID: info.PID, Proof: info.Proof,
+	}) {
+		return nil, fmt.Errorf("response lacks a valid devhub probe proof")
 	}
+	info.Base = platform.DevhubHome()
 	return &info, nil
 }

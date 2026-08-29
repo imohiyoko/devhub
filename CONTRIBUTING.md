@@ -79,14 +79,15 @@ DEVHUB_PORT=9000 scripts/dev.sh stop   # stop the instance on :9000
 scripts/dev.sh status                  # show what's listening
 ```
 
-`stop` kills whatever process listens on `DEVHUB_PORT` (default 8765), so point
-it at the instance you mean to stop. Note the in-app **ports tool deliberately
-refuses to kill devhub's own PID** (`internal/controllers/ports/ports.go`) as a
-safety measure — that's why this dedicated `stop` exists.
+`stop` delegates to the source CLI, verifies the signed `/ai-api/probe`, and kills the
+listener only after it identifies itself as devhub. An unrelated process on
+`DEVHUB_PORT` is refused. The in-app **ports tool deliberately refuses to kill
+devhub's own PID** (`internal/controllers/ports/ports.go`) as a safety measure —
+that's why this dedicated verified `stop` exists.
 
 The `devhub` binary itself also has `devhub status` / `devhub stop` (works for
 release-binary users with no checkout; `stop` verifies the listener is devhub
-via `/ai-api/info` before killing). When you're unsure **which devhub the
+via `/ai-api/probe` before killing). When you're unsure **which devhub the
 command slot runs** (release shim vs source shim vs a stray `devhub.exe` in
 the cwd shadowing it under cmd.exe), run `devhub doctor` — it prints the slot
 kind, the full PATH resolution order and the instance on the configured port.

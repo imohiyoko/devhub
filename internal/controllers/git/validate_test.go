@@ -30,9 +30,12 @@ func TestParseGithubPRURL(t *testing.T) {
 		number      int
 	}{
 		{"https://github.com/owner/repo/pull/123", true, "owner", "repo", 123},
+		{"github.com/owner/repo/pull/123", true, "owner", "repo", 123},
+		{"https://www.github.com/owner/repo/pull/123", true, "owner", "repo", 123},
 		{"git@github.com:owner/repo.git/pull/5", true, "owner", "repo", 5},
 		{"https://github.com/o/r/pull/9/files", true, "o", "r", 9},
 		{"https://evilgithub.com/o/r/pull/1", false, "", "", 0},
+		{"https://evil.test/github.com/o/r/pull/1", false, "", "", 0},
 		{"https://github.com/-bad/r/pull/1", false, "", "", 0},
 		{"not a url", false, "", "", 0},
 	}
@@ -66,10 +69,24 @@ func TestValidateWorktreePath(t *testing.T) {
 
 func TestNormalizeGithubRemote(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/Owner/Repo.git": "owner/repo",
-		"git@github.com:Owner/Repo":         "owner/repo",
-		"ssh://git@github.com/o/r.git":      "o/r",
-		"https://gitlab.com/o/r":            "",
+		"https://github.com/Owner/Repo.git":  "owner/repo",
+		"git@github.com:Owner/Repo":          "owner/repo",
+		"org-1234@github.com:Owner/Repo.git": "owner/repo",
+		"git@ssh.github.com:Owner/Repo.git":  "owner/repo",
+		"git@github.com:owner/repo?ref=x":    "",
+		"git@github.com:owner/repo#frag":     "",
+		"git@github.com:owner/repo.git?x":    "",
+		"ssh://git@github.com/o/r.git":       "o/r",
+		"https://GitHub.com/Owner/Repo/":     "owner/repo",
+		"https://www.github.com/Owner/Repo":  "owner/repo",
+		"https://evilgithub.com/o/r":         "",
+		"org-1234@evilgithub.com:Owner/Repo": "",
+		"https://evil.github.com/o/r":        "",
+		"https://github.com.evil.test/o/r":   "",
+		"https://github.com@evil.test/o/r":   "",
+		"https://github.com/o/r/extra":       "",
+		"https://github.com/o/r?ref=x":       "",
+		"https://gitlab.com/o/r":             "",
 	}
 	for in, want := range cases {
 		if got := normalizeGithubRemote(in); got != want {

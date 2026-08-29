@@ -47,7 +47,7 @@ type Surface string
 // Surfaces a request can arrive on.
 const (
 	SurfaceAPI   Surface = "api"    // token-authenticated, i.e. devhub's own pages
-	SurfaceAIAPI Surface = "ai-api" // token-less local surface, i.e. agents and CLIs
+	SurfaceAIAPI Surface = "ai-api" // same-user local surface, i.e. agents and CLIs
 )
 
 // Entry is one served request. It is filled in two stages: Begin records what is

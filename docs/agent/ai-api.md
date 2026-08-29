@@ -1,5 +1,5 @@
 ---
-description: エージェントが devhub を HTTP から操作するための入口。/ai-api の使い方、トークンが要らない理由、書き込みがユーザーの承認を待つ仕組み。devhub の API を叩くならまずこれを読む。
+description: エージェントが devhub を HTTP から操作するための入口。same-user token の取得方法と、書き込みがユーザーの承認を待つ仕組み。devhub の API を叩くならまずこれを読む。
 ---
 
 # /ai-api — エージェント向け HTTP 面
@@ -9,20 +9,34 @@ devhub の HTTP API には入口が 2 つある。
 | 入口 | 認証 | 想定する呼び出し元 |
 |---|---|---|
 | `/api/...` | セッショントークンが必須 | devhub 自身のページ（トークンは配信時に注入される） |
-| `/ai-api/...` | **トークン不要** | ローカルの CLI / エージェント |
+| `/ai-api/...` | same-user agent token | ローカルの CLI / エージェント |
 
-トークンは devhub が自分のページに埋め込むものなので、ブラウザ以外の呼び出し元が
-入手する手段はない。**エージェントは `/ai-api` を使う。**
+ブラウザ用のセッショントークンとは別に、`/ai-api` は
+`$DEVHUB_HOME/settings/ai-api-token`（既定は macOS / Linux で
+`~/.devhub/settings/ai-api-token`、Windows で
+`%LOCALAPPDATA%\devhub\settings\ai-api-token`）の
+same-user token を使う。Unix では mode 0600、Windows の既定パスではユーザープロファイル
+配下の ACL で保護され、devhub と同じ OS ユーザーが読む。Windows で `DEVHUB_HOME` を
+変更する場合は、そのディレクトリに当該ユーザーだけがアクセスできる ACL を設定する。
 
 パスは `/api` と 1 対 1 で対応する。`/api/ports` を叩きたいなら `/ai-api/ports`。
 
 ```bash
-curl -s http://localhost:8765/ai-api/ports
+# macOS / Linux
+DEVHUB_AGENT_TOKEN="$(cat "${DEVHUB_HOME:-$HOME/.devhub}/settings/ai-api-token")"
+curl -s -H "X-Devhub-Agent-Token: $DEVHUB_AGENT_TOKEN" http://localhost:8765/ai-api/ports
 ```
 
-## 3 つの前提条件
+```powershell
+# Windows PowerShell
+$devhubHome = if ($env:DEVHUB_HOME) { $env:DEVHUB_HOME } else { Join-Path $env:LOCALAPPDATA 'devhub' }
+$agentToken = (Get-Content (Join-Path $devhubHome 'settings\ai-api-token') -Raw).Trim()
+Invoke-RestMethod -Headers @{ 'X-Devhub-Agent-Token' = $agentToken } http://localhost:8765/ai-api/ports
+```
 
-`/ai-api` は次を満たさないと 403 を返す。
+## 4 つの前提条件
+
+`/ai-api` は次を満たさないと 401 または 403 を返す。
 
 1. **同じマシンから接続する**。devhub は 127.0.0.1 にしか bind せず、リクエスト単位でも
    ループバックを確認する（`not_loopback`）
@@ -31,6 +45,11 @@ curl -s http://localhost:8765/ai-api/ports
    ブラウザはクロスサイトのリクエストに `Sec-Fetch-Site` を付けるので、devhub はそれを弾く。
    curl や HTTP クライアントは付けないので影響を受けない（`cross_site`）
 3. **Host は localhost か 127.0.0.1**（`host_not_allowed`）
+4. **`X-Devhub-Agent-Token` が same-user token と一致する**（`missing_agent_token`）
+
+例外として、CLI の `status` / `stop` / `doctor` 専用の `GET /ai-api/probe` は bearer
+token を送らない。fresh nonce に対して署名された最小のプロセス情報だけを返し、CLI が
+ローカルの token で検証する。未知の loopback listener に token を渡さず本人確認するため。
 
 ## 書き込みはユーザーの承認を待つ
 
@@ -120,6 +139,7 @@ curl -s http://localhost:8765/ai-api/ports
 | メソッド | パス | 内容 | 承認 |
 |---|---|---|---|
 | GET | `/ai-api/info` | ポート・バージョン・インスタンス ID | 不要 |
+| GET | `/ai-api/probe` | CLI 用の署名済み最小プロセス情報 | token不要（nonce必須） |
 | GET | `/ai-api/tools` | ツール一覧 | 不要 |
 | GET | `/ai-api/docs` | ドキュメント一覧 | 不要 |
 | GET | `/ai-api/ports` | LISTEN 中の TCP ポート | 不要 |

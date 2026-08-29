@@ -23,6 +23,17 @@ devhub の API エラーは次の形で返る。
 **対処**: 同じパスを `/ai-api/...` に置き換える。`/api/ports` → `/ai-api/ports`。
 詳細は [`agent/ai-api`](ai-api.md)。
 
+### `missing_agent_token` — 401
+
+`/ai-api/...` に same-user agent token がないか、値が一致しなかった。
+
+**対処**: `$DEVHUB_HOME/settings/ai-api-token`（既定は macOS / Linux で
+`~/.devhub/settings/ai-api-token`、Windows で
+`%LOCALAPPDATA%\devhub\settings\ai-api-token`）を読み、`X-Devhub-Agent-Token` ヘッダで送る。
+このファイルは同じ OS ユーザーだけが読める権限で作られる。
+Windows で `DEVHUB_HOME` を変更している場合、指定先ディレクトリにも当該ユーザーだけが
+アクセスできる ACL が必要。
+
 ### `not_loopback` — 403
 
 同じマシン以外から接続した。devhub は 127.0.0.1 にしか bind せず、ネットワーク越しには
@@ -44,6 +55,19 @@ Host ヘッダが `localhost` / `127.0.0.1` のどちらでもなかった。
 
 **対処**: `http://localhost:<port>` か `http://127.0.0.1:<port>` を使う。
 ポートが分からなければ `devhub status`。
+
+### 保存したポートで起動できない
+
+設定したポートが後から別プロセスに使われるなどして起動できない場合は、一時的な
+`DEVHUB_PORT` でダッシュボードを復旧し、空いている 1024〜65535 のポートへ設定し直す。
+
+```bash
+DEVHUB_PORT=8765 devhub start
+```
+
+```powershell
+$env:DEVHUB_PORT=8765; devhub start
+```
 
 ## 承認
 
@@ -106,9 +130,20 @@ Host ヘッダが `localhost` / `127.0.0.1` のどちらでもなかった。
 どこで詰まっているか分からないときは、上から確認する。
 
 ```bash
+# macOS / Linux
 devhub status                              # 起動しているか（非稼働なら exit 1）
-curl -s http://localhost:8765/ai-api/info  # 応答するか
+TOKEN=$(cat "${DEVHUB_HOME:-$HOME/.devhub}/settings/ai-api-token")
+curl -s -H "X-Devhub-Agent-Token: $TOKEN" http://localhost:8765/ai-api/info
 devhub doctor                              # どの devhub が動いているか
+```
+
+```powershell
+# Windows PowerShell
+devhub status
+$devhubHome = if ($env:DEVHUB_HOME) { $env:DEVHUB_HOME } else { Join-Path $env:LOCALAPPDATA 'devhub' }
+$token = (Get-Content (Join-Path $devhubHome 'settings\ai-api-token') -Raw).Trim()
+Invoke-RestMethod -Headers @{ 'X-Devhub-Agent-Token' = $token } http://localhost:8765/ai-api/info
+devhub doctor
 ```
 
 `devhub status` が落ちるならサーバーが動いていない。ユーザーに `devhub start` を

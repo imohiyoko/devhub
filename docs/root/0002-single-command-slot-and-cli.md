@@ -35,8 +35,9 @@ description: devhub コマンドの登録先が 1 つだけで最後の install 
    種類と PATH 解決順（PATHEXT 含む）/ リリース版バイナリの有無 / 設定ポートの
    稼働インスタンス」を診断し、警告があれば exit 1。
 4. **サーバー自身の CLI 制御を追加する**: `devhub status`（稼働確認、非稼働で
-   exit 1）と `devhub stop`。stop は kill 前に必ずトークン不要の読み取り面
-   `GET /ai-api/info` で相手が devhub であることを確認し、確認できなければ拒否する
+   exit 1）と `devhub stop`。stop は kill 前に fresh nonce を付けた
+   `GET /ai-api/probe` の署名を same-user token で検証して相手が devhub であることを
+   確認し、確認できなければ拒否する（token 自体は未知の listener へ送らない）
    （汎用ポートキラーにしない。protected_ports / self-PID チェックは「他アプリと
    稼働中サーバーを守る」ためのものなので、検証済みの自分自身を止めるこの経路では
    通さない — `ports.KillPID` を CLI 専用に公開）。

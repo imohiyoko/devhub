@@ -29,7 +29,11 @@ func (t databaseTool) Routes() []core.Route {
 		{Method: http.MethodGet, Pattern: "/api/db/tables", Handle: t.ctl.HandleGet},
 		{Method: http.MethodGet, Pattern: "/api/db/rows", Handle: t.ctl.HandleGet},
 		{Method: http.MethodPost, Pattern: "/api/db/", Prefix: true, Handle: func(w http.ResponseWriter, r *http.Request) error {
-			return t.ctl.HandlePost(w, r, decodeBody(w, r))
+			data, err := decodeBody(w, r)
+			if err != nil {
+				return err
+			}
+			return t.ctl.HandlePost(w, r, data)
 		}},
 	}
 }

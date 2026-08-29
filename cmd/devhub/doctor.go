@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ var (
 	reShimPushd   = regexp.MustCompile(`(?m)^pushd (.+?)\r?$`)
 	reShimCd      = regexp.MustCompile(`(?m)^cd "([^"]+)"`)
 	reShimExecWin = regexp.MustCompile(`(?m)^"(.+?devhub\.exe)" %\*`)
+	reShimRootB64 = regexp.MustCompile(`(?mi)^(?:#|rem) devhub-source-root-b64: ([a-z0-9+/=]+)\r?$`)
 )
 
 // classifyShimContent inspects a command-slot file's content. detail is the
@@ -35,6 +37,11 @@ var (
 // when the exec line reveals it).
 func classifyShimContent(content string) (kind shimKind, detail string) {
 	if strings.Contains(content, "devhub dev shim") || strings.Contains(content, "go run ./cmd/devhub") {
+		if m := reShimRootB64.FindStringSubmatch(content); m != nil {
+			if raw, err := base64.StdEncoding.DecodeString(m[1]); err == nil && len(raw) > 0 {
+				return shimSource, string(raw)
+			}
+		}
 		if m := reShimPushd.FindStringSubmatch(content); m != nil {
 			return shimSource, strings.TrimSpace(m[1])
 		}
@@ -225,8 +232,10 @@ func runDoctor() int {
 	}
 	port := resolvePort(store)
 	fmt.Printf("  port       : %d\n", port)
-	pids := listenersOn(port)
-	if len(pids) == 0 {
+	pids, listenersErr := listenersOn(port)
+	if listenersErr != nil {
+		warns = append(warns, fmt.Sprintf("could not inspect listeners on port %d: %v", port, listenersErr))
+	} else if len(pids) == 0 {
 		fmt.Println("  server     : not running")
 	} else {
 		fmt.Printf("  listener   : pid %s\n", joinInts(pids))
