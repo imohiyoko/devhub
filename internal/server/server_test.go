@@ -184,10 +184,12 @@ func TestStaticServesDashboardWithShim(t *testing.T) {
 		}
 	}
 	for _, safeDefault := range []string{
-		`id="serverPort" type="number" min="1" max="65535" disabled`,
+		`id="serverPort" type="number" min="1024" max="65535" disabled`,
 		`id="serverSave" disabled`,
 		`let serverConfig = null`,
 		`if (serverConfig === null)`,
+		`const rollback = message =>`,
+		`serverConfig.port !== currentServerPort`,
 	} {
 		if !strings.Contains(body, safeDefault) {
 			t.Errorf("dashboard missing failed-settings-load guard %q", safeDefault)

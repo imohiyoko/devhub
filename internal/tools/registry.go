@@ -44,7 +44,7 @@ var _ core.Store = (*storage.Store)(nil)
 // allowlist) keep typed helpers behind those interfaces rather than the raw
 // key/value seam, because forcing them onto a per-tool Namespace would change
 // their data semantics. envs is the one rich consumer (launch registry).
-func Registry(store *storage.Store, docs *docspkg.Set, rlog *reqlog.Ring) *core.Registry {
+func Registry(store *storage.Store, docs *docspkg.Set, rlog *reqlog.Ring, currentPort int) *core.Registry {
 	deps := core.Deps{Store: store}
 
 	git := gitctl.New(store)
@@ -52,7 +52,7 @@ func Registry(store *storage.Store, docs *docspkg.Set, rlog *reqlog.Ring) *core.
 	workspace := workspacectl.New(store, git)
 	database := databasectl.New(store)
 	envs := envsctl.New(store, git, ports, workspace)
-	settings := settingsctl.New(store, core.Namespace(deps.Store, "tool"))
+	settings := settingsctl.New(store, core.Namespace(deps.Store, "tool"), currentPort)
 	containers := containersctl.New(store)
 	logs := logsctl.New(rlog, store)
 

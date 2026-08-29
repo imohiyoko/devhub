@@ -135,7 +135,32 @@ func resolvePort(store *storage.Store) int {
 		}
 		return port
 	}
-	return devhubPort(store)
+	return resolvePortCandidates(store)[0]
+}
+
+// resolvePortCandidates returns the live runtime port first and the newly
+// configured port second. Saving a port does not move an already-bound server;
+// stop must still find that old listener before a restart starts the new one.
+func resolvePortCandidates(store *storage.Store) []int {
+	configured := 8765
+	if store != nil {
+		configured = devhubPort(store)
+	} else if env := os.Getenv("DEVHUB_PORT"); env != "" {
+		if port, err := parsePortEnv(env); err == nil {
+			configured = port
+		}
+	}
+	if os.Getenv("DEVHUB_PORT") != "" || store == nil {
+		return []int{configured}
+	}
+	ports := []int{}
+	if active, err := store.LoadActiveInstance(); err == nil && active.Port >= 1 && active.Port <= 65535 {
+		ports = append(ports, active.Port)
+	}
+	if len(ports) == 0 || ports[0] != configured {
+		ports = append(ports, configured)
+	}
+	return ports
 }
 
 func parsePortEnv(s string) (int, error) {

@@ -29,6 +29,8 @@ var nonBranchChar = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 // (evilgithub.com) do not match. The number is digits-only.
 var prURLRe = regexp.MustCompile(`(?i)^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+)/([^/]+?)(?:\.git)?/pull/(\d+)(?:[/?#].*)?$`)
 
+var scpRemoteRe = regexp.MustCompile(`^([^@:\s]+)@([^:\s]+):(.+)$`)
+
 // pathSepRe splits a path on runs of forward/back slashes.
 var pathSepRe = regexp.MustCompile(`[\\/]+`)
 
@@ -79,16 +81,15 @@ func parseGithubPRURL(url string) (owner, repo string, number int, ok bool) {
 // normalizeGithubRemote returns lowercased "owner/repo" for a github.com remote URL.
 func normalizeGithubRemote(url string) string {
 	raw := strings.TrimSpace(url)
-	const scpPrefix = "git@github.com:"
-	if len(raw) >= len(scpPrefix) && strings.EqualFold(raw[:len(scpPrefix)], scpPrefix) {
-		path := raw[len(scpPrefix):]
+	if m := scpRemoteRe.FindStringSubmatch(raw); m != nil && isGithubHost(m[2]) {
+		path := m[3]
 		if strings.ContainsAny(path, "?#") {
 			return ""
 		}
 		return normalizeGithubPath(path)
 	}
 	u, err := urlpkg.Parse(raw)
-	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || !isGithubHost(u.Hostname()) || u.RawQuery != "" || u.Fragment != "" {
 		return ""
 	}
 	switch strings.ToLower(u.Scheme) {
@@ -97,6 +98,15 @@ func normalizeGithubRemote(url string) string {
 		return ""
 	}
 	return normalizeGithubPath(u.Path)
+}
+
+func isGithubHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "github.com", "www.github.com", "ssh.github.com":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeGithubPath(path string) string {

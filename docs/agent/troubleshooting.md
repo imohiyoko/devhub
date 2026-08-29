@@ -56,6 +56,19 @@ Host ヘッダが `localhost` / `127.0.0.1` のどちらでもなかった。
 **対処**: `http://localhost:<port>` か `http://127.0.0.1:<port>` を使う。
 ポートが分からなければ `devhub status`。
 
+### 保存したポートで起動できない
+
+設定したポートが後から別プロセスに使われるなどして起動できない場合は、一時的な
+`DEVHUB_PORT` でダッシュボードを復旧し、空いている 1024〜65535 のポートへ設定し直す。
+
+```bash
+DEVHUB_PORT=8765 devhub start
+```
+
+```powershell
+$env:DEVHUB_PORT=8765; devhub start
+```
+
 ## 承認
 
 `/ai-api` の書き込みは、ダッシュボード上でユーザーが承認するまでブロックする。

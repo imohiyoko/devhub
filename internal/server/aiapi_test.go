@@ -93,7 +93,7 @@ func TestBlockedPathsNameRoutesThatExistAndAreExact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("docs.Load: %v", err)
 	}
-	reg := tools.Registry(st, docSet, reqlog.New(1, "test"))
+	reg := tools.Registry(st, docSet, reqlog.New(1, "test"), 8765)
 
 	var routes []core.Route
 	for _, tool := range reg.Tools() {

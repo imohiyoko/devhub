@@ -5,8 +5,10 @@ package settings
 import (
 	"encoding/json"
 	"math"
+	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/imohiyoko/devhub/internal/container"
@@ -49,12 +51,13 @@ type globalStore interface {
 type Controller struct {
 	store        globalStore
 	toolSettings core.Store
+	currentPort  int
 }
 
 // New returns a settings controller. toolSettings is the namespaced view that
 // owns the "tool:<id>" keyspace.
-func New(store globalStore, toolSettings core.Store) *Controller {
-	return &Controller{store: store, toolSettings: toolSettings}
+func New(store globalStore, toolSettings core.Store, currentPort int) *Controller {
+	return &Controller{store: store, toolSettings: toolSettings, currentPort: currentPort}
 }
 
 func toolIDFromPath(path string) string {
@@ -154,10 +157,18 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 		}
 		if v, ok := patch["port"]; ok {
 			n, valid := v.(float64)
-			if !valid || math.Trunc(n) != n || n < 1 || n > 65535 {
-				return httpx.Errorf(http.StatusBadRequest, "port must be an integer between 1 and 65535")
+			if !valid || math.Trunc(n) != n || n < 1024 || n > 65535 {
+				return httpx.Errorf(http.StatusBadRequest, "port must be an integer between 1024 and 65535")
 			}
-			patch["port"] = int(n)
+			port := int(n)
+			if c.currentPort != 0 && port != c.currentPort {
+				ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+				if err != nil {
+					return httpx.Errorf(http.StatusBadRequest, "port %d is unavailable: %s", port, err.Error())
+				}
+				_ = ln.Close()
+			}
+			patch["port"] = port
 		}
 		if v, ok := patch["db_local_only"]; ok {
 			if _, valid := v.(bool); !valid {

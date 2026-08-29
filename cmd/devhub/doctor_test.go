@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -15,7 +16,7 @@ func TestClassifyShimContent(t *testing.T) {
 	if k, d := classifyShimContent(currentUnix); k != shimSource || d != specialRoot {
 		t.Errorf("current unix dev shim = (%v, %q), want root %q", k, d, specialRoot)
 	}
-	currentWin := "@echo off\r\nrem devhub dev shim\r\nrem devhub-source-root-b64: " + marker + "\r\npushd \"ignored\" || exit /b 1\r\ngo run ./cmd/devhub %*\r\n"
+	currentWin := "@echo off\r\nrem devhub dev shim\r\nrem devhub-source-root-b64: " + marker + "\r\npowershell.exe -File \"%~dp0devhub-source.ps1\" %*\r\n"
 	if k, d := classifyShimContent(currentWin); k != shimSource || d != specialRoot {
 		t.Errorf("current windows dev shim = (%v, %q), want root %q", k, d, specialRoot)
 	}
@@ -44,6 +45,22 @@ func TestClassifyShimContent(t *testing.T) {
 
 	if k, _ := classifyShimContent("#!/bin/sh\nexec something-else\n"); k != shimUnknown {
 		t.Errorf("foreign content should be unknown, got %v", k)
+	}
+}
+
+func TestPowerShellInstallerUsesBase64RunnerForUnicodeCheckout(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "scripts", "dev.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+	for _, want := range []string{"devhub-source.ps1", "FromBase64String('$rootB64')", "Set-Location -LiteralPath `$repoRoot"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("PowerShell installer missing %q", want)
+		}
+	}
+	if strings.Contains(script, `pushd "$cmdRepoRoot"`) {
+		t.Error("PowerShell installer still embeds the checkout path in the ASCII cmd shim")
 	}
 }
 

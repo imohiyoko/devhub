@@ -79,6 +79,32 @@ func TestProbeInfoDoesNotSendAgentTokenToUnverifiedListener(t *testing.T) {
 	}
 }
 
+func TestResolvePortCandidatesKeepsBoundPortAfterSettingChange(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("DEVHUB_HOME", home)
+	st, err := storage.Open(home, devhub.Assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SaveSettings(map[string]any{"port": 9000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordActiveInstance(storage.ActiveInstance{Port: 8765, PID: 1234, Instance: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	got := resolvePortCandidates(st)
+	if len(got) != 2 || got[0] != 8765 || got[1] != 9000 {
+		t.Fatalf("port candidates = %v, want [8765 9000]", got)
+	}
+
+	t.Setenv("DEVHUB_PORT", "7777")
+	got = resolvePortCandidates(st)
+	if len(got) != 1 || got[0] != 7777 {
+		t.Fatalf("override candidates = %v, want [7777]", got)
+	}
+}
+
 func TestVerifiedListenerPIDSelectsOnlyServerClaim(t *testing.T) {
 	listeners := []int{101, 202} // e.g. unrelated ::1 listener + verified IPv4 devhub
 	if got, ok := verifiedListenerPID(listeners, 202); !ok || got != 202 {

@@ -45,39 +45,65 @@ func runStop() int {
 	if store != nil {
 		defer store.Close()
 	}
-	port := resolvePort(store)
-	pids := listenersOn(port)
-	if len(pids) == 0 {
-		fmt.Printf("no devhub listening on :%d\n", port)
+	ports := resolvePortCandidates(store)
+	stopped, refused := 0, 0
+	for _, port := range ports {
+		pids := listenersOn(port)
+		if len(pids) == 0 {
+			continue
+		}
+		info, err := probeInfo(port)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "devhub: refusing to kill pid %s on :%d — %v\n", joinInts(pids), port, err)
+			refused++
+			continue
+		}
+		pid, ok := verifiedListenerPID(pids, info.PID)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "devhub: refusing to kill on :%d — identified pid %d is not a current listener (listeners: %s)\n", port, info.PID, joinInts(pids))
+			refused++
+			continue
+		}
+		if err := portsctl.KillPID(pid); err != nil {
+			fmt.Fprintf(os.Stderr, "devhub: kill pid %d: %v\n", pid, err)
+			refused++
+			continue
+		}
+		if waitForListenerExit(port, pid) {
+			fmt.Printf("stopped devhub %s (pid %d) on :%d\n", info.Version, pid, port)
+			stopped++
+		} else {
+			fmt.Fprintf(os.Stderr, "devhub: pid %d was signalled but is still listening on :%d\n", pid, port)
+			refused++
+		}
+	}
+	if stopped > 0 {
 		return 0
 	}
-	info, err := probeInfo(port)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "devhub: refusing to kill pid %s on :%d — %v\n", joinInts(pids), port, err)
+	if refused > 0 {
 		fmt.Fprintln(os.Stderr, "devhub: if it really must die, use the ports tool (or taskkill/kill) explicitly")
 		return 1
 	}
-	pid, ok := verifiedListenerPID(pids, info.PID)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "devhub: refusing to kill on :%d — identified pid %d is not a current listener (listeners: %s)\n", port, info.PID, joinInts(pids))
-		return 1
-	}
-	if err := portsctl.KillPID(pid); err != nil {
-		fmt.Fprintf(os.Stderr, "devhub: kill pid %d: %v\n", pid, err)
-		return 1
-	}
-	// Confirm the authenticated PID's listening socket disappears. Another
-	// address family may legitimately have an unrelated listener on the same
-	// numeric port, and must neither be killed nor make this stop look failed.
+	fmt.Printf("no devhub listening on %s\n", joinPorts(ports))
+	return 0
+}
+
+func waitForListenerExit(port, pid int) bool {
 	for range 10 {
-		if !containsInt(listenersOn(port), info.PID) {
-			fmt.Printf("stopped devhub %s (pid %d) on :%d\n", info.Version, info.PID, port)
-			return 0
+		if !containsInt(listenersOn(port), pid) {
+			return true
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	fmt.Fprintf(os.Stderr, "devhub: pid %d was signalled but is still listening on :%d\n", info.PID, port)
-	return 1
+	return false
+}
+
+func joinPorts(ports []int) string {
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = fmt.Sprintf(":%d", port)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func verifiedListenerPID(listeners []int, claimed int) (int, bool) {
