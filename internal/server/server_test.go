@@ -183,6 +183,16 @@ func TestStaticServesDashboardWithShim(t *testing.T) {
 			t.Errorf("dashboard missing %s", id)
 		}
 	}
+	for _, safeDefault := range []string{
+		`id="serverPort" type="number" min="1" max="65535" disabled`,
+		`id="serverSave" disabled`,
+		`let serverConfig = null`,
+		`if (serverConfig === null)`,
+	} {
+		if !strings.Contains(body, safeDefault) {
+			t.Errorf("dashboard missing failed-settings-load guard %q", safeDefault)
+		}
+	}
 	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
 	}

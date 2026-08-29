@@ -83,8 +83,18 @@ switch ($Action) {
       if ($old -and $old -notmatch 'devhub dev shim') {
         Write-Host "[Notice] 既存のリリース版 shim を dev shim（ソース実行: $RepoRoot）に置き換えます。"
         Write-Host "         リリース版に戻すには: install.ps1 を再実行してください。"
-      } elseif ($old -match '(?m)^pushd (.+?)\r?$' -and $Matches[1] -ne $RepoRoot) {
-        Write-Host "[Notice] dev shim の参照先を切り替えます: $($Matches[1]) -> $RepoRoot"
+      } else {
+        $oldRoot = $null
+        if ($old -match '(?mi)^rem devhub-source-root-b64: ([a-z0-9+/=]+)\r?$') {
+          try { $oldRoot = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Matches[1])) } catch {}
+        }
+        if (-not $oldRoot -and $old -match '(?m)^pushd "?(.+?)"?(?: \|\| exit /b 1)?\r?$') {
+          # Backward compatibility for marker-less shims from older installers.
+          $oldRoot = $Matches[1]
+        }
+        if ($oldRoot -and $oldRoot -ne $RepoRoot) {
+          Write-Host "[Notice] dev shim の参照先を切り替えます: $oldRoot -> $RepoRoot"
+        }
       }
     }
     # cmd.exe は .cmd を OEM コードページで読むため、シム本体は ASCII のみで書く

@@ -76,7 +76,17 @@ cmd_install() {
     echo "[Notice] 既存のリリース版リンク（$(readlink "$dest")）を dev shim（ソース実行: ${REPO_ROOT}）に置き換えます。" >&2
     echo "         リリース版に戻すには: install.sh を再実行してください。" >&2
   elif [ -f "$dest" ]; then
-    old_root=$(sed -n 's/^cd "\([^"]*\)".*/\1/p' "$dest" | head -n1)
+    # Current shims carry an encoding-safe source-root marker. Decode it first;
+    # retain the old cd "..." parser for shims written by earlier versions.
+    root_marker=$(sed -n 's/^# devhub-source-root-b64: \([A-Za-z0-9+\/=]*\)$/\1/p' "$dest" | head -n1)
+    old_root=""
+    if [ -n "$root_marker" ]; then
+      old_root=$(printf '%s' "$root_marker" | base64 --decode 2>/dev/null) || \
+        old_root=$(printf '%s' "$root_marker" | base64 -D 2>/dev/null) || old_root=""
+    fi
+    if [ -z "$old_root" ]; then
+      old_root=$(sed -n 's/^cd "\([^"]*\)".*/\1/p' "$dest" | head -n1)
+    fi
     if [ -n "$old_root" ] && [ "$old_root" != "$REPO_ROOT" ]; then
       echo "[Notice] dev shim の参照先を切り替えます: $old_root → $REPO_ROOT" >&2
     fi
