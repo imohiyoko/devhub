@@ -23,6 +23,14 @@ devhub の API エラーは次の形で返る。
 **対処**: 同じパスを `/ai-api/...` に置き換える。`/api/ports` → `/ai-api/ports`。
 詳細は [`agent/ai-api`](ai-api.md)。
 
+### `missing_agent_token` — 401
+
+`/ai-api/...` に same-user agent token がないか、値が一致しなかった。
+
+**対処**: `$DEVHUB_HOME/settings/ai-api-token`（既定
+`~/.devhub/settings/ai-api-token`）を読み、`X-Devhub-Agent-Token` ヘッダで送る。
+このファイルは同じ OS ユーザーだけが読める権限で作られる。
+
 ### `not_loopback` — 403
 
 同じマシン以外から接続した。devhub は 127.0.0.1 にしか bind せず、ネットワーク越しには
@@ -107,7 +115,8 @@ Host ヘッダが `localhost` / `127.0.0.1` のどちらでもなかった。
 
 ```bash
 devhub status                              # 起動しているか（非稼働なら exit 1）
-curl -s http://localhost:8765/ai-api/info  # 応答するか
+TOKEN=$(cat "${DEVHUB_HOME:-$HOME/.devhub}/settings/ai-api-token")
+curl -s -H "X-Devhub-Agent-Token: $TOKEN" http://localhost:8765/ai-api/info
 devhub doctor                              # どの devhub が動いているか
 ```
 

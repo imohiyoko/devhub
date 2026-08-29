@@ -27,8 +27,7 @@ func (s *Server) hostAllowed(r *http.Request) bool {
 // browser's perspective: it carries no Sec-Fetch-Site (a non-browser client such
 // as curl or a local agent) or that header marks the navigation as same-origin/
 // none. A same-site or cross-site browser request is rejected. This is the
-// shared CSRF / DNS-rebinding guard for both the token-gated /api/ surface and
-// the token-less /ai-api/ surface.
+// shared CSRF / DNS-rebinding guard for both credential-gated API surfaces.
 func sameOriginOrNonBrowser(r *http.Request) bool {
 	sfs := r.Header.Get("Sec-Fetch-Site")
 	return sfs == "" || sfs == "same-origin" || sfs == "none"
@@ -42,6 +41,15 @@ func (s *Server) apiAuthorized(r *http.Request) bool {
 	}
 	got := r.Header.Get("X-Devhub-Token")
 	return subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) == 1
+}
+
+// agentAuthorized authenticates the non-browser /ai-api surface.
+// The credential lives in a mode-0600 file under DEVHUB_HOME so a local process
+// running as another OS user cannot use devhub as a confused deputy to read the
+// owner's environment definitions, Git data or SQLite files.
+func (s *Server) agentAuthorized(r *http.Request) bool {
+	got := r.Header.Get("X-Devhub-Agent-Token")
+	return subtle.ConstantTimeCompare([]byte(got), []byte(s.agentToken)) == 1
 }
 
 func toLowerASCII(s string) string {

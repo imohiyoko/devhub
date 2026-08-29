@@ -12,7 +12,11 @@ description: エラーに code / hint を付け、devhub docs を追加し、揮
 
 ## Context（背景）
 
-devhub には `/ai-api` というトークン不要のローカル API 面があり、エージェントから
+> **2026-08 security amendment:** `/ai-api` は現在、ブラウザ用トークンとは別の
+> same-user agent token（`$DEVHUB_HOME/settings/ai-api-token`）を要求する。以下の
+> 「トークン不要」は初期設計時の記録として残している。
+
+devhub には `/ai-api` という（初期設計では）トークン不要のローカル API 面があり、エージェントから
 操作されることを最初から想定している。しかし実際に叩かせると、失敗したときに
 **次に何をすればいいのかが一切返っていない**ことが分かった。
 

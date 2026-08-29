@@ -79,10 +79,11 @@ DEVHUB_PORT=9000 scripts/dev.sh stop   # stop the instance on :9000
 scripts/dev.sh status                  # show what's listening
 ```
 
-`stop` kills whatever process listens on `DEVHUB_PORT` (default 8765), so point
-it at the instance you mean to stop. Note the in-app **ports tool deliberately
-refuses to kill devhub's own PID** (`internal/controllers/ports/ports.go`) as a
-safety measure — that's why this dedicated `stop` exists.
+`stop` delegates to the source CLI, authenticates `/ai-api/info`, and kills the
+listener only after it identifies itself as devhub. An unrelated process on
+`DEVHUB_PORT` is refused. The in-app **ports tool deliberately refuses to kill
+devhub's own PID** (`internal/controllers/ports/ports.go`) as a safety measure —
+that's why this dedicated verified `stop` exists.
 
 The `devhub` binary itself also has `devhub status` / `devhub stop` (works for
 release-binary users with no checkout; `stop` verifies the listener is devhub

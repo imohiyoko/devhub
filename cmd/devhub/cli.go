@@ -168,22 +168,33 @@ type serverInfo struct {
 	Base     string `json:"base"`
 	Port     int    `json:"port"`
 	Instance string `json:"instance"`
+	PID      int    `json:"pid"`
 }
 
-// probeInfo asks the listener on port to identify itself via the token-less
-// /ai-api/info read (loopback-only, no approval needed for plain GETs). This
+// probeInfo asks the listener on port to identify itself via the same-user
+// authenticated /ai-api/info read (loopback-only, no approval needed). This
 // is the CLI's only sanctioned window into a running server: the /api/ token
-// lives in server memory alone. Redirects are not followed — a devhub too old
+// lives in server memory alone; the agent credential lives in a mode-0600 file.
+// Redirects are not followed — a devhub too old
 // to serve /ai-api answers 302-to-dashboard, which must read as "cannot
 // identify", not as success.
 func probeInfo(port int) (*serverInfo, error) {
+	agentToken, err := storage.ReadAgentToken(platform.DevhubHome())
+	if err != nil {
+		return nil, fmt.Errorf("read ai-api token: %w", err)
+	}
 	client := &http.Client{
 		Timeout: 1500 * time.Millisecond,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/ai-api/info", port))
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/ai-api/info", port), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Devhub-Agent-Token", agentToken)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

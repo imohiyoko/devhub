@@ -54,6 +54,9 @@ func (s *Server) do(method, target, host, token, sfs string, body io.Reader) *ht
 	if token != "" {
 		req.Header.Set("X-Devhub-Token", token)
 	}
+	if strings.HasPrefix(target, "/ai-api/") {
+		req.Header.Set("X-Devhub-Agent-Token", s.agentToken)
+	}
 	if sfs != "" {
 		req.Header.Set("Sec-Fetch-Site", sfs)
 	}
@@ -63,6 +66,64 @@ func (s *Server) do(method, target, host, token, sfs string, body io.Reader) *ht
 	rr := httptest.NewRecorder()
 	s.ServeHTTP(rr, req)
 	return rr
+}
+
+func TestAIAPIRequiresSameUserToken(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/ai-api/envs", nil)
+	req.Host = goodHost
+	req.RemoteAddr = "127.0.0.1:54321"
+
+	rr := httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("missing agent token = %d, want 401", rr.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/ai-api/envs", nil)
+	req.Host = goodHost
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("X-Devhub-Agent-Token", s.agentToken)
+	rr = httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("valid agent token = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInvalidEnvsBodyDoesNotReplaceStoredDocument(t *testing.T) {
+	s := newTestServer(t)
+	want := map[string]any{"version": float64(1), "environments": []any{
+		map[string]any{"id": "keep", "name": "Keep", "repo": t.TempDir()},
+	}}
+	if err := s.store.SaveEnvs(want); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"empty", "", http.StatusBadRequest},
+		{"malformed", `{"environments":[}`, http.StatusBadRequest},
+		{"null", "null", http.StatusBadRequest},
+		{"oversized padding", `{}` + strings.Repeat(" ", (10<<20)+1), http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := s.do(http.MethodPost, "/api/envs", goodHost, testToken, "", strings.NewReader(tc.body))
+			if rr.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", rr.Code, tc.status, rr.Body.String())
+			}
+			got, err := s.store.LoadEnvs()
+			if err != nil {
+				t.Fatal(err)
+			}
+			bGot, _ := json.Marshal(got)
+			bWant, _ := json.Marshal(want)
+			if string(bGot) != string(bWant) {
+				t.Fatalf("stored document changed:\n got %s\nwant %s", bGot, bWant)
+			}
+		})
+	}
 }
 
 func TestStaticServesDashboardWithShim(t *testing.T) {
@@ -77,6 +138,11 @@ func TestStaticServesDashboardWithShim(t *testing.T) {
 	}
 	if !strings.Contains(body, `var T="`+testToken+`"`) {
 		t.Error("dashboard missing injected token value")
+	}
+	for _, id := range []string{`id="serverPort"`, `id="dbLocalOnly"`, `id="serverSave"`} {
+		if !strings.Contains(body, id) {
+			t.Errorf("dashboard missing %s", id)
+		}
 	}
 	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
@@ -150,6 +216,9 @@ func TestAPIRequiresToken(t *testing.T) {
 	// "restart never finishes" hang.
 	if !strings.Contains(rr.Body.String(), `"instance":"`) {
 		t.Errorf("/api/info body = %s, want non-empty instance", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"pid":`) {
+		t.Errorf("/api/info body = %s, want listener pid", rr.Body.String())
 	}
 	// The dashboard's terminal-settings UI reads `system` to pick which OS's
 	// terminal config (emulator/shell) it edits.
