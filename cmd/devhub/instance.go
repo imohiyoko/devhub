@@ -57,28 +57,43 @@ func runStop() int {
 		fmt.Fprintln(os.Stderr, "devhub: if it really must die, use the ports tool (or taskkill/kill) explicitly")
 		return 1
 	}
-	failed := false
-	for _, pid := range pids {
-		if err := portsctl.KillPID(pid); err != nil {
-			fmt.Fprintf(os.Stderr, "devhub: kill pid %d: %v\n", pid, err)
-			failed = true
-		}
-	}
-	if failed {
+	pid, ok := verifiedListenerPID(pids, info.PID)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "devhub: refusing to kill on :%d — identified pid %d is not a current listener (listeners: %s)\n", port, info.PID, joinInts(pids))
 		return 1
 	}
-	// Confirm the port actually frees: SIGTERM is delivered asynchronously and
-	// a lingering listener means "stopped" would be a lie. devhub installs no
-	// graceful-shutdown handler, so a healthy stop clears within a beat.
+	if err := portsctl.KillPID(pid); err != nil {
+		fmt.Fprintf(os.Stderr, "devhub: kill pid %d: %v\n", pid, err)
+		return 1
+	}
+	// Confirm the authenticated PID's listening socket disappears. Another
+	// address family may legitimately have an unrelated listener on the same
+	// numeric port, and must neither be killed nor make this stop look failed.
 	for range 10 {
-		if len(listenersOn(port)) == 0 {
-			fmt.Printf("stopped devhub %s (pid %s) on :%d\n", info.Version, joinInts(pids), port)
+		if !containsInt(listenersOn(port), info.PID) {
+			fmt.Printf("stopped devhub %s (pid %d) on :%d\n", info.Version, info.PID, port)
 			return 0
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	fmt.Fprintf(os.Stderr, "devhub: pid %s was signalled but :%d is still listening\n", joinInts(pids), port)
+	fmt.Fprintf(os.Stderr, "devhub: pid %d was signalled but is still listening on :%d\n", info.PID, port)
 	return 1
+}
+
+func verifiedListenerPID(listeners []int, claimed int) (int, bool) {
+	if claimed <= 0 || !containsInt(listeners, claimed) {
+		return 0, false
+	}
+	return claimed, true
+}
+
+func containsInt(ns []int, target int) bool {
+	for _, n := range ns {
+		if n == target {
+			return true
+		}
+	}
+	return false
 }
 
 func joinInts(ns []int) string {

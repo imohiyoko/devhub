@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/platform"
@@ -26,6 +27,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
 		"is_windows":         platform.IsWindows(),
 		"system":             platform.SystemName(),
 		"instance":           s.instance,
+		"pid":                os.Getpid(),
 		"version":            s.version,
 		"edition":            s.edition,
 		"migration_warnings": warnings,

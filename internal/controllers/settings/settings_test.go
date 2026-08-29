@@ -126,3 +126,47 @@ func TestVMReserveIsValidatedAtSaveTime(t *testing.T) {
 		t.Errorf("a rejected save changed the stored value: %s", got)
 	}
 }
+
+func TestServerSettingsAreValidatedAndPersisted(t *testing.T) {
+	st, err := storage.Open(t.TempDir(), devhub.Assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	c := New(st, core.Namespace(st, "tool"))
+	save := func(data map[string]any) error {
+		return c.HandlePost(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/settings", nil), data)
+	}
+	if err := save(map[string]any{"port": float64(4321), "db_local_only": false}); err != nil {
+		t.Fatalf("valid settings refused: %v", err)
+	}
+	got, err := st.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["port"] != float64(4321) && got["port"] != 4321 {
+		t.Fatalf("port = %#v", got["port"])
+	}
+	if got["db_local_only"] != false {
+		t.Fatalf("db_local_only = %#v", got["db_local_only"])
+	}
+
+	for _, data := range []map[string]any{
+		{"port": float64(0)}, {"port": float64(65536)}, {"port": 1.5}, {"port": "8765"},
+		{"db_local_only": "false"},
+	} {
+		if err := save(data); err == nil {
+			t.Errorf("invalid settings accepted: %#v", data)
+		}
+	}
+	got, err = st.LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["port"] != float64(4321) && got["port"] != 4321 {
+		t.Fatalf("rejected save changed port: %#v", got["port"])
+	}
+	if got["db_local_only"] != false {
+		t.Fatalf("rejected save changed db_local_only: %#v", got["db_local_only"])
+	}
+}

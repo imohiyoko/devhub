@@ -33,6 +33,7 @@ type Server struct {
 	edition  string
 
 	token        string
+	agentToken   string
 	port         int
 	allowedHosts map[string]bool
 	openBrowser  bool
@@ -101,6 +102,11 @@ func New(store *storage.Store, assets, docsFS fs.FS, settings map[string]any, no
 	// Drop it from the environment so launched child processes (editor,
 	// terminal) never inherit the API token.
 	_ = os.Unsetenv("DEVHUB_API_TOKEN")
+	agentToken, err := store.AgentToken()
+	if err != nil {
+		return nil, fmt.Errorf("load ai-api token: %w", err)
+	}
+	s.agentToken = agentToken
 
 	s.port = 8765
 	if p, ok := toInt(settings["port"]); ok {

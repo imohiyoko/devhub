@@ -33,6 +33,7 @@ func TestParseGithubPRURL(t *testing.T) {
 		{"git@github.com:owner/repo.git/pull/5", true, "owner", "repo", 5},
 		{"https://github.com/o/r/pull/9/files", true, "o", "r", 9},
 		{"https://evilgithub.com/o/r/pull/1", false, "", "", 0},
+		{"https://evil.test/github.com/o/r/pull/1", false, "", "", 0},
 		{"https://github.com/-bad/r/pull/1", false, "", "", 0},
 		{"not a url", false, "", "", 0},
 	}
@@ -69,6 +70,13 @@ func TestNormalizeGithubRemote(t *testing.T) {
 		"https://github.com/Owner/Repo.git": "owner/repo",
 		"git@github.com:Owner/Repo":         "owner/repo",
 		"ssh://git@github.com/o/r.git":      "o/r",
+		"https://GitHub.com/Owner/Repo/":    "owner/repo",
+		"https://evilgithub.com/o/r":        "",
+		"https://evil.github.com/o/r":       "",
+		"https://github.com.evil.test/o/r":  "",
+		"https://github.com@evil.test/o/r":  "",
+		"https://github.com/o/r/extra":      "",
+		"https://github.com/o/r?ref=x":      "",
 		"https://gitlab.com/o/r":            "",
 	}
 	for in, want := range cases {

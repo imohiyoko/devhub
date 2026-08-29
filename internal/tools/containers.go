@@ -26,7 +26,11 @@ func (t containersTool) Meta() core.Meta {
 }
 
 func (t containersTool) control(w http.ResponseWriter, r *http.Request) error {
-	return t.ctl.HandleControlPost(w, r, decodeBody(w, r))
+	data, err := decodeBody(w, r)
+	if err != nil {
+		return err
+	}
+	return t.ctl.HandleControlPost(w, r, data)
 }
 
 func (t containersTool) Routes() []core.Route {
@@ -35,7 +39,11 @@ func (t containersTool) Routes() []core.Route {
 		// Prefix, because the per-profile routes carry the profile name in the
 		// path. A POST is also what puts these behind /ai-api's approval gate.
 		{Method: http.MethodPost, Pattern: "/api/containers/profiles", Prefix: true, Handle: func(w http.ResponseWriter, r *http.Request) error {
-			return t.ctl.HandleProfilePost(w, r, decodeBody(w, r))
+			data, err := decodeBody(w, r)
+			if err != nil {
+				return err
+			}
+			return t.ctl.HandleProfilePost(w, r, data)
 		}},
 		// Exact patterns, not a prefix: the container and source are in the
 		// body, so there is nothing in the path to carry and no reason to

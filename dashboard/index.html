@@ -147,8 +147,9 @@ header h1 { font-size: 15px; font-weight: 600; }
   color: var(--muted);
   margin-bottom: 16px;
 }
-.terminal-settings { max-width: 400px; margin-top: 22px; }
+.terminal-settings, .server-settings { max-width: 400px; margin-top: 22px; }
 .terminal-settings .settings-panel-title { margin-bottom: 12px; }
+.server-settings .settings-panel-title { margin-bottom: 12px; }
 .ts-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .ts-row > label { width: 92px; flex-shrink: 0; font-size: 12px; color: var(--muted); }
 .ts-row > input {
@@ -163,6 +164,7 @@ header h1 { font-size: 15px; font-weight: 600; }
   outline: none;
 }
 .ts-row > input:focus { border-color: var(--accent); }
+.ts-row > input[type="checkbox"] { flex: 0 0 auto; width: 16px; }
 .ts-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .ts-save {
   font-size: 12px;
@@ -500,6 +502,16 @@ footer {
 <div class="settings-panel" id="settingsPanel">
   <p class="settings-panel-title">ツールの表示設定</p>
   <div class="tool-toggles" id="toolToggles"></div>
+  <div class="server-settings" id="serverSettings">
+    <p class="settings-panel-title">サーバー / DB 設定</p>
+    <div class="ts-row"><label for="serverPort">Port</label><input id="serverPort" type="number" min="1" max="65535"></div>
+    <div class="ts-row"><label for="dbLocalOnly">DB local only</label><input id="dbLocalOnly" type="checkbox"></div>
+    <div class="ts-actions">
+      <button class="ts-save" id="serverSave">保存</button>
+      <span class="ts-hint" id="serverHint">Port は再起動後に反映。DB 制限を外すとリモートホストへの接続を許可します</span>
+      <span class="ts-saved" id="serverSaved">保存しました</span>
+    </div>
+  </div>
   <div class="terminal-settings" id="terminalSettings" hidden>
     <p class="settings-panel-title">ターミナル設定 (<span id="tsOsLabel"></span>)</p>
     <div class="ts-row"><label for="tsEmulator">Emulator</label><input id="tsEmulator" spellcheck="false" autocomplete="off"></div>
@@ -573,6 +585,7 @@ let TOOLS = [];
 let disabledTools = [];
 let toolOrder = [];
 let terminalConfig = {};   // settings.terminal: { <OS>: { emulator, shell, shell_args } }
+let serverConfig = { port: 8765, db_local_only: true };
 let currentOS = '';        // /api/info.system: "Windows" | "Darwin" | "Linux"
 let restartCmdText = 'devhub';
 
@@ -706,6 +719,36 @@ async function saveTerminalSettings() {
   setTimeout(() => saved.classList.remove('show'), 1500);
 }
 document.getElementById('tsSave').addEventListener('click', saveTerminalSettings);
+
+function renderServerSettings() {
+  document.getElementById('serverPort').value = serverConfig.port || 8765;
+  document.getElementById('dbLocalOnly').checked = serverConfig.db_local_only !== false;
+}
+async function saveServerSettings() {
+  const port = Number(document.getElementById('serverPort').value);
+  const hint = document.getElementById('serverHint');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    hint.textContent = 'Port は 1〜65535 の整数で指定してください';
+    return;
+  }
+  const dbLocalOnly = document.getElementById('dbLocalOnly').checked;
+  if (!dbLocalOnly && serverConfig.db_local_only !== false &&
+      !confirm('DB のローカル限定を解除し、リモートホストへの接続を許可しますか？')) {
+    document.getElementById('dbLocalOnly').checked = true;
+    return;
+  }
+  const patch = { port, db_local_only: dbLocalOnly };
+  const res = await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+  });
+  if (!res.ok) { hint.textContent = '保存に失敗しました'; return; }
+  serverConfig = patch;
+  hint.textContent = 'Port は再起動後に反映。DB 制限を外すとリモートホストへの接続を許可します';
+  const saved = document.getElementById('serverSaved');
+  saved.classList.add('show');
+  setTimeout(() => saved.classList.remove('show'), 1500);
+}
+document.getElementById('serverSave').addEventListener('click', saveServerSettings);
 
 /* ── Settings panel toggle ── */
 document.getElementById('settingsBtn').addEventListener('click', () => {
@@ -859,6 +902,10 @@ async function copyCmd() {
     disabledTools = settings.disabled_tools || [];
     toolOrder = settings.tool_order || [];
     terminalConfig = settings.terminal || {};
+    serverConfig = {
+      port: settings.port || 8765,
+      db_local_only: settings.db_local_only !== false,
+    };
     if (infoRes.ok) currentOS = ((await infoRes.json()).system) || '';
   } catch (e) {
     console.error('dashboard init failed:', e);
@@ -866,6 +913,7 @@ async function copyCmd() {
   renderGrid();
   renderToggles();
   renderTerminalSettings();
+  renderServerSettings();
   renderFooter();
   checkUpdate();
   checkPendingApprovals();

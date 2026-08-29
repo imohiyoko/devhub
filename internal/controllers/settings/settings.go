@@ -4,6 +4,7 @@ package settings
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -23,7 +24,7 @@ var settingsAllowlist = map[string]bool{
 	"disabled_tools": true, "tool_order": true, "editor": true,
 	"open_browser_on_start": true, "db_connections": true, "port_labels": true,
 	"protected_ports": true, "terminal": true, "update_check": true,
-	"vm_reserve": true,
+	"vm_reserve": true, "port": true, "db_local_only": true,
 }
 
 var configKeys = []string{"scan_roots", "excludes", "pinned_repos", "repo_order", "hidden_repos"}
@@ -150,6 +151,18 @@ func (c *Controller) HandlePost(w http.ResponseWriter, r *http.Request, data map
 				return httpx.Errorf(http.StatusBadRequest, "%s", err.Error())
 			}
 			patch["vm_reserve"] = res.JSON()
+		}
+		if v, ok := patch["port"]; ok {
+			n, valid := v.(float64)
+			if !valid || math.Trunc(n) != n || n < 1 || n > 65535 {
+				return httpx.Errorf(http.StatusBadRequest, "port must be an integer between 1 and 65535")
+			}
+			patch["port"] = int(n)
+		}
+		if v, ok := patch["db_local_only"]; ok {
+			if _, valid := v.(bool); !valid {
+				return httpx.Errorf(http.StatusBadRequest, "db_local_only must be a boolean")
+			}
 		}
 		if err := c.store.SaveSettings(patch); err != nil {
 			return err
