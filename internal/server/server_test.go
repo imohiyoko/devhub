@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	devhub "github.com/imohiyoko/devhub"
+	"github.com/imohiyoko/devhub/internal/probeauth"
 	"github.com/imohiyoko/devhub/internal/storage"
 )
 
@@ -54,6 +55,9 @@ func (s *Server) do(method, target, host, token, sfs string, body io.Reader) *ht
 	if token != "" {
 		req.Header.Set("X-Devhub-Token", token)
 	}
+	if strings.HasPrefix(target, "/ai-api/") {
+		req.Header.Set("X-Devhub-Agent-Token", s.agentToken)
+	}
 	if sfs != "" {
 		req.Header.Set("Sec-Fetch-Site", sfs)
 	}
@@ -63,6 +67,102 @@ func (s *Server) do(method, target, host, token, sfs string, body io.Reader) *ht
 	rr := httptest.NewRecorder()
 	s.ServeHTTP(rr, req)
 	return rr
+}
+
+func TestAIAPIRequiresSameUserToken(t *testing.T) {
+	s := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/ai-api/envs", nil)
+	req.Host = goodHost
+	req.RemoteAddr = "127.0.0.1:54321"
+
+	rr := httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("missing agent token = %d, want 401", rr.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/ai-api/envs", nil)
+	req.Host = goodHost
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("X-Devhub-Agent-Token", s.agentToken)
+	rr = httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("valid agent token = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAgentProbeIsCredentialFreeMinimalAndSigned(t *testing.T) {
+	s := newTestServer(t)
+	nonce, err := probeauth.NewNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/ai-api/probe", nil)
+	req.Host = goodHost
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("X-Devhub-Probe-Nonce", nonce)
+	rr := httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("probe = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var info probeauth.Info
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if !probeauth.Verify(s.agentToken, nonce, s.port, info) {
+		t.Fatalf("probe response has invalid proof: %s", rr.Body.String())
+	}
+	for _, sensitive := range []string{"base", "home", "migration_warnings", "instance"} {
+		if strings.Contains(rr.Body.String(), `"`+sensitive+`"`) {
+			t.Errorf("credential-free probe exposed %q: %s", sensitive, rr.Body.String())
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/ai-api/probe", nil)
+	req.Host = goodHost
+	req.RemoteAddr = "127.0.0.1:54321"
+	rr = httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing nonce = %d, want 400", rr.Code)
+	}
+}
+
+func TestInvalidEnvsBodyDoesNotReplaceStoredDocument(t *testing.T) {
+	s := newTestServer(t)
+	want := map[string]any{"version": float64(1), "environments": []any{
+		map[string]any{"id": "keep", "name": "Keep", "repo": t.TempDir()},
+	}}
+	if err := s.store.SaveEnvs(want); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{"empty", "", http.StatusBadRequest},
+		{"malformed", `{"environments":[}`, http.StatusBadRequest},
+		{"null", "null", http.StatusBadRequest},
+		{"oversized padding", `{}` + strings.Repeat(" ", (10<<20)+1), http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := s.do(http.MethodPost, "/api/envs", goodHost, testToken, "", strings.NewReader(tc.body))
+			if rr.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", rr.Code, tc.status, rr.Body.String())
+			}
+			got, err := s.store.LoadEnvs()
+			if err != nil {
+				t.Fatal(err)
+			}
+			bGot, _ := json.Marshal(got)
+			bWant, _ := json.Marshal(want)
+			if string(bGot) != string(bWant) {
+				t.Fatalf("stored document changed:\n got %s\nwant %s", bGot, bWant)
+			}
+		})
+	}
 }
 
 func TestStaticServesDashboardWithShim(t *testing.T) {
@@ -77,6 +177,28 @@ func TestStaticServesDashboardWithShim(t *testing.T) {
 	}
 	if !strings.Contains(body, `var T="`+testToken+`"`) {
 		t.Error("dashboard missing injected token value")
+	}
+	for _, id := range []string{`id="serverPort"`, `id="dbLocalOnly"`, `id="serverSave"`} {
+		if !strings.Contains(body, id) {
+			t.Errorf("dashboard missing %s", id)
+		}
+	}
+	for _, safeDefault := range []string{
+		`id="serverPort" type="number" min="1024" max="65535" disabled`,
+		`id="serverSave" disabled`,
+		`let serverConfig = null`,
+		`let currentServerPortOverridden = false`,
+		`if (serverConfig === null)`,
+		`const rollback = message =>`,
+		`!currentServerPortOverridden && currentServerPort && serverConfig && serverConfig.port !== currentServerPort`,
+		`if (portChangeTarget)`,
+		`const portChanged = !currentServerPortOverridden && port !== serverConfig.port`,
+		`if (portChanged && (!Number.isInteger(port) || port < 1024 || port > 65535))`,
+		`if (portChanged) patch.port = port`,
+	} {
+		if !strings.Contains(body, safeDefault) {
+			t.Errorf("dashboard missing failed-settings-load guard %q", safeDefault)
+		}
 	}
 	if got := rr.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q, want no-store", got)
@@ -145,16 +267,34 @@ func TestAPIRequiresToken(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"port":8765`) {
 		t.Errorf("/api/info body = %s, want port 8765", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"port_overridden":false`) {
+		t.Errorf("/api/info body = %s, want port override state", rr.Body.String())
+	}
 	// The frontend's rebuild restart-detection depends on a non-empty per-process
 	// `instance` id; a regression that dropped it would silently reintroduce the
 	// "restart never finishes" hang.
 	if !strings.Contains(rr.Body.String(), `"instance":"`) {
 		t.Errorf("/api/info body = %s, want non-empty instance", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"pid":`) {
+		t.Errorf("/api/info body = %s, want listener pid", rr.Body.String())
+	}
 	// The dashboard's terminal-settings UI reads `system` to pick which OS's
 	// terminal config (emulator/shell) it edits.
 	if !strings.Contains(rr.Body.String(), `"system":"`) {
 		t.Errorf("/api/info body = %s, want system field", rr.Body.String())
+	}
+}
+
+func TestInfoReportsPortOverride(t *testing.T) {
+	s := newTestServer(t)
+	t.Setenv("DEVHUB_PORT", "9000")
+	rr := s.do("GET", "/api/info", goodHost, testToken, "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/info = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `"port_overridden":true`) {
+		t.Errorf("/api/info body = %s, want active port override", rr.Body.String())
 	}
 }
 

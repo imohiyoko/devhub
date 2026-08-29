@@ -1,6 +1,7 @@
 package git
 
 import (
+	urlpkg "net/url"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -26,10 +27,9 @@ var nonBranchChar = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // prURLRe matches a GitHub PR URL; the left boundary pins the host so look-alikes
 // (evilgithub.com) do not match. The number is digits-only.
-var prURLRe = regexp.MustCompile(`(?:^|[/@.])github\.com[/:]([^/]+)/([^/]+?)(?:\.git)?/pull/(\d+)(?:\b|/)`)
+var prURLRe = regexp.MustCompile(`(?i)^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+)/([^/]+?)(?:\.git)?/pull/(\d+)(?:[/?#].*)?$`)
 
-// remoteRepoRe extracts owner/repo from a github.com remote URL.
-var remoteRepoRe = regexp.MustCompile(`github\.com[/:]([^/]+?)/([^/]+?)(?:\.git)?/?$`)
+var scpRemoteRe = regexp.MustCompile(`^([^@:\s]+)@([^:\s]+):(.+)$`)
 
 // pathSepRe splits a path on runs of forward/back slashes.
 var pathSepRe = regexp.MustCompile(`[\\/]+`)
@@ -80,11 +80,44 @@ func parseGithubPRURL(url string) (owner, repo string, number int, ok bool) {
 
 // normalizeGithubRemote returns lowercased "owner/repo" for a github.com remote URL.
 func normalizeGithubRemote(url string) string {
-	m := remoteRepoRe.FindStringSubmatch(strings.TrimSpace(url))
-	if m == nil {
+	raw := strings.TrimSpace(url)
+	if m := scpRemoteRe.FindStringSubmatch(raw); m != nil && isGithubHost(m[2]) {
+		path := m[3]
+		if strings.ContainsAny(path, "?#") {
+			return ""
+		}
+		return normalizeGithubPath(path)
+	}
+	u, err := urlpkg.Parse(raw)
+	if err != nil || !isGithubHost(u.Hostname()) || u.RawQuery != "" || u.Fragment != "" {
 		return ""
 	}
-	return strings.ToLower(m[1] + "/" + m[2])
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https", "ssh", "git":
+	default:
+		return ""
+	}
+	return normalizeGithubPath(u.Path)
+}
+
+func isGithubHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "github.com", "www.github.com", "ssh.github.com":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeGithubPath(path string) string {
+	path = strings.Trim(strings.TrimSpace(path), "/")
+	path = strings.TrimSuffix(path, ".git")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" ||
+		strings.ContainsAny(path, "\\\t\r\n") {
+		return ""
+	}
+	return strings.ToLower(parts[0] + "/" + parts[1])
 }
 
 // remoteForGithubRepo returns the remote name pointing at github.com/<owner>/<repo>

@@ -32,7 +32,11 @@ func (t gitTool) Routes() []core.Route {
 		}},
 		{Method: http.MethodGet, Pattern: "/api/git/", Prefix: true, Handle: t.ctl.HandleGet},
 		{Method: http.MethodPost, Pattern: "/api/git/", Prefix: true, Handle: func(w http.ResponseWriter, r *http.Request) error {
-			return t.ctl.HandlePost(w, r, decodeBody(w, r))
+			data, err := decodeBody(w, r)
+			if err != nil {
+				return err
+			}
+			return t.ctl.HandlePost(w, r, data)
 		}},
 	}
 }

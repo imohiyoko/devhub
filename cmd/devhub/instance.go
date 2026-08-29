@@ -20,7 +20,11 @@ func runStatus() int {
 	}
 	port := resolvePort(store)
 	fmt.Printf("port    : %d\n", port)
-	pids := listenersOn(port)
+	pids, err := listenersOn(port)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "devhub: listing ports:", err)
+		return 1
+	}
 	if len(pids) == 0 {
 		fmt.Println("server  : not running")
 		return 1
@@ -36,7 +40,7 @@ func runStatus() int {
 }
 
 // runStop stops the devhub instance on the configured port. The listener must
-// identify itself via /ai-api/info before anything is signalled — `devhub
+// identify itself via a signed /ai-api/probe before anything is signalled — `devhub
 // stop` must never become a generic port killer (the ports tool exists for
 // that, with its own safety checks). Stopping when nothing runs is a no-op
 // success so the command is idempotent in scripts.
@@ -45,40 +49,105 @@ func runStop() int {
 	if store != nil {
 		defer store.Close()
 	}
-	port := resolvePort(store)
-	pids := listenersOn(port)
-	if len(pids) == 0 {
-		fmt.Printf("no devhub listening on :%d\n", port)
-		return 0
+	ports := resolvePortCandidates(store)
+	refused := 0
+	for _, port := range ports {
+		pids, err := listenersOn(port)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "devhub: listing ports:", err)
+			return 1
+		}
+		if len(pids) == 0 {
+			continue
+		}
+		info, err := probeInfo(port)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "devhub: refusing to kill pid %s on :%d — %v\n", joinInts(pids), port, err)
+			refused++
+			continue
+		}
+		pid, ok := verifiedListenerPID(pids, info.PID)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "devhub: refusing to kill on :%d — identified pid %d is not a current listener (listeners: %s)\n", port, info.PID, joinInts(pids))
+			refused++
+			continue
+		}
+		if err := portsctl.KillPID(pid); err != nil {
+			fmt.Fprintf(os.Stderr, "devhub: kill pid %d: %v\n", pid, err)
+			refused++
+			continue
+		}
+		exited, err := waitForListenerExit(port, pid)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "devhub: pid %d was signalled but listener exit could not be verified on :%d: %v\n", pid, port, err)
+			refused++
+			continue
+		}
+		if exited {
+			fmt.Printf("stopped devhub %s (pid %d) on :%d\n", info.Version, pid, port)
+			if store != nil {
+				if active, err := store.LoadActiveInstance(); err == nil && active.Port == port && active.PID == pid {
+					if err := store.ClearActiveInstance(active); err != nil {
+						fmt.Fprintf(os.Stderr, "devhub: clear active instance: %v\n", err)
+					}
+				}
+			}
+			// Candidate ports describe alternative locations for one logical
+			// main instance, not a group to terminate together.
+			return 0
+		} else {
+			fmt.Fprintf(os.Stderr, "devhub: pid %d was signalled but is still listening on :%d\n", pid, port)
+			refused++
+		}
 	}
-	info, err := probeInfo(port)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "devhub: refusing to kill pid %s on :%d — %v\n", joinInts(pids), port, err)
+	if refused > 0 {
 		fmt.Fprintln(os.Stderr, "devhub: if it really must die, use the ports tool (or taskkill/kill) explicitly")
 		return 1
 	}
-	failed := false
-	for _, pid := range pids {
-		if err := portsctl.KillPID(pid); err != nil {
-			fmt.Fprintf(os.Stderr, "devhub: kill pid %d: %v\n", pid, err)
-			failed = true
-		}
-	}
-	if failed {
-		return 1
-	}
-	// Confirm the port actually frees: SIGTERM is delivered asynchronously and
-	// a lingering listener means "stopped" would be a lie. devhub installs no
-	// graceful-shutdown handler, so a healthy stop clears within a beat.
+	fmt.Printf("no devhub listening on %s\n", joinPorts(ports))
+	return 0
+}
+
+func waitForListenerExit(port, pid int) (bool, error) {
+	return waitForListenerExitWith(port, pid, listenersOn)
+}
+
+func waitForListenerExitWith(port, pid int, lookup func(int) ([]int, error)) (bool, error) {
 	for range 10 {
-		if len(listenersOn(port)) == 0 {
-			fmt.Printf("stopped devhub %s (pid %s) on :%d\n", info.Version, joinInts(pids), port)
-			return 0
+		pids, err := lookup(port)
+		if err != nil {
+			return false, err
+		}
+		if !containsInt(pids, pid) {
+			return true, nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	fmt.Fprintf(os.Stderr, "devhub: pid %s was signalled but :%d is still listening\n", joinInts(pids), port)
-	return 1
+	return false, nil
+}
+
+func joinPorts(ports []int) string {
+	parts := make([]string, len(ports))
+	for i, port := range ports {
+		parts[i] = fmt.Sprintf(":%d", port)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func verifiedListenerPID(listeners []int, claimed int) (int, bool) {
+	if claimed <= 0 || !containsInt(listeners, claimed) {
+		return 0, false
+	}
+	return claimed, true
+}
+
+func containsInt(ns []int, target int) bool {
+	for _, n := range ns {
+		if n == target {
+			return true
+		}
+	}
+	return false
 }
 
 func joinInts(ns []int) string {

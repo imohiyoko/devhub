@@ -10,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/imohiyoko/devhub/internal/approval"
@@ -33,6 +35,7 @@ type Server struct {
 	edition  string
 
 	token        string
+	agentToken   string
 	port         int
 	allowedHosts map[string]bool
 	openBrowser  bool
@@ -101,6 +104,11 @@ func New(store *storage.Store, assets, docsFS fs.FS, settings map[string]any, no
 	// Drop it from the environment so launched child processes (editor,
 	// terminal) never inherit the API token.
 	_ = os.Unsetenv("DEVHUB_API_TOKEN")
+	agentToken, err := store.AgentToken()
+	if err != nil {
+		return nil, fmt.Errorf("load ai-api token: %w", err)
+	}
+	s.agentToken = agentToken
 
 	s.port = 8765
 	if p, ok := toInt(settings["port"]); ok {
@@ -144,7 +152,7 @@ func New(store *storage.Store, assets, docsFS fs.FS, settings map[string]any, no
 	// step with the counter.
 	s.instance = generateToken()
 	s.rlog = reqlog.New(reqlog.Capacity, s.instance)
-	reg := tools.Registry(store, docSet, s.rlog)
+	reg := tools.Registry(store, docSet, s.rlog, s.port)
 	script := buildTokenScript(s.token)
 
 	toolPages := map[string][]byte{}
@@ -251,6 +259,39 @@ func (s *Server) Run() error {
 	}
 
 	s.httpSrv = &http.Server{Handler: s}
+	// DEVHUB_PORT launches are intentionally temporary side instances. They
+	// must not replace the main instance record shared by the same DEVHUB_HOME.
+	if os.Getenv("DEVHUB_PORT") == "" {
+		active := storage.ActiveInstance{Port: s.port, PID: os.Getpid(), Instance: s.instance}
+		if err := s.store.RecordActiveInstance(active); err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("record active instance: %w", err)
+		}
+		defer func() {
+			if err := s.store.ClearActiveInstance(active); err != nil {
+				fmt.Fprintf(os.Stderr, "devhub: clear active instance: %v\n", err)
+			}
+		}()
+	}
+
+	// Convert interactive/CLI termination into a clean Serve return so the
+	// active-instance record is removed. Forced termination remains safe: the
+	// next main process overwrites the record, and `devhub stop` clears the
+	// matching stale value after observing listener exit.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	stopSignalWatcher := make(chan struct{})
+	defer func() {
+		signal.Stop(signals)
+		close(stopSignalWatcher)
+	}()
+	go func() {
+		select {
+		case <-signals:
+			_ = s.httpSrv.Close()
+		case <-stopSignalWatcher:
+		}
+	}()
 
 	if s.openBrowser {
 		go func() {

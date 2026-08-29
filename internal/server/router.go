@@ -26,7 +26,7 @@ var approvalTimeout = 60 * time.Second
 // one, so it stays right under a DEVHUB_PORT override.
 func (s *Server) baseURL() string { return fmt.Sprintf("http://localhost:%d", s.port) }
 
-// tokenlessAlternative explains, for a path that just failed the token check,
+// agentAlternative explains, for a path that just failed the browser-token check,
 // what a non-browser caller should do instead.
 //
 // Usually that is the same path under /ai-api. The approval endpoints are the
@@ -39,11 +39,11 @@ func (s *Server) baseURL() string { return fmt.Sprintf("http://localhost:%d", s.
 // token check like any other unknown path — and a test that required the
 // trailing slash would hand it the generic hint, naming /ai-api/approval: the
 // one string this function exists to never produce.
-func (s *Server) tokenlessAlternative(apiPath string) string {
+func (s *Server) agentAlternative(apiPath string) string {
 	if apiPath == "/api/approval" || strings.HasPrefix(apiPath, "/api/approval/") {
 		return fmt.Sprintf("The approval endpoints require the token that devhub injects into its own pages, and have no /ai-api equivalent — a caller cannot approve its own request. Ask the user to decide at %s.", s.baseURL())
 	}
-	return fmt.Sprintf("/api needs the per-session token that devhub injects into its own pages. A local agent or CLI should call %s instead — same route, no token, though writes wait for the user to approve them.",
+	return fmt.Sprintf("/api needs the per-session token that devhub injects into its own pages. A local agent or CLI should read $DEVHUB_HOME/settings/ai-api-token and call %s with X-Devhub-Agent-Token instead; writes still wait for the user to approve them.",
 		"/ai-api/"+strings.TrimPrefix(apiPath, "/api/"))
 }
 
@@ -67,9 +67,16 @@ func (s *Server) captureBody(r *http.Request, e *reqlog.Entry) string {
 	if r.Body == nil {
 		return ""
 	}
-	body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes))
+	// Keep one byte beyond the handler limit. Restoring only the first 10 MiB
+	// would turn an oversized request into an apparently valid one before the
+	// authoritative JSON decoder gets a chance to reject it.
+	body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes+1))
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	summary := summarizeApprovalBody(body)
+	preview := body
+	if len(preview) > maxApprovalBodyBytes {
+		preview = preview[:maxApprovalBodyBytes]
+	}
+	summary := summarizeApprovalBody(preview)
 	if e != nil {
 		e.Body = summary
 	}
@@ -139,7 +146,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) 
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Content-Security-Policy", "frame-ancestors 'none'")
 
-	// Handle AI API endpoints: bypass regular API token validation, but enforce loopback connection.
+	// Handle AI API endpoints with a separate same-user credential and loopback
+	// connection requirement; the browser session token is never exposed here.
 	if strings.HasPrefix(r.URL.Path, "/ai-api/") {
 		if !s.isLoopback(r) {
 			httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden: loopback connection required").WithHint(
@@ -149,7 +157,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) 
 		}
 		// Loopback alone does not prove the caller isn't a browser: a cross-origin
 		// web page the user is merely visiting can fetch 127.0.0.1, and its request
-		// still originates from loopback. The token-less /ai-api surface is meant
+		// still originates from loopback. The non-browser /ai-api surface is meant
 		// for local, non-browser agents; a browser tags cross/same-site requests
 		// with Sec-Fetch-Site, so reject those. Legit CLI/agent clients send no
 		// Sec-Fetch-Site and are unaffected.
@@ -157,6 +165,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) 
 			httpx.WriteError(w, httpx.Errorf(http.StatusForbidden, "forbidden: cross-site request").WithHint(
 				"cross_site",
 				"This request carried a cross-site Sec-Fetch-Site header, which is how a web page the user is merely visiting looks. Call /ai-api from a CLI or HTTP client that does not send Sec-Fetch-Site."))
+			return
+		}
+		// status/stop/doctor must identify a listener before trusting it, but
+		// sending the persistent bearer token to an unverified TCP peer would
+		// disclose it. This one route returns only a nonce-bound signed identity;
+		// every ordinary /ai-api route still requires the bearer credential.
+		if r.Method == http.MethodGet && r.URL.Path == "/ai-api/probe" {
+			s.handleAgentProbe(w, r)
+			return
+		}
+		if !s.agentAuthorized(r) {
+			httpx.WriteError(w, httpx.Errorf(http.StatusUnauthorized, "unauthorized").WithHint(
+				"missing_agent_token",
+				"Read the same-user credential from $DEVHUB_HOME/settings/ai-api-token (default ~/.devhub/settings/ai-api-token; %LOCALAPPDATA%\\devhub\\settings\\ai-api-token on Windows) and send it as X-Devhub-Agent-Token."))
 			return
 		}
 
@@ -253,7 +275,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) 
 			// has no way to obtain it. Name the surface built for those callers
 			// rather than leaving them to guess that /api is not the only door.
 			httpx.WriteError(w, httpx.Errorf(http.StatusUnauthorized, "unauthorized").WithHint(
-				"missing_token", s.tokenlessAlternative(r.URL.Path)))
+				"missing_token", s.agentAlternative(r.URL.Path)))
 			return
 		}
 		// Writes on this surface never reach the approval path, so this is the

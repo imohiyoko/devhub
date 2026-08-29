@@ -249,7 +249,7 @@ func ListListening() ([]PortEntry, error) {
 // KillPID terminates pid with none of killPortProcess's safety checks
 // (protected ports, self-PID, port ownership). Those checks protect *other*
 // applications and the serving process itself; `devhub stop` targets a devhub
-// instance it has just verified via /ai-api/info, where they would wrongly
+// instance it has just verified via /ai-api/probe, where they would wrongly
 // refuse. Callers must do such verification — never expose this to a request
 // path.
 func KillPID(pid int) error { return killProcess(pid) }
