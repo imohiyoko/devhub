@@ -187,9 +187,12 @@ func TestStaticServesDashboardWithShim(t *testing.T) {
 		`id="serverPort" type="number" min="1024" max="65535" disabled`,
 		`id="serverSave" disabled`,
 		`let serverConfig = null`,
+		`let currentServerPortOverridden = false`,
 		`if (serverConfig === null)`,
 		`const rollback = message =>`,
-		`serverConfig.port !== currentServerPort`,
+		`!currentServerPortOverridden && currentServerPort && serverConfig && serverConfig.port !== currentServerPort`,
+		`if (portChangeTarget)`,
+		`if (!currentServerPortOverridden && port !== serverConfig.port) patch.port = port`,
 	} {
 		if !strings.Contains(body, safeDefault) {
 			t.Errorf("dashboard missing failed-settings-load guard %q", safeDefault)
@@ -262,6 +265,9 @@ func TestAPIRequiresToken(t *testing.T) {
 	if !strings.Contains(rr.Body.String(), `"port":8765`) {
 		t.Errorf("/api/info body = %s, want port 8765", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"port_overridden":false`) {
+		t.Errorf("/api/info body = %s, want port override state", rr.Body.String())
+	}
 	// The frontend's rebuild restart-detection depends on a non-empty per-process
 	// `instance` id; a regression that dropped it would silently reintroduce the
 	// "restart never finishes" hang.
@@ -275,6 +281,18 @@ func TestAPIRequiresToken(t *testing.T) {
 	// terminal config (emulator/shell) it edits.
 	if !strings.Contains(rr.Body.String(), `"system":"`) {
 		t.Errorf("/api/info body = %s, want system field", rr.Body.String())
+	}
+}
+
+func TestInfoReportsPortOverride(t *testing.T) {
+	s := newTestServer(t)
+	t.Setenv("DEVHUB_PORT", "9000")
+	rr := s.do("GET", "/api/info", goodHost, testToken, "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/info = %d, want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `"port_overridden":true`) {
+		t.Errorf("/api/info body = %s, want active port override", rr.Body.String())
 	}
 }
 

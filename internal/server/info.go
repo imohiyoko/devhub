@@ -24,6 +24,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"base":               platform.DevhubHome(),
 		"port":               s.port,
+		"port_overridden":    os.Getenv("DEVHUB_PORT") != "",
 		"home":               platform.Home(),
 		"is_windows":         platform.IsWindows(),
 		"system":             platform.SystemName(),
