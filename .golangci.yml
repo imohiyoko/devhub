@@ -1,0 +1,10 @@
+version: "2"
+
+linters:
+  # Start with checks that are actionable without requiring a repository-wide
+  # cleanup. Existing go vet remains explicit in the CI gate as well.
+  default: none
+  enable:
+    - govet
+    - ineffassign
+    - unused

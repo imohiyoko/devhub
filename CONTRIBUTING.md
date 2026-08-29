@@ -16,16 +16,17 @@ Windows). Both mirror the CI gate:
 make build     # go build ./...          mise run build      # → ./devhub binary
 make test      # go test ./...           mise run test
 make vet       # go vet ./...            mise run vet
+make lint      # golangci-lint run ./...  mise run lint
 make fmt       # gofmt -w .              mise run fmt
 make fmt-check # the CI format gate      mise run fmt-check
-#                                        mise run check   # fmt-check + vet + build + test
+#                                        mise run check   # fmt-check + vet + lint + build + test
 ```
 
 Prefer `mise run …` on Windows: it needs neither `make` nor Git Bash, so the
 same CI gate is reachable from PowerShell. `mise run check` runs the whole Go
-job (format, vet, build, test) in one shot before you push.
+job (format, vet, lint, build, test) in one shot before you push.
 
-CI runs `gofmt` (must be clean), `go vet`, `go build`, and `go test` on
+CI runs `gofmt` (must be clean), `go vet`, `golangci-lint`, `go build`, and `go test` on
 Linux/macOS/Windows.
 
 ## Running from source

@@ -1,4 +1,4 @@
-.PHONY: build install test vet fmt fmt-check new-tool
+.PHONY: build install test vet lint fmt fmt-check new-tool
 
 build:
 	go build ./...
@@ -13,6 +13,9 @@ test:
 
 vet:
 	go vet ./...
+
+lint:
+	golangci-lint run ./...
 
 fmt:
 	gofmt -w .
