@@ -6,6 +6,7 @@ min_version = "2026.1.0"
 
 [tools]
 go = "1.26.4"
+golangci-lint = "2.13.2"
 
 # 開発用タスク（ソースから実行）。配布バイナリを使えない環境向けに、
 # いまの worktree のコードを go run / go build で動かす。クロスプラットフォーム。
@@ -32,6 +33,10 @@ run = "go test ./..."
 description = "Run go vet ./..."
 run = "go vet ./..."
 
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run ./..."
+
 [tasks.fmt]
 description = "Format all Go sources in place (gofmt -w .)"
 run = "gofmt -w ."
@@ -42,13 +47,14 @@ run = "gofmt -w ."
 description = "Fail if any Go source is not gofmt-clean (CI format gate)"
 run = "go run ./scripts/fmtcheck"
 
-# push 前のワンショット。CI の Go ジョブ（fmt / vet / build / test）を丸ごと再現する。
+# push 前のワンショット。CI の Go ジョブ（fmt / vet / lint / build / test）を丸ごと再現する。
 # 各ステップは順に実行され、最初の失敗で停止する。
 [tasks.check]
-description = "Run the full CI gate locally: fmt-check, vet, build, test"
+description = "Run the full CI gate locally: fmt-check, vet, lint, build, test"
 run = [
   "go run ./scripts/fmtcheck",
   "go vet ./...",
+  "golangci-lint run ./...",
   "go build ./...",
   "go test ./...",
 ]

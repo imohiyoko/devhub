@@ -14,6 +14,7 @@ ci/core-backend:
           - "go.mod"
           - "go.sum"
           - "Makefile"
+          - ".golangci.yml"
           - ".mise.toml"
           - ".github/workflows/ci.yml"
 
