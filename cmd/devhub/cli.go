@@ -169,12 +169,12 @@ func parsePortEnv(s string) (int, error) {
 	return p, err
 }
 
-// listenersOn returns the pids listening on port (usually one).
-func listenersOn(port int) []int {
+// listenersOn returns the pids listening on port (usually one). Callers must
+// distinguish an empty result from a failed system-level listener query.
+func listenersOn(port int) ([]int, error) {
 	entries, err := portsctl.ListListening()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "devhub: listing ports:", err)
-		return nil
+		return nil, err
 	}
 	var pids []int
 	seen := map[int]bool{}
@@ -184,7 +184,7 @@ func listenersOn(port int) []int {
 			pids = append(pids, e.PID)
 		}
 	}
-	return pids
+	return pids, nil
 }
 
 // serverInfo is the subset of GET /api/info the CLI consumes.

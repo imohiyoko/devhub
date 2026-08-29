@@ -232,8 +232,10 @@ func runDoctor() int {
 	}
 	port := resolvePort(store)
 	fmt.Printf("  port       : %d\n", port)
-	pids := listenersOn(port)
-	if len(pids) == 0 {
+	pids, listenersErr := listenersOn(port)
+	if listenersErr != nil {
+		warns = append(warns, fmt.Sprintf("could not inspect listeners on port %d: %v", port, listenersErr))
+	} else if len(pids) == 0 {
 		fmt.Println("  server     : not running")
 	} else {
 		fmt.Printf("  listener   : pid %s\n", joinInts(pids))

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -82,6 +83,7 @@ func TestProbeInfoDoesNotSendAgentTokenToUnverifiedListener(t *testing.T) {
 func TestResolvePortCandidatesKeepsBoundPortAfterSettingChange(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("DEVHUB_HOME", home)
+	t.Setenv("DEVHUB_PORT", "")
 	st, err := storage.Open(home, devhub.Assets)
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +104,16 @@ func TestResolvePortCandidatesKeepsBoundPortAfterSettingChange(t *testing.T) {
 	got = resolvePortCandidates(st)
 	if len(got) != 1 || got[0] != 7777 {
 		t.Fatalf("override candidates = %v, want [7777]", got)
+	}
+}
+
+func TestWaitForListenerExitPropagatesLookupFailure(t *testing.T) {
+	wantErr := errors.New("listener query failed")
+	exited, err := waitForListenerExitWith(8765, 1234, func(int) ([]int, error) {
+		return nil, wantErr
+	})
+	if exited || !errors.Is(err, wantErr) {
+		t.Fatalf("waitForListenerExitWith = (%v, %v), want (false, %v)", exited, err, wantErr)
 	}
 }
 

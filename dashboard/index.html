@@ -746,7 +746,8 @@ async function saveServerSettings() {
     return;
   }
   const port = Number(document.getElementById('serverPort').value);
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+  const portChanged = !currentServerPortOverridden && port !== serverConfig.port;
+  if (portChanged && (!Number.isInteger(port) || port < 1024 || port > 65535)) {
     hint.textContent = 'Port は 1024〜65535 の整数で指定してください';
     return;
   }
@@ -759,7 +760,7 @@ async function saveServerSettings() {
   const patch = { db_local_only: dbLocalOnly };
   // A DEVHUB_PORT process is a temporary side instance. Do not make its
   // unrelated saved port participate in a DB-only settings update.
-  if (!currentServerPortOverridden && port !== serverConfig.port) patch.port = port;
+  if (portChanged) patch.port = port;
   const rollback = message => {
     renderServerSettings();
     hint.textContent = message;
