@@ -738,10 +738,15 @@ async function saveServerSettings() {
     return;
   }
   const patch = { port, db_local_only: dbLocalOnly };
-  const res = await fetch('/api/settings', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-  });
-  if (!res.ok) { hint.textContent = '保存に失敗しました'; return; }
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+    });
+    if (!res.ok) { hint.textContent = '保存に失敗しました'; return; }
+  } catch {
+    hint.textContent = '保存に失敗しました';
+    return;
+  }
   serverConfig = patch;
   hint.textContent = 'Port は再起動後に反映。DB 制限を外すとリモートホストへの接続を許可します';
   const saved = document.getElementById('serverSaved');

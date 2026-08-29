@@ -6,6 +6,7 @@ import (
 
 	"github.com/imohiyoko/devhub/internal/httpx"
 	"github.com/imohiyoko/devhub/internal/platform"
+	"github.com/imohiyoko/devhub/internal/probeauth"
 )
 
 // handleInfo serves GET /api/info. It returns the actually-bound port (not the
@@ -32,4 +33,23 @@ func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
 		"edition":            s.edition,
 		"migration_warnings": warnings,
 	})
+}
+
+// handleAgentProbe returns only the process identity needed by CLI
+// status/stop/doctor, signed against a caller-provided fresh nonce. The agent
+// token never crosses the unauthenticated TCP connection: a look-alike local
+// listener can observe the nonce but cannot forge a proof for its own PID.
+func (s *Server) handleAgentProbe(w http.ResponseWriter, r *http.Request) {
+	nonce := r.Header.Get("X-Devhub-Probe-Nonce")
+	if !probeauth.ValidNonce(nonce) {
+		httpx.WriteError(w, httpx.Errorf(http.StatusBadRequest, "invalid probe nonce"))
+		return
+	}
+	info := probeauth.Info{
+		Version: s.version,
+		Edition: s.edition,
+		PID:     os.Getpid(),
+	}
+	info.Proof = probeauth.Sign(s.agentToken, nonce, s.port, info)
+	httpx.WriteJSON(w, http.StatusOK, info)
 }

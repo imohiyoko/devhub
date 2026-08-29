@@ -81,7 +81,11 @@ func normalizeGithubRemote(url string) string {
 	raw := strings.TrimSpace(url)
 	const scpPrefix = "git@github.com:"
 	if len(raw) >= len(scpPrefix) && strings.EqualFold(raw[:len(scpPrefix)], scpPrefix) {
-		return normalizeGithubPath(raw[len(scpPrefix):])
+		path := raw[len(scpPrefix):]
+		if strings.ContainsAny(path, "?#") {
+			return ""
+		}
+		return normalizeGithubPath(path)
 	}
 	u, err := urlpkg.Parse(raw)
 	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") || u.RawQuery != "" || u.Fragment != "" {

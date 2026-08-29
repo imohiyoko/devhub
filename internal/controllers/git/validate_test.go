@@ -69,6 +69,9 @@ func TestNormalizeGithubRemote(t *testing.T) {
 	cases := map[string]string{
 		"https://github.com/Owner/Repo.git": "owner/repo",
 		"git@github.com:Owner/Repo":         "owner/repo",
+		"git@github.com:owner/repo?ref=x":   "",
+		"git@github.com:owner/repo#frag":    "",
+		"git@github.com:owner/repo.git?x":   "",
 		"ssh://git@github.com/o/r.git":      "o/r",
 		"https://GitHub.com/Owner/Repo/":    "owner/repo",
 		"https://evilgithub.com/o/r":        "",

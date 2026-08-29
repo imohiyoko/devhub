@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 
 	devhub "github.com/imohiyoko/devhub"
@@ -50,5 +51,72 @@ func TestReadAgentTokenRejectsMalformedFile(t *testing.T) {
 	}
 	if _, err := ReadAgentToken(home); err == nil {
 		t.Fatal("malformed token was accepted")
+	}
+}
+
+func TestAgentTokenRejectsPersistentlyMalformedFile(t *testing.T) {
+	home := t.TempDir()
+	st, err := Open(home, devhub.Assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	path := filepath.Join(home, "settings", agentTokenFile)
+	if err := os.WriteFile(path, []byte("incomplete"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AgentToken(); err == nil {
+		t.Fatal("persistently malformed token was accepted")
+	}
+}
+
+func TestConcurrentAgentTokenCreationConverges(t *testing.T) {
+	home := t.TempDir()
+	st, err := Open(home, devhub.Assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	const callers = 20
+	tokens := make(chan string, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			token, err := st.AgentToken()
+			if err != nil {
+				errs <- err
+				return
+			}
+			tokens <- token
+		}()
+	}
+	wg.Wait()
+	close(tokens)
+	close(errs)
+	for err := range errs {
+		t.Errorf("AgentToken: %v", err)
+	}
+	var want string
+	for token := range tokens {
+		if want == "" {
+			want = token
+		}
+		if token != want {
+			t.Errorf("concurrent tokens differ: got %q want %q", token, want)
+		}
+	}
+	if want == "" {
+		t.Fatal("no token returned")
+	}
+	matches, err := filepath.Glob(filepath.Join(home, "settings", ".ai-api-token-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary token files remain: %v", matches)
 	}
 }

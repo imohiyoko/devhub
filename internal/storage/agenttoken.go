@@ -29,27 +29,43 @@ func (s *Store) AgentToken() (string, error) {
 		return "", fmt.Errorf("generate ai-api token: %w", err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(b)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if os.IsExist(err) { // another server using this home won the creation race
-		return readAgentToken(path)
-	}
+	// Write and close the complete credential under a private temporary name,
+	// then publish it with an exclusive hard link. Unlike O_EXCL followed by a
+	// write to the final path, competitors can never observe an empty or partial
+	// token, even if this process is descheduled indefinitely while writing.
+	f, err := os.CreateTemp(s.settingsDir, ".ai-api-token-*")
 	if err != nil {
-		return "", fmt.Errorf("create ai-api token: %w", err)
+		return "", fmt.Errorf("create temporary ai-api token: %w", err)
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return "", fmt.Errorf("protect temporary ai-api token: %w", err)
 	}
 	if _, err := f.WriteString(token + "\n"); err != nil {
 		_ = f.Close()
-		_ = os.Remove(path)
 		return "", fmt.Errorf("write ai-api token: %w", err)
 	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return "", fmt.Errorf("sync ai-api token: %w", err)
+	}
 	if err := f.Close(); err != nil {
-		_ = os.Remove(path)
 		return "", fmt.Errorf("close ai-api token: %w", err)
+	}
+	if err := os.Link(tmp, path); os.IsExist(err) {
+		// Another server published its complete token first.
+		return readAgentToken(path)
+	} else if err != nil {
+		return "", fmt.Errorf("publish ai-api token: %w", err)
 	}
 	return token, nil
 }
 
 // ReadAgentToken reads the credential for an already-running server without
-// opening its database. CLI status/stop use this to authenticate /ai-api/info.
+// opening its database. CLI status/stop use it only to verify signed probe
+// responses; they never send it to the listener.
 func ReadAgentToken(home string) (string, error) {
 	return readAgentToken(filepath.Join(home, "settings", agentTokenFile))
 }

@@ -167,6 +167,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) 
 				"This request carried a cross-site Sec-Fetch-Site header, which is how a web page the user is merely visiting looks. Call /ai-api from a CLI or HTTP client that does not send Sec-Fetch-Site."))
 			return
 		}
+		// status/stop/doctor must identify a listener before trusting it, but
+		// sending the persistent bearer token to an unverified TCP peer would
+		// disclose it. This one route returns only a nonce-bound signed identity;
+		// every ordinary /ai-api route still requires the bearer credential.
+		if r.Method == http.MethodGet && r.URL.Path == "/ai-api/probe" {
+			s.handleAgentProbe(w, r)
+			return
+		}
 		if !s.agentAuthorized(r) {
 			httpx.WriteError(w, httpx.Errorf(http.StatusUnauthorized, "unauthorized").WithHint(
 				"missing_agent_token",

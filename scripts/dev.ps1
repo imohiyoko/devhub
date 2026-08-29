@@ -127,7 +127,7 @@ exit /b %_devhub_exit%
   }
   'stop' {
     Require-Cmd go
-    # The CLI probes /ai-api/info before signalling and refuses an unrelated
+    # The CLI verifies /ai-api/probe before signalling and refuses an unrelated
     # listener. Keep that identity check in one implementation on every OS.
     & go run ./cmd/devhub stop
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
