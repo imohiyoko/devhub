@@ -10,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/imohiyoko/devhub/internal/approval"
@@ -257,12 +259,39 @@ func (s *Server) Run() error {
 	}
 
 	s.httpSrv = &http.Server{Handler: s}
-	if err := s.store.RecordActiveInstance(storage.ActiveInstance{
-		Port: s.port, PID: os.Getpid(), Instance: s.instance,
-	}); err != nil {
-		_ = ln.Close()
-		return fmt.Errorf("record active instance: %w", err)
+	// DEVHUB_PORT launches are intentionally temporary side instances. They
+	// must not replace the main instance record shared by the same DEVHUB_HOME.
+	if os.Getenv("DEVHUB_PORT") == "" {
+		active := storage.ActiveInstance{Port: s.port, PID: os.Getpid(), Instance: s.instance}
+		if err := s.store.RecordActiveInstance(active); err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("record active instance: %w", err)
+		}
+		defer func() {
+			if err := s.store.ClearActiveInstance(active); err != nil {
+				fmt.Fprintf(os.Stderr, "devhub: clear active instance: %v\n", err)
+			}
+		}()
 	}
+
+	// Convert interactive/CLI termination into a clean Serve return so the
+	// active-instance record is removed. Forced termination remains safe: the
+	// next main process overwrites the record, and `devhub stop` clears the
+	// matching stale value after observing listener exit.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	stopSignalWatcher := make(chan struct{})
+	defer func() {
+		signal.Stop(signals)
+		close(stopSignalWatcher)
+	}()
+	go func() {
+		select {
+		case <-signals:
+			_ = s.httpSrv.Close()
+		case <-stopSignalWatcher:
+		}
+	}()
 
 	if s.openBrowser {
 		go func() {

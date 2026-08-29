@@ -46,7 +46,7 @@ func runStop() int {
 		defer store.Close()
 	}
 	ports := resolvePortCandidates(store)
-	stopped, refused := 0, 0
+	refused := 0
 	for _, port := range ports {
 		pids := listenersOn(port)
 		if len(pids) == 0 {
@@ -71,14 +71,20 @@ func runStop() int {
 		}
 		if waitForListenerExit(port, pid) {
 			fmt.Printf("stopped devhub %s (pid %d) on :%d\n", info.Version, pid, port)
-			stopped++
+			if store != nil {
+				if active, err := store.LoadActiveInstance(); err == nil && active.Port == port && active.PID == pid {
+					if err := store.ClearActiveInstance(active); err != nil {
+						fmt.Fprintf(os.Stderr, "devhub: clear active instance: %v\n", err)
+					}
+				}
+			}
+			// Candidate ports describe alternative locations for one logical
+			// main instance, not a group to terminate together.
+			return 0
 		} else {
 			fmt.Fprintf(os.Stderr, "devhub: pid %d was signalled but is still listening on :%d\n", pid, port)
 			refused++
 		}
-	}
-	if stopped > 0 {
-		return 0
 	}
 	if refused > 0 {
 		fmt.Fprintln(os.Stderr, "devhub: if it really must die, use the ports tool (or taskkill/kill) explicitly")

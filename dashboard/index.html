@@ -588,6 +588,7 @@ let terminalConfig = {};   // settings.terminal: { <OS>: { emulator, shell, shel
 let serverConfig = null;
 let currentOS = '';        // /api/info.system: "Windows" | "Darwin" | "Linux"
 let currentServerPort = null; // /api/info.port: the port this process actually bound
+let currentServerPortOverridden = false; // /api/info.port_overridden: DEVHUB_PORT is active
 let restartCmdText = 'devhub';
 
 // Show the address this page was actually reached at (host:port) rather than a
@@ -726,7 +727,7 @@ function renderServerSettings() {
   const dbInput = document.getElementById('dbLocalOnly');
   const saveButton = document.getElementById('serverSave');
   const loaded = serverConfig !== null;
-  portInput.disabled = !loaded;
+  portInput.disabled = !loaded || currentServerPortOverridden;
   dbInput.disabled = !loaded;
   saveButton.disabled = !loaded;
   if (!loaded) {
@@ -755,7 +756,10 @@ async function saveServerSettings() {
     document.getElementById('dbLocalOnly').checked = true;
     return;
   }
-  const patch = { port, db_local_only: dbLocalOnly };
+  const patch = { db_local_only: dbLocalOnly };
+  // A DEVHUB_PORT process is a temporary side instance. Do not make its
+  // unrelated saved port participate in a DB-only settings update.
+  if (!currentServerPortOverridden && port !== serverConfig.port) patch.port = port;
   const rollback = message => {
     renderServerSettings();
     hint.textContent = message;
@@ -773,7 +777,7 @@ async function saveServerSettings() {
     rollback('保存に失敗しました');
     return;
   }
-  serverConfig = patch;
+  serverConfig = { ...serverConfig, ...patch };
   hint.textContent = 'Port は再起動後に反映。DB 制限を外すとリモートホストへの接続を許可します';
   const saved = document.getElementById('serverSaved');
   saved.classList.add('show');
@@ -833,8 +837,9 @@ async function doRebuild() {
     const info = await fetch('/api/info').then(r => r.json());
     origInstance = info.instance ?? null;
     currentServerPort = info.port ?? currentServerPort;
+    currentServerPortOverridden = info.port_overridden === true;
   } catch { /* best-effort; the null-baseline case is handled in the poll below */ }
-  const portChangeTarget = currentServerPort && serverConfig && serverConfig.port !== currentServerPort
+  const portChangeTarget = !currentServerPortOverridden && currentServerPort && serverConfig && serverConfig.port !== currentServerPort
     ? `${location.protocol}//${location.hostname}:${serverConfig.port}/`
     : null;
 
@@ -861,7 +866,6 @@ async function doRebuild() {
   // ignored. A hard deadline guarantees the button can never freeze forever.
   const startedAt = Date.now();
   const DEADLINE_MS = 120000;
-  let rebuildComplete = false;
   const poll = setInterval(async () => {
     if (Date.now() - startedAt > DEADLINE_MS) {
       clearInterval(poll);
@@ -879,13 +883,12 @@ async function doRebuild() {
         resetBtn();
         return;
       }
-      if (s && s.done && !s.error) rebuildComplete = true;
     } catch { /* transitioning — ignore */ }
 
     // A port-changing rebuild cannot be polled through this page's old origin.
-    // Once the build child has started, wait for any HTTP response from the new
-    // origin (opaque no-cors is enough), then navigate only when it is listening.
-    if (rebuildComplete && portChangeTarget) {
+    // Probe the expected new origin directly: waiting to observe done on the old
+    // origin races with its intentionally short post-build exit delay.
+    if (portChangeTarget) {
       try {
         await fetch(portChangeTarget, { mode: 'no-cors', cache: 'no-store' });
         clearInterval(poll);
@@ -959,6 +962,7 @@ async function copyCmd() {
       const info = await infoRes.json();
       currentOS = info.system || '';
       currentServerPort = info.port || null;
+      currentServerPortOverridden = info.port_overridden === true;
     }
   } catch (e) {
     console.error('dashboard init failed:', e);
