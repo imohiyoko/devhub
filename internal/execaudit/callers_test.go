@@ -657,7 +657,7 @@ func malformedCaller(raw, why string) error {
 func registeredEndpoints(t *testing.T) []endpoint {
 	t.Helper()
 	var out []endpoint
-	for _, tool := range tools.Registry(nil, nil, nil).Tools() {
+	for _, tool := range tools.Registry(nil, nil, nil, 0).Tools() {
 		id := tool.Meta().ID
 		for _, r := range tool.Routes() {
 			out = append(out, endpoint{method: r.Method, path: r.Pattern, prefix: r.Prefix, origin: "tool " + id})

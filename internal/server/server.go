@@ -150,7 +150,7 @@ func New(store *storage.Store, assets, docsFS fs.FS, settings map[string]any, no
 	// step with the counter.
 	s.instance = generateToken()
 	s.rlog = reqlog.New(reqlog.Capacity, s.instance)
-	reg := tools.Registry(store, docSet, s.rlog)
+	reg := tools.Registry(store, docSet, s.rlog, s.port)
 	script := buildTokenScript(s.token)
 
 	toolPages := map[string][]byte{}
@@ -257,6 +257,12 @@ func (s *Server) Run() error {
 	}
 
 	s.httpSrv = &http.Server{Handler: s}
+	if err := s.store.RecordActiveInstance(storage.ActiveInstance{
+		Port: s.port, PID: os.Getpid(), Instance: s.instance,
+	}); err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("record active instance: %w", err)
+	}
 
 	if s.openBrowser {
 		go func() {

@@ -2,6 +2,7 @@ package settings
 
 import (
 	"encoding/json"
+	"net"
 	"net/http/httptest"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestToolSettingsSeam(t *testing.T) {
 	}
 	defer st.Close()
 
-	c := New(st, core.Namespace(st, "tool"))
+	c := New(st, core.Namespace(st, "tool"), 8765)
 
 	// A value containing '&' would be mangled by HTML-escaping marshalers.
 	in := map[string]any{"endpoint": "https://x/y?a=1&b=2"}
@@ -75,7 +76,7 @@ func TestVMReserveIsValidatedAtSaveTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	c := New(st, core.Namespace(st, "tool"))
+	c := New(st, core.Namespace(st, "tool"), 8765)
 
 	save := func(v any) error {
 		return c.HandlePost(httptest.NewRecorder(),
@@ -133,7 +134,7 @@ func TestServerSettingsAreValidatedAndPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	c := New(st, core.Namespace(st, "tool"))
+	c := New(st, core.Namespace(st, "tool"), 4321)
 	save := func(data map[string]any) error {
 		return c.HandlePost(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/settings", nil), data)
 	}
@@ -150,9 +151,17 @@ func TestServerSettingsAreValidatedAndPersisted(t *testing.T) {
 	if got["db_local_only"] != false {
 		t.Fatalf("db_local_only = %#v", got["db_local_only"])
 	}
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	if err := save(map[string]any{"port": float64(occupied.Addr().(*net.TCPAddr).Port)}); err == nil {
+		t.Fatal("occupied port was accepted")
+	}
 
 	for _, data := range []map[string]any{
-		{"port": float64(0)}, {"port": float64(65536)}, {"port": 1.5}, {"port": "8765"},
+		{"port": float64(80)}, {"port": float64(65536)}, {"port": 1.5}, {"port": "8765"},
 		{"db_local_only": "false"},
 	} {
 		if err := save(data); err == nil {
