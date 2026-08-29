@@ -30,6 +30,8 @@ func TestParseGithubPRURL(t *testing.T) {
 		number      int
 	}{
 		{"https://github.com/owner/repo/pull/123", true, "owner", "repo", 123},
+		{"github.com/owner/repo/pull/123", true, "owner", "repo", 123},
+		{"https://www.github.com/owner/repo/pull/123", true, "owner", "repo", 123},
 		{"git@github.com:owner/repo.git/pull/5", true, "owner", "repo", 5},
 		{"https://github.com/o/r/pull/9/files", true, "o", "r", 9},
 		{"https://evilgithub.com/o/r/pull/1", false, "", "", 0},

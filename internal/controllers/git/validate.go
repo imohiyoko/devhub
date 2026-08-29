@@ -27,7 +27,7 @@ var nonBranchChar = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // prURLRe matches a GitHub PR URL; the left boundary pins the host so look-alikes
 // (evilgithub.com) do not match. The number is digits-only.
-var prURLRe = regexp.MustCompile(`(?i)^(?:https?://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+)/([^/]+?)(?:\.git)?/pull/(\d+)(?:[/?#].*)?$`)
+var prURLRe = regexp.MustCompile(`(?i)^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+)/([^/]+?)(?:\.git)?/pull/(\d+)(?:[/?#].*)?$`)
 
 // pathSepRe splits a path on runs of forward/back slashes.
 var pathSepRe = regexp.MustCompile(`[\\/]+`)

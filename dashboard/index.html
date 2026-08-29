@@ -504,10 +504,10 @@ footer {
   <div class="tool-toggles" id="toolToggles"></div>
   <div class="server-settings" id="serverSettings">
     <p class="settings-panel-title">サーバー / DB 設定</p>
-    <div class="ts-row"><label for="serverPort">Port</label><input id="serverPort" type="number" min="1" max="65535"></div>
-    <div class="ts-row"><label for="dbLocalOnly">DB local only</label><input id="dbLocalOnly" type="checkbox"></div>
+    <div class="ts-row"><label for="serverPort">Port</label><input id="serverPort" type="number" min="1" max="65535" disabled></div>
+    <div class="ts-row"><label for="dbLocalOnly">DB local only</label><input id="dbLocalOnly" type="checkbox" disabled></div>
     <div class="ts-actions">
-      <button class="ts-save" id="serverSave">保存</button>
+      <button class="ts-save" id="serverSave" disabled>保存</button>
       <span class="ts-hint" id="serverHint">Port は再起動後に反映。DB 制限を外すとリモートホストへの接続を許可します</span>
       <span class="ts-saved" id="serverSaved">保存しました</span>
     </div>
@@ -585,7 +585,7 @@ let TOOLS = [];
 let disabledTools = [];
 let toolOrder = [];
 let terminalConfig = {};   // settings.terminal: { <OS>: { emulator, shell, shell_args } }
-let serverConfig = { port: 8765, db_local_only: true };
+let serverConfig = null;
 let currentOS = '';        // /api/info.system: "Windows" | "Darwin" | "Linux"
 let restartCmdText = 'devhub';
 
@@ -721,12 +721,29 @@ async function saveTerminalSettings() {
 document.getElementById('tsSave').addEventListener('click', saveTerminalSettings);
 
 function renderServerSettings() {
-  document.getElementById('serverPort').value = serverConfig.port || 8765;
-  document.getElementById('dbLocalOnly').checked = serverConfig.db_local_only !== false;
+  const portInput = document.getElementById('serverPort');
+  const dbInput = document.getElementById('dbLocalOnly');
+  const saveButton = document.getElementById('serverSave');
+  const loaded = serverConfig !== null;
+  portInput.disabled = !loaded;
+  dbInput.disabled = !loaded;
+  saveButton.disabled = !loaded;
+  if (!loaded) {
+    portInput.value = '';
+    dbInput.checked = false;
+    document.getElementById('serverHint').textContent = '設定の読み込みに失敗しました。ページを再読み込みしてください';
+    return;
+  }
+  portInput.value = serverConfig.port;
+  dbInput.checked = serverConfig.db_local_only;
 }
 async function saveServerSettings() {
-  const port = Number(document.getElementById('serverPort').value);
   const hint = document.getElementById('serverHint');
+  if (serverConfig === null) {
+    hint.textContent = '設定を読み込めていないため保存できません';
+    return;
+  }
+  const port = Number(document.getElementById('serverPort').value);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     hint.textContent = 'Port は 1〜65535 の整数で指定してください';
     return;
@@ -893,16 +910,7 @@ async function copyCmd() {
       fetch('/api/settings'),
       fetch('/api/info'),
     ]);
-    if (!toolsRes.ok) throw new Error('GET /api/tools → ' + toolsRes.status);
     if (!settingsRes.ok) throw new Error('GET /api/settings → ' + settingsRes.status);
-    const toolsJson = await toolsRes.json();
-    TOOLS = (toolsJson.tools || []).map(t => ({
-      id: t.id,
-      href: '/' + t.id,
-      icon: t.icon || '',
-      name: t.title || t.id,
-      desc: t.desc || '',
-    }));
     const settings = await settingsRes.json();
     disabledTools = settings.disabled_tools || [];
     toolOrder = settings.tool_order || [];
@@ -911,6 +919,15 @@ async function copyCmd() {
       port: settings.port || 8765,
       db_local_only: settings.db_local_only !== false,
     };
+    if (!toolsRes.ok) throw new Error('GET /api/tools → ' + toolsRes.status);
+    const toolsJson = await toolsRes.json();
+    TOOLS = (toolsJson.tools || []).map(t => ({
+      id: t.id,
+      href: '/' + t.id,
+      icon: t.icon || '',
+      name: t.title || t.id,
+      desc: t.desc || '',
+    }));
     if (infoRes.ok) currentOS = ((await infoRes.json()).system) || '';
   } catch (e) {
     console.error('dashboard init failed:', e);

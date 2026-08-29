@@ -54,7 +54,7 @@ func TestReadAgentTokenRejectsMalformedFile(t *testing.T) {
 	}
 }
 
-func TestAgentTokenRejectsPersistentlyMalformedFile(t *testing.T) {
+func TestAgentTokenRepairsPersistentlyMalformedFile(t *testing.T) {
 	home := t.TempDir()
 	st, err := Open(home, devhub.Assets)
 	if err != nil {
@@ -65,8 +65,16 @@ func TestAgentTokenRejectsPersistentlyMalformedFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("incomplete"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.AgentToken(); err == nil {
-		t.Fatal("persistently malformed token was accepted")
+	token, err := st.AgentToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromDisk, err := ReadAgentToken(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token == "" || fromDisk != token {
+		t.Fatalf("repaired token mismatch: returned=%q disk=%q", token, fromDisk)
 	}
 }
 
