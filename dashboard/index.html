@@ -1214,7 +1214,13 @@ async function respondApproval(decision) {
     } else if (decision === 'always') {
       // The server refuses always-allow when the body preview was truncated;
       // the request stays pending so it can still be approved once.
-      alert('このリクエストは内容が長く全体を表示できないため、常に許可できません。個別に承認または拒否してください。');
+      let err = {};
+      try { err = await res.json(); } catch (_) {}
+      if (err.code === 'approval_detail_truncated') {
+        alert('このリクエストは内容が長く全体を表示できないため、常に許可できません。個別に承認または拒否してください。');
+      } else {
+        alert('常に許可に失敗しました: ' + (err.error || res.status));
+      }
     }
   } catch (e) {
     console.error('respond failed', e);

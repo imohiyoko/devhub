@@ -81,3 +81,15 @@ func TestTruncatedDetailNeverAutoApproves(t *testing.T) {
 		t.Fatalf("status = %d, want 408 (waited for approval, not auto-approved)", rr.Code)
 	}
 }
+
+// A body past the preview cap must come out marked as truncated, even when the
+// cut makes it non-JSON, so no always-allow rule can be built from it.
+func TestCaptureBodyOversizedIsMarkedTruncated(t *testing.T) {
+	s := &Server{}
+	body := `{"label":"` + strings.Repeat("a", maxApprovalBodyBytes) + `"}`
+	r := httptest.NewRequest(http.MethodPost, "/ai-api/ports/label", strings.NewReader(body))
+	got := s.captureBody(r, nil)
+	if !approvalDetailTruncated(got) {
+		t.Errorf("oversized body summary not marked truncated: %.80q", got)
+	}
+}

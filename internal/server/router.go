@@ -73,10 +73,17 @@ func (s *Server) captureBody(r *http.Request, e *reqlog.Entry) string {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, maxApprovalBodyBytes+1))
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	preview := body
-	if len(preview) > maxApprovalBodyBytes {
+	oversized := len(preview) > maxApprovalBodyBytes
+	if oversized {
 		preview = preview[:maxApprovalBodyBytes]
 	}
 	summary := summarizeApprovalBody(preview)
+	// The preview covers only the first 10 MiB, so the detail does not say what
+	// the whole body contains. Mark it, or an always-allow rule could be built
+	// from it (see approvalDetailTruncated).
+	if oversized && !approvalDetailTruncated(summary) {
+		summary += approvalTruncatedSuffix
+	}
 	if e != nil {
 		e.Body = summary
 	}
