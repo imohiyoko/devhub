@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/imohiyoko/devhub/internal/sanitize"
 )
@@ -17,7 +18,22 @@ const (
 	// maxApprovalSummaryRunes bounds the preview length shown in the prompt so a
 	// large payload cannot bloat the approval request or a persisted rule.
 	maxApprovalSummaryRunes = 512
+	// approvalTruncatedSuffix marks a summary cut at maxApprovalSummaryRunes.
+	// A detail ending in it does not show the whole body, so it is never matched
+	// against nor turned into an always-allow rule (see approvalDetailTruncated).
+	approvalTruncatedSuffix = "…(truncated)"
 )
+
+// approvalDetailTruncated reports whether an approval detail carries a
+// truncated body preview. Two bodies that differ only past the cut produce the
+// same truncated detail, so such a detail cannot identify what is being
+// written: a rule built from it would auto-approve a body whose tail the user
+// never saw. A complete JSON summary always ends in a JSON token, and the
+// non-JSON and bodyless placeholders end in ")" without this text, so the
+// suffix appears only when truncateRunes added it.
+func approvalDetailTruncated(detail string) bool {
+	return strings.HasSuffix(detail, approvalTruncatedSuffix)
+}
 
 // summarizeApprovalBody renders a compact, secret-redacted, single-line preview
 // of an /ai-api write body for the approval prompt. It returns "" for an empty
@@ -83,5 +99,5 @@ func truncateRunes(s string, max int) string {
 	if len(r) <= max {
 		return s
 	}
-	return string(r[:max]) + "…(truncated)"
+	return string(r[:max]) + approvalTruncatedSuffix
 }
