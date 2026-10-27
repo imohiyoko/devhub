@@ -227,7 +227,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, e *reqlog.Entry) 
 				detail += " (no request body)"
 			}
 
-			if s.approvalMgr.ShouldAutoApprove(action, detail) {
+			// A truncated detail never auto-approves: it does not identify the
+			// body, so a rule that matched it (e.g. one persisted before such
+			// rules were refused) would cover a tail nobody was shown.
+			if !approvalDetailTruncated(detail) && s.approvalMgr.ShouldAutoApprove(action, detail) {
 				// The rule matched, so nothing is shown and nobody is asked. Before
 				// this was logged it was devhub's one truly invisible operation:
 				// after a single "always allow", every later call through the rule
@@ -434,6 +437,17 @@ func (s *Server) handleApproval(w http.ResponseWriter, r *http.Request) {
 		}
 		if foundReq == nil {
 			httpx.WriteError(w, httpx.Errorf(http.StatusNotFound, "pending request not found"))
+			return
+		}
+
+		// The body preview was cut, so the detail does not say what is written
+		// and other bodies sharing its first part would match it. Refuse the
+		// rule and leave the request pending, so the user can still approve or
+		// reject just this one.
+		if approvalDetailTruncated(foundReq.Detail) {
+			httpx.WriteError(w, httpx.Errorf(http.StatusBadRequest, "always-allow is not available for this request").WithHint(
+				"approval_detail_truncated",
+				"The request body is too long to show in full, so an always-allow rule could approve different content later. Approve or reject this request on its own."))
 			return
 		}
 

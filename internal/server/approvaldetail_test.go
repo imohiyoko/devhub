@@ -49,3 +49,24 @@ func TestSummarizeApprovalBodyTruncates(t *testing.T) {
 		t.Fatalf("truncated head = %d runes, want %d", n, maxApprovalSummaryRunes)
 	}
 }
+
+func TestApprovalDetailTruncated(t *testing.T) {
+	long := summarizeApprovalBody([]byte(`{"v":"` + strings.Repeat("A", 1000) + `"}`))
+	cases := []struct {
+		detail string
+		want   bool
+	}{
+		{"POST /ai-api/settings " + long, true},
+		{`POST /ai-api/settings {"editor":"code"}`, false},
+		{"POST /ai-api/settings (no request body)", false},
+		{"POST /ai-api/settings (non-JSON body, 3 bytes)", false},
+		// A body whose own text ends in the marker is still complete JSON, so
+		// the summary ends in a quote and brace, not the marker.
+		{"POST /ai-api/settings " + summarizeApprovalBody([]byte(`{"v":"…(truncated)"}`)), false},
+	}
+	for _, c := range cases {
+		if got := approvalDetailTruncated(c.detail); got != c.want {
+			t.Errorf("approvalDetailTruncated(%q…) = %v, want %v", c.detail[:min(len(c.detail), 60)], got, c.want)
+		}
+	}
+}

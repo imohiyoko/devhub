@@ -1211,6 +1211,10 @@ async function respondApproval(decision) {
     });
     if (res.ok) {
       checkPendingApprovals();
+    } else if (decision === 'always') {
+      // The server refuses always-allow when the body preview was truncated;
+      // the request stays pending so it can still be approved once.
+      alert('このリクエストは内容が長く全体を表示できないため、常に許可できません。個別に承認または拒否してください。');
     }
   } catch (e) {
     console.error('respond failed', e);
